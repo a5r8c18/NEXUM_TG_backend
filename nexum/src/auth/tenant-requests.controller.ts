@@ -3,6 +3,7 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Body,
   Param,
   HttpException,
@@ -45,6 +46,15 @@ export class TenantRequestsController {
         email: requestData.email,
         password: 'temp-password', // Se generará después de aprobación
         requestedTenantType: requestData.tenantType,
+        phone: requestData.phone,
+        position: requestData.position,
+        companyName: requestData.companyName,
+        industry: requestData.industry,
+        country: requestData.country,
+        website: requestData.website,
+        useCase: requestData.useCase,
+        message: requestData.message,
+        referralSource: requestData.referralSource,
       };
 
       const result =
@@ -91,6 +101,47 @@ export class TenantRequestsController {
       console.error('Error getting tenant requests:', error);
       throw new HttpException(
         'Error al obtener las solicitudes',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // Aprobar solicitud
+  @Put(':email/approve')
+  async approveRequest(
+    @Param('email') email: string,
+    @Body() body: { adminNotes?: string },
+  ) {
+    try {
+      return await this.registrationRequestsService.approveRequest(
+        email,
+        body.adminNotes || 'admin@nexum.com',
+      );
+    } catch (error) {
+      console.error('Error approving request:', error);
+      throw new HttpException(
+        'Error al aprobar la solicitud',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // Denegar solicitud
+  @Put(':email/reject')
+  async rejectRequest(
+    @Param('email') email: string,
+    @Body() body: { rejectionReason: string; adminNotes?: string },
+  ) {
+    try {
+      return await this.registrationRequestsService.denyRequest(
+        email,
+        body.rejectionReason,
+        body.adminNotes || 'admin@nexum.com',
+      );
+    } catch (error) {
+      console.error('Error rejecting request:', error);
+      throw new HttpException(
+        'Error al rechazar la solicitud',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

@@ -35,6 +35,17 @@ export class Company {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
+  @Column({ name: 'tenant_id', type: 'varchar', length: 100, nullable: true })
+  tenantId: string | null;
+
+  @Column({
+    name: 'tenant_type',
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+  })
+  tenantType: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

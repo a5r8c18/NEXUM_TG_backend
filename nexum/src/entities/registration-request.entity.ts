@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -46,6 +47,55 @@ export class RegistrationRequest {
 
   @Column({ name: 'denial_reason', type: 'text', nullable: true })
   denialReason: string | null;
+
+  // Additional fields from frontend
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  phone: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  position: string | null;
+
+  @Column({
+    name: 'company_name',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  companyName: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  industry: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  country: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  website: string | null;
+
+  @Column({ name: 'use_case', type: 'text', nullable: true })
+  useCase: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  message: string | null;
+
+  @Column({
+    name: 'referral_source',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  referralSource: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  adminNotes: string | null;
+
+  @Column({
+    name: 'approval_token',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  approvalToken: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
