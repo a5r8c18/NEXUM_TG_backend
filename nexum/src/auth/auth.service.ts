@@ -24,6 +24,26 @@ export class AuthService {
         email.includes('multi') ||
         email.includes('admin') ||
         email.includes('dev');
+      
+      // Buscar una empresa existente para asignar
+      let companyId = 1;
+      try {
+        const companies = await this.companyRepo.find();
+        if (companies.length > 0) {
+          // Para usuarios multi-empresa, buscar "Teneduria Garcia" o la primera disponible
+          if (isMulti) {
+            const teneduriaGarcia = companies.find(c => c.name === 'Teneduria Garcia');
+            companyId = teneduriaGarcia?.id || companies[0].id;
+          } else {
+            // Para usuarios single-company, usar la primera empresa
+            companyId = companies[0].id;
+          }
+          console.log('✅ AUTH SERVICE - Empresa asignada para demo:', companyId, companies.find(c => c.id === companyId)?.name);
+        }
+      } catch (error) {
+        console.error('❌ AUTH SERVICE - Error buscando empresas:', error);
+      }
+
       const fakeUser = {
         id: 'user-' + Date.now(),
         email,
@@ -33,7 +53,16 @@ export class AuthService {
         tenantId: isMulti ? 'tenant-multi-1' : 'tenant-single-1',
         tenantName: isMulti ? 'Grupo Empresarial Demo' : 'Empresa Demo S.A.',
         tenantType: isMulti ? 'MULTI_COMPANY' : 'SINGLE_COMPANY',
+        companyId: companyId, // ✅ Añadir companyId correcto
       };
+
+      // Marcar la empresa como activa cuando el usuario se loguea con ella
+      try {
+        await this.companyRepo.update(companyId, { isActive: true });
+        console.log('✅ AUTH SERVICE - Empresa marcada como activa:', companyId);
+      } catch (error) {
+        console.error('❌ AUTH SERVICE - Error marcando empresa como activa:', error);
+      }
 
       return {
         user: fakeUser,
