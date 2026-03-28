@@ -131,7 +131,7 @@ export class AuthService {
     newUser.password = data.password;
     newUser.firstName = data.firstName;
     newUser.lastName = data.lastName;
-    newUser.role = 'user';
+    newUser.role = 'admin';
     newUser.tenantId = `tenant-${finalTenantType.toLowerCase()}-${Date.now()}`;
     newUser.tenantName = tenantName;
     newUser.tenantType = finalTenantType;

@@ -13,6 +13,8 @@ import { InvoicesModule } from './invoices/invoices.module';
 import { FixedAssetsModule } from './fixed-assets/fixed-assets.module';
 import { WarehousesModule } from './warehouses/warehouses.module';
 import { StockLimitsModule } from './stock-limits/stock-limits.module';
+import { UsersModule } from './users/users.module';
+import { InventoryWarehouseModule } from './inventory-warehouse/inventory-warehouse.module';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -28,6 +30,7 @@ import { ReceptionReport } from './entities/reception-report.entity';
 import { DeliveryReport } from './entities/delivery-report.entity';
 import { StockLimit } from './entities/stock-limit.entity';
 import { RegistrationRequest } from './entities/registration-request.entity';
+import { InventoryWarehouse } from './entities/inventory-warehouse.entity';
 
 @Module({
   imports: [
@@ -57,6 +60,7 @@ import { RegistrationRequest } from './entities/registration-request.entity';
           DeliveryReport,
           StockLimit,
           RegistrationRequest,
+          InventoryWarehouse,
         ],
         synchronize: true,
       }),
@@ -71,6 +75,8 @@ import { RegistrationRequest } from './entities/registration-request.entity';
     FixedAssetsModule,
     WarehousesModule,
     StockLimitsModule,
+    UsersModule,
+    InventoryWarehouseModule,
   ],
   controllers: [AppController],
   providers: [AppService],

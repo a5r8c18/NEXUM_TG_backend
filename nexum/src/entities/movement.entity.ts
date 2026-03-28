@@ -8,6 +8,8 @@ import {
 } from 'typeorm';
 import { Company } from './company.entity';
 
+export type MovementType = 'entry' | 'exit' | 'return' | 'transfer';
+
 @Entity('movements')
 export class Movement {
   @PrimaryGeneratedColumn('uuid')
@@ -20,8 +22,13 @@ export class Movement {
   @JoinColumn({ name: 'company_id' })
   company: Company;
 
-  @Column({ name: 'movement_type', length: 20 })
-  movementType: string;
+  @Column({ 
+    name: 'movement_type', 
+    length: 20,
+    type: 'varchar',
+    default: 'entry'
+  })
+  movementType: MovementType;
 
   @Column({ name: 'product_code', length: 50 })
   productCode: string;
@@ -34,6 +41,12 @@ export class Movement {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   label: string | null;
+
+  @Column({ name: 'source_warehouse', type: 'varchar', length: 50, nullable: true })
+  sourceWarehouse: string | null;
+
+  @Column({ name: 'destination_warehouse', type: 'varchar', length: 50, nullable: true })
+  destinationWarehouse: string | null;
 
   @Column({ name: 'user_name', type: 'varchar', length: 255, nullable: true })
   userName: string | null;

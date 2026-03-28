@@ -2,6 +2,7 @@ export { Company } from './company.entity';
 export { User } from './user.entity';
 export { Warehouse } from './warehouse.entity';
 export { Inventory } from './inventory.entity';
+export { InventoryWarehouse } from './inventory-warehouse.entity';
 export { Purchase } from './purchase.entity';
 export { PurchaseProduct } from './purchase-product.entity';
 export { Movement } from './movement.entity';
