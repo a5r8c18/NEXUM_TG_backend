@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User } from '../entities/user.entity';
+import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
 
 @Injectable()
@@ -56,7 +56,7 @@ export class UsersService {
     newUser.lastName = data.lastName;
     newUser.email = data.email;
     newUser.password = data.password;
-    newUser.role = data.role || 'user';
+    newUser.role = (data.role as UserRole) || UserRole.USER;
     newUser.companyId = data.companyId;
     newUser.tenantId = company.tenantId || `tenant-${Date.now()}`;
     newUser.tenantName = company.name;

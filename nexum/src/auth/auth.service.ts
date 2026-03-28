@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User } from '../entities/user.entity';
+import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
 import { RegistrationRequestsService } from './registration-requests.service';
 
@@ -49,7 +49,7 @@ export class AuthService {
         email,
         firstName: email.split('@')[0],
         lastName: 'NEXUM',
-        role: 'admin',
+        role: UserRole.ADMIN,
         tenantId: isMulti ? 'tenant-multi-1' : 'tenant-single-1',
         tenantName: isMulti ? 'Grupo Empresarial Demo' : 'Empresa Demo S.A.',
         tenantType: isMulti ? 'MULTI_COMPANY' : 'SINGLE_COMPANY',
@@ -131,7 +131,7 @@ export class AuthService {
     newUser.password = data.password;
     newUser.firstName = data.firstName;
     newUser.lastName = data.lastName;
-    newUser.role = 'admin';
+    newUser.role = UserRole.ADMIN;
     newUser.tenantId = `tenant-${finalTenantType.toLowerCase()}-${Date.now()}`;
     newUser.tenantName = tenantName;
     newUser.tenantType = finalTenantType;

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -15,6 +16,8 @@ import { WarehousesModule } from './warehouses/warehouses.module';
 import { StockLimitsModule } from './stock-limits/stock-limits.module';
 import { UsersModule } from './users/users.module';
 import { InventoryWarehouseModule } from './inventory-warehouse/inventory-warehouse.module';
+import { AuditModule } from './audit/audit.module';
+import { AuditInterceptor } from './interceptors/audit.interceptor';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -31,6 +34,7 @@ import { DeliveryReport } from './entities/delivery-report.entity';
 import { StockLimit } from './entities/stock-limit.entity';
 import { RegistrationRequest } from './entities/registration-request.entity';
 import { InventoryWarehouse } from './entities/inventory-warehouse.entity';
+import { AuditLog } from './entities/audit-log.entity';
 
 @Module({
   imports: [
@@ -61,6 +65,7 @@ import { InventoryWarehouse } from './entities/inventory-warehouse.entity';
           StockLimit,
           RegistrationRequest,
           InventoryWarehouse,
+          AuditLog,
         ],
         synchronize: true,
       }),
@@ -77,8 +82,15 @@ import { InventoryWarehouse } from './entities/inventory-warehouse.entity';
     StockLimitsModule,
     UsersModule,
     InventoryWarehouseModule,
+    AuditModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
+    },
+  ],
 })
 export class AppModule {}

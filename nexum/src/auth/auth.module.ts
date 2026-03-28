@@ -6,6 +6,8 @@ import { TenantRequestsController } from './tenant-requests.controller';
 import { AuthService } from './auth.service';
 import { RegistrationRequestsService } from './registration-requests.service';
 import { EmailService } from './email.service';
+import { RolesGuard } from './roles.guard';
+import { JwtAuthGuard } from './jwt-auth.guard';
 import { User } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
 import { RegistrationRequest } from '../entities/registration-request.entity';
@@ -13,6 +15,7 @@ import { RegistrationRequest } from '../entities/registration-request.entity';
 @Module({
   imports: [TypeOrmModule.forFeature([User, Company, RegistrationRequest])],
   controllers: [AuthController, AdminController, TenantRequestsController],
-  providers: [RegistrationRequestsService, AuthService, EmailService],
+  providers: [RegistrationRequestsService, AuthService, EmailService, RolesGuard, JwtAuthGuard],
+  exports: [RolesGuard, JwtAuthGuard],
 })
 export class AuthModule {}

@@ -13,3 +13,4 @@ export { ReceptionReport } from './reception-report.entity';
 export { DeliveryReport } from './delivery-report.entity';
 export { StockLimit } from './stock-limit.entity';
 export { RegistrationRequest } from './registration-request.entity';
+export { AuditLog, AuditAction, AuditResource } from './audit-log.entity';

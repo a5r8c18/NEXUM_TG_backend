@@ -9,6 +9,12 @@ import {
 } from 'typeorm';
 import { Company } from './company.entity';
 
+export enum UserRole {
+  ADMIN = 'admin',
+  USER = 'user',
+  FACTURADOR = 'facturador'
+}
+
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
@@ -26,8 +32,12 @@ export class User {
   @Column({ name: 'last_name', length: 100 })
   lastName: string;
 
-  @Column({ length: 50, default: 'user' })
-  role: string;
+  @Column({
+    length: 50,
+    type: 'varchar',
+    default: UserRole.USER
+  })
+  role: UserRole;
 
   @Column({ name: 'tenant_id', length: 100, nullable: true })
   tenantId: string;

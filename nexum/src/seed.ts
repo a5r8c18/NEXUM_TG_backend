@@ -2,7 +2,7 @@ import { DataSource } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Company } from './entities/company.entity';
-import { User } from './entities/user.entity';
+import { User, UserRole } from './entities/user.entity';
 import { Warehouse } from './entities/warehouse.entity';
 import { Inventory } from './entities/inventory.entity';
 
@@ -74,7 +74,7 @@ async function seed() {
     adminUser.password = '1234';
     adminUser.firstName = 'Admin';
     adminUser.lastName = 'NEXUM';
-    adminUser.role = 'admin';
+    adminUser.role = UserRole.ADMIN;
     adminUser.tenantId = 'tenant-multi-1';
     adminUser.tenantName = 'Grupo Empresarial Demo';
     adminUser.tenantType = 'MULTI_COMPANY';
