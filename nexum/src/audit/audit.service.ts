@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { AuditLog, AuditAction, AuditResource } from '../entities/audit-log.entity';
 
 export interface CreateAuditLogDto {
-  companyId: number;
+  companyId?: number | null;
   userId?: string;
   userName?: string;
   userEmail?: string;
@@ -36,6 +36,7 @@ export class AuditService {
     try {
       const auditLog = this.auditLogRepo.create({
         ...data,
+        companyId: data.companyId || null, // Asegurar null si no hay companyId
         createdAt: new Date(),
       });
       await this.auditLogRepo.save(auditLog);

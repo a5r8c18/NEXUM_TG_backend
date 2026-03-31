@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { Warehouse } from './warehouse.entity';
 import { User } from './user.entity';
+import { UserCompany } from './user-company.entity';
 
 @Entity('companies')
 export class Company {
@@ -57,4 +58,7 @@ export class Company {
 
   @OneToMany(() => User, (user) => user.company)
   users: User[];
+
+  @OneToMany(() => UserCompany, (userCompany) => userCompany.company)
+  userCompanies: UserCompany[];
 }

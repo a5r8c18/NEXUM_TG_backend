@@ -9,10 +9,17 @@ import {
   Query,
   Res,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { FixedAssetsService } from './fixed-assets.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard, Roles } from '../auth/roles.guard';
+import { UserRole } from '../entities/user.entity';
+import { getCompanyId } from '../common/get-company-id';
 
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('fixed-assets')
 export class FixedAssetsController {
   constructor(private readonly fixedAssetsService: FixedAssetsService) {}
@@ -24,9 +31,7 @@ export class FixedAssetsController {
     @Query('group_number') group_number?: string,
     @Query('search') search?: string,
   ) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.fixedAssetsService.findAll(companyId, {
       status,
       group_number,
@@ -41,9 +46,7 @@ export class FixedAssetsController {
 
   @Get('statistics')
   getStatistics(@Req() req: Request) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.fixedAssetsService.getStatistics(companyId);
   }
 
@@ -72,33 +75,25 @@ export class FixedAssetsController {
 
   @Get(':id')
   findOne(@Req() req: Request, @Param('id') id: string) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.fixedAssetsService.findOne(companyId, parseInt(id));
   }
 
   @Post()
   create(@Req() req: Request, @Body() body: any) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.fixedAssetsService.create(companyId, body);
   }
 
   @Put(':id')
   update(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.fixedAssetsService.update(companyId, parseInt(id), body);
   }
 
   @Delete(':id')
   remove(@Req() req: Request, @Param('id') id: string) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.fixedAssetsService.remove(companyId, parseInt(id));
   }
 }

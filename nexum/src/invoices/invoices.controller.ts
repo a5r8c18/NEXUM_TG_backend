@@ -16,12 +16,17 @@ import { InvoicesService } from './invoices.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { getCompanyId } from '../common/get-company-id';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.FACTURADOR)
+@Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
 @Controller('invoices')
 export class InvoicesController {
-  constructor(private readonly invoicesService: InvoicesService) {}
+  constructor(
+    private readonly invoicesService: InvoicesService,
+    private readonly notificationsGateway: NotificationsGateway,
+  ) {}
 
   @Get()
   findAll(
@@ -33,9 +38,7 @@ export class InvoicesController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.invoicesService.findAll(companyId, {
       customerName,
       status,
@@ -48,17 +51,13 @@ export class InvoicesController {
 
   @Get('statistics')
   getStatistics(@Req() req: Request) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.invoicesService.getStatistics(companyId);
   }
 
   @Get(':id')
   findOne(@Req() req: Request, @Param('id') id: string) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.invoicesService.findOne(companyId, id);
   }
 
@@ -68,9 +67,7 @@ export class InvoicesController {
     @Param('id') id: string,
     @Res() res: Response,
   ) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     const invoice = this.invoicesService.findOne(companyId, id);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
@@ -86,9 +83,7 @@ export class InvoicesController {
     @Param('id') id: string,
     @Res() res: Response,
   ) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     const invoice = this.invoicesService.findOne(companyId, id);
     res.setHeader(
       'Content-Type',
@@ -103,37 +98,39 @@ export class InvoicesController {
 
   @Post()
   create(@Req() req: Request, @Body() body: any) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.invoicesService.create(companyId, body);
   }
 
   @Put(':id')
   update(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.invoicesService.update(companyId, id, body);
   }
 
   @Delete(':id')
   remove(@Req() req: Request, @Param('id') id: string) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.invoicesService.remove(companyId, id);
   }
 
   @Put(':id/status')
-  updateStatus(
+  async updateStatus(
     @Req() req: Request,
     @Param('id') id: string,
     @Body() body: { status: string },
   ) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
-    return this.invoicesService.updateStatus(companyId, id, body.status);
+    const companyId = getCompanyId(req);
+    const result = await this.invoicesService.updateStatus(companyId, id, body.status);
+
+    const user = (req as any).user;
+    this.notificationsGateway.emitInvoiceUpdate({
+      invoiceId: id,
+      status: body.status,
+      companyId,
+      tenantId: user?.tenantId || '',
+    });
+
+    return result;
   }
 }

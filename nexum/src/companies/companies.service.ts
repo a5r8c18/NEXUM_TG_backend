@@ -18,6 +18,13 @@ export class CompaniesService {
     return this.companyRepo.find({ order: { id: 'ASC' } });
   }
 
+  findByTenant(tenantId: string) {
+    return this.companyRepo.find({
+      where: { tenantId },
+      order: { id: 'ASC' },
+    });
+  }
+
   async findOne(id: number) {
     const company = await this.companyRepo.findOneBy({ id });
     if (!company) throw new NotFoundException('Empresa no encontrada');
@@ -32,6 +39,8 @@ export class CompaniesService {
     email?: string;
     logo_path?: string;
     is_active?: boolean;
+    tenantId?: string;
+    tenantType?: string;
   }) {
     const existing = await this.companyRepo.findOneBy({ name: data.name });
     if (existing) {
@@ -46,6 +55,8 @@ export class CompaniesService {
     company.email = data.email || null;
     company.logoPath = data.logo_path || null;
     company.isActive = data.is_active ?? true;
+    company.tenantId = data.tenantId || null;
+    company.tenantType = data.tenantType || null;
     return this.companyRepo.save(company);
   }
 

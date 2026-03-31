@@ -18,6 +18,10 @@ import { UsersModule } from './users/users.module';
 import { InventoryWarehouseModule } from './inventory-warehouse/inventory-warehouse.module';
 import { AuditModule } from './audit/audit.module';
 import { AuditInterceptor } from './interceptors/audit.interceptor';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AccountingModule } from './accounting/accounting.module';
+import { HrModule } from './hr/hr.module';
+import { MessagesModule } from './messages/messages.module';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -35,6 +39,12 @@ import { StockLimit } from './entities/stock-limit.entity';
 import { RegistrationRequest } from './entities/registration-request.entity';
 import { InventoryWarehouse } from './entities/inventory-warehouse.entity';
 import { AuditLog } from './entities/audit-log.entity';
+import { UserCompany } from './entities/user-company.entity';
+import { Account } from './entities/account.entity';
+import { JournalEntry } from './entities/journal-entry.entity';
+import { Department } from './entities/department.entity';
+import { Employee } from './entities/employee.entity';
+import { Message } from './entities/message.entity';
 
 @Module({
   imports: [
@@ -66,6 +76,12 @@ import { AuditLog } from './entities/audit-log.entity';
           RegistrationRequest,
           InventoryWarehouse,
           AuditLog,
+          UserCompany,
+          Account,
+          JournalEntry,
+          Department,
+          Employee,
+          Message,
         ],
         synchronize: true,
       }),
@@ -83,6 +99,10 @@ import { AuditLog } from './entities/audit-log.entity';
     UsersModule,
     InventoryWarehouseModule,
     AuditModule,
+    NotificationsModule,
+    AccountingModule,
+    HrModule,
+    MessagesModule,
   ],
   controllers: [AppController],
   providers: [

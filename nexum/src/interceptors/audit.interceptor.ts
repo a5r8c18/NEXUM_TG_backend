@@ -48,6 +48,11 @@ export class AuditInterceptor implements NestInterceptor {
     const companyId =
       user?.companyId || (request.headers['x-company-id'] as string);
 
+    // Validar companyId - solo usar si es válido, sino null
+    const validCompanyId = companyId && !isNaN(Number(companyId)) && Number(companyId) > 0 
+      ? Number(companyId) 
+      : null; // Null si no hay companyId válido
+
     // Determinar acción y recurso basado en el método y ruta
     const { action, resource } = this.getActionAndResource(request);
 
@@ -56,7 +61,7 @@ export class AuditInterceptor implements NestInterceptor {
         // Éxito: registrar la acción
         const duration = Date.now() - startTime;
         this.auditService.log({
-          companyId: Number(companyId),
+          companyId: validCompanyId,
           userId: user?.id,
           userName: user ? `${user.firstName} ${user.lastName}` : undefined,
           userEmail: user?.email,
@@ -90,7 +95,7 @@ export class AuditInterceptor implements NestInterceptor {
         // Error: registrar el fallo
         const duration = Date.now() - startTime;
         this.auditService.log({
-          companyId: Number(companyId),
+          companyId: validCompanyId,
           userId: user?.id,
           userName: user ? `${user.firstName} ${user.lastName}` : undefined,
           userEmail: user?.email,

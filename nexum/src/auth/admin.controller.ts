@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   Controller,
   Get,
@@ -7,11 +8,19 @@ import {
   Body,
   Param,
   Query,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import { RegistrationRequestsService } from './registration-requests.service';
 import { RegistrationRequest } from '../entities/registration-request.entity';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { RolesGuard } from './roles.guard';
+import { Roles } from './roles.guard';
+import { UserRole } from '../entities/user.entity';
 
 @Controller('admin')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPERADMIN)
 export class AdminController {
   constructor(
     private readonly registrationRequestsService: RegistrationRequestsService,
@@ -20,10 +29,11 @@ export class AdminController {
   // Obtener todas las solicitudes pendientes
   @Get('requests/pending')
   async getPendingRequests() {
-    const requests = await this.registrationRequestsService.getPendingRequests();
-    
+    const requests =
+      await this.registrationRequestsService.getPendingRequests();
+
     // Mapear los campos al formato que espera el frontend
-    return requests.map(req => ({
+    return requests.map((req) => ({
       id: req.id,
       firstName: req.firstName,
       lastName: req.lastName,
@@ -43,7 +53,7 @@ export class AdminController {
       reviewedAt: req.approvedAt || req.deniedAt,
       reviewedBy: req.approvedBy || req.deniedBy,
       adminNotes: req.adminNotes, // Obtener las notas de admin de la base de datos
-      rejectionReason: req.denialReason
+      rejectionReason: req.denialReason,
     }));
   }
 
@@ -52,10 +62,11 @@ export class AdminController {
   async getAllRequests(
     @Query('status') status?: 'PENDING' | 'APPROVED' | 'DENIED',
   ) {
-    const requests = await this.registrationRequestsService.getAllRequests(status);
-    
+    const requests =
+      await this.registrationRequestsService.getAllRequests(status);
+
     // Mapear los campos al formato que espera el frontend
-    return requests.map(req => ({
+    return requests.map((req) => ({
       id: req.id,
       firstName: req.firstName,
       lastName: req.lastName,
@@ -75,7 +86,7 @@ export class AdminController {
       reviewedAt: req.approvedAt || req.deniedAt,
       reviewedBy: req.approvedBy || req.deniedBy,
       adminNotes: req.adminNotes, // Obtener las notas de admin de la base de datos
-      rejectionReason: req.denialReason
+      rejectionReason: req.denialReason,
     }));
   }
 
@@ -88,13 +99,13 @@ export class AdminController {
     console.log('🔍 ADMIN CONTROLLER - Approve request with ID:', requestId);
     console.log('🔍 ADMIN CONTROLLER - Approved by:', body.approvedBy);
     console.log('🔍 ADMIN CONTROLLER - Admin notes:', body.adminNotes);
-    
+
     const result = await this.registrationRequestsService.approveRequest(
       requestId,
       body.approvedBy,
       body.adminNotes,
     );
-    
+
     console.log('✅ ADMIN CONTROLLER - Request approved successfully');
     return result;
   }
@@ -109,14 +120,14 @@ export class AdminController {
     console.log('🔍 ADMIN CONTROLLER - Reason:', body.reason);
     console.log('🔍 ADMIN CONTROLLER - Denied by:', body.deniedBy);
     console.log('🔍 ADMIN CONTROLLER - Admin notes:', body.adminNotes);
-    
+
     const result = await this.registrationRequestsService.denyRequest(
       requestId,
       body.reason,
       body.deniedBy,
       body.adminNotes,
     );
-    
+
     console.log('✅ ADMIN CONTROLLER - Request denied successfully');
     return result;
   }

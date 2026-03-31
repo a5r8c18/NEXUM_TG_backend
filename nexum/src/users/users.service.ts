@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as bcrypt from 'bcryptjs';
+import { JwtService } from '@nestjs/jwt';
 import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
 
@@ -11,6 +13,7 @@ export class UsersService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
+    private readonly jwtService: JwtService,
   ) {}
 
   // Obtener usuarios de una empresa específica
@@ -35,7 +38,6 @@ export class UsersService {
     firstName: string;
     lastName: string;
     email: string;
-    password: string;
     role?: string;
     companyId: number;
   }) {
@@ -55,7 +57,7 @@ export class UsersService {
     newUser.firstName = data.firstName;
     newUser.lastName = data.lastName;
     newUser.email = data.email;
-    newUser.password = data.password;
+    newUser.password = null; // Usuario sin contraseña, debe registrarse
     newUser.role = (data.role as UserRole) || UserRole.USER;
     newUser.companyId = data.companyId;
     newUser.tenantId = company.tenantId || `tenant-${Date.now()}`;
@@ -63,7 +65,32 @@ export class UsersService {
     newUser.tenantType = company.tenantType || 'SINGLE_COMPANY';
     newUser.isActive = true;
 
-    return this.userRepo.save(newUser);
+    const savedUser = await this.userRepo.save(newUser);
+
+    // Generar token de configuración de contraseña
+    const setupToken = this.jwtService.sign({
+      sub: savedUser.id,
+      email: savedUser.email,
+      type: 'setup-password',
+      companyId: savedUser.companyId,
+      tenantId: savedUser.tenantId,
+    });
+
+    // TODO: Enviar email con el token
+    console.log(`=== TOKEN DE CONFIGURACIÓN PARA USUARIO CREADO ===`);
+    console.log(`Usuario: ${savedUser.email}`);
+    console.log(`Empresa: ${company.name}`);
+    console.log(`Token: ${setupToken}`);
+    console.log(
+      `URL: http://localhost:4200/setup-password?token=${setupToken}`,
+    );
+    console.log(`================================================`);
+
+    return {
+      user: savedUser,
+      setupToken,
+      setupUrl: `http://localhost:4200/setup-password?token=${setupToken}`,
+    };
   }
 
   // Actualizar usuario
@@ -124,7 +151,7 @@ export class UsersService {
       throw new Error('Usuario no encontrado');
     }
 
-    user.password = newPassword;
+    user.password = await bcrypt.hash(newPassword, 10);
     return this.userRepo.save(user);
   }
 }

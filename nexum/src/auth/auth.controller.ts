@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
@@ -21,6 +21,19 @@ export class AuthController {
     },
   ) {
     return this.authService.register(body);
+  }
+
+  @Post('setup-password')
+  setupPassword(
+    @Body()
+    body: {
+      email: string;
+      password: string;
+      firstName?: string;
+      lastName?: string;
+    },
+  ) {
+    return this.authService.setupPassword(body);
   }
 
   @Get('validate-token/:token')

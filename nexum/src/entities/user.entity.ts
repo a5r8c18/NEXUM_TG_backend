@@ -6,10 +6,13 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  OneToMany,
 } from 'typeorm';
 import { Company } from './company.entity';
+import { UserCompany } from './user-company.entity';
 
 export enum UserRole {
+  SUPERADMIN = 'superadmin',
   ADMIN = 'admin',
   USER = 'user',
   FACTURADOR = 'facturador'
@@ -23,8 +26,12 @@ export class User {
   @Column({ length: 255, unique: true })
   email: string;
 
-  @Column({ length: 255 })
-  password: string;
+  @Column({ 
+  length: 255, 
+  nullable: true,
+  type: 'varchar'
+})
+  password: string | null;
 
   @Column({ name: 'first_name', length: 100 })
   firstName: string;
@@ -58,6 +65,9 @@ export class User {
   @ManyToOne(() => Company, (company) => company.users, { nullable: true })
   @JoinColumn({ name: 'company_id' })
   company: Company;
+
+  @OneToMany(() => UserCompany, userCompany => userCompany.user)
+  userCompanies: UserCompany[];
 
   @Column({ name: 'is_active', default: true })
   isActive: boolean;

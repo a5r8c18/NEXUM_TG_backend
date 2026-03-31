@@ -8,9 +8,12 @@ import {
   Param,
   Query,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { InventoryWarehouseService } from './inventory-warehouse.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
+@UseGuards(JwtAuthGuard)
 @Controller('inventory-warehouse')
 export class InventoryWarehouseController {
   constructor(

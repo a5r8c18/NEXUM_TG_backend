@@ -43,12 +43,12 @@ export class AuditLog {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'company_id' })
-  companyId: number;
+  @Column({ name: 'company_id', nullable: true })
+  companyId: number | null;
 
-  @ManyToOne(() => Company)
+  @ManyToOne(() => Company, { nullable: true })
   @JoinColumn({ name: 'company_id' })
-  company: Company;
+  company: Company | null;
 
   @Column({ name: 'user_id', type: 'varchar', length: 255, nullable: true })
   userId: string | null;

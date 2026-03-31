@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PurchasesController } from './purchases.controller';
 import { PurchasesService } from './purchases.service';
+import { AuthModule } from '../auth/auth.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
@@ -17,6 +18,7 @@ import { ReceptionReport } from '../entities/reception-report.entity';
       ReceptionReport,
     ]),
     InventoryModule,
+    forwardRef(() => AuthModule),
   ],
   controllers: [PurchasesController],
   providers: [PurchasesService],

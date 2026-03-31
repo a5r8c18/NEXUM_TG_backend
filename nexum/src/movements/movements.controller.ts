@@ -1,9 +1,15 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import { Controller, Get, Post, Body, Query, Req, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Req, Param, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { MovementsService } from './movements.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard, Roles } from '../auth/roles.guard';
+import { UserRole } from '../entities/user.entity';
+import { getCompanyId } from '../common/get-company-id';
 
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('movements')
 export class MovementsController {
   constructor(private readonly movementsService: MovementsService) {}
@@ -18,9 +24,7 @@ export class MovementsController {
     @Query('warehouse') warehouse?: string,
     @Query('movement_type') movement_type?: string,
   ) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.movementsService.findAll(companyId, {
       start_date,
       end_date,
@@ -48,9 +52,7 @@ export class MovementsController {
       location?: string;
     },
   ) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.movementsService.createDirectEntry(companyId, body);
   }
 
@@ -66,9 +68,7 @@ export class MovementsController {
       warehouseId: string;
     },
   ) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.movementsService.createExit(companyId, body);
   }
 
@@ -84,9 +84,7 @@ export class MovementsController {
       reason?: string;
     },
   ) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.movementsService.createTransfer(companyId, body);
   }
 
@@ -102,9 +100,7 @@ export class MovementsController {
       warehouseId: string;
     },
   ) {
-    const companyId = (req.body.companyId as string)
-      ? parseInt(req.body.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.movementsService.createReturn(companyId, body);
   }
 
@@ -116,9 +112,7 @@ export class MovementsController {
     @Query('end_date') end_date?: string,
     @Query('type') type?: 'incoming' | 'outgoing',
   ) {
-    const companyId = (req.query.companyId as string)
-      ? parseInt(req.query.companyId as string)
-      : 1;
+    const companyId = getCompanyId(req);
     return this.movementsService.getTransfersByWarehouse(
       companyId,
       warehouseId,

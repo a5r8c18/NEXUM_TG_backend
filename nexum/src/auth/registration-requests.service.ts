@@ -36,7 +36,7 @@ export class RegistrationRequestsService {
     rr.password = userData.password;
     rr.requestedTenantType = userData.requestedTenantType || 'SINGLE_COMPANY';
     rr.status = 'PENDING';
-    
+
     // Additional fields from frontend
     rr.phone = userData.phone || null;
     rr.position = userData.position || null;
@@ -61,7 +61,11 @@ export class RegistrationRequestsService {
   }
 
   // Aprobar solicitud
-  async approveRequest(requestId: string, approvedBy: string, adminNotes?: string) {
+  async approveRequest(
+    requestId: string,
+    approvedBy: string,
+    adminNotes?: string,
+  ) {
     const request = await this.rrRepo.findOneBy({ id: requestId });
     if (!request) {
       throw new NotFoundException('Solicitud no encontrada');
@@ -87,7 +91,7 @@ export class RegistrationRequestsService {
       await this.emailService.sendApprovalNotification(
         request.email,
         token,
-        request.requestedTenantType || 'SINGLE_COMPANY'
+        request.requestedTenantType || 'SINGLE_COMPANY',
       );
       console.log('✅ Email de aprobación enviado a:', request.email);
     } catch (error) {
@@ -131,15 +135,15 @@ export class RegistrationRequestsService {
   // Validar token de aprobación
   async validateToken(token: string) {
     console.log('🔍 VALIDATE TOKEN - Token recibido:', token);
-    
+
     // Buscar solicitud aprobada con el token exacto
-    const request = await this.rrRepo.findOne({ 
-      where: { 
+    const request = await this.rrRepo.findOne({
+      where: {
         status: 'APPROVED',
-        approvalToken: token 
-      } 
+        approvalToken: token,
+      },
     });
-    
+
     if (request) {
       console.log('✅ VALIDATE TOKEN - Token válido para:', request.email);
       return {
@@ -151,7 +155,7 @@ export class RegistrationRequestsService {
         requestId: request.id,
       };
     }
-    
+
     console.log('❌ VALIDATE TOKEN - Token no válido');
     return { valid: false };
   }

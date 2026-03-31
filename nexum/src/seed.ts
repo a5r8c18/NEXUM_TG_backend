@@ -53,6 +53,28 @@ async function seed() {
     console.log('Company created:', company1.name);
   }
 
+  // Buscar o crear Teneduria Garcia (SYSTEM OWNER)
+  let teneduriaGarcia = await companyRepo.findOneBy({ name: 'Teneduria Garcia' });
+  if (!teneduriaGarcia) {
+    teneduriaGarcia = new Company();
+    teneduriaGarcia.name = 'Teneduria Garcia';
+    teneduriaGarcia.taxId = 'TAX-TG-001';
+    teneduriaGarcia.address = 'Calle Principal 456';
+    teneduriaGarcia.phone = '555-0300';
+    teneduriaGarcia.email = 'info@teneduriagarcia.com';
+    teneduriaGarcia.isActive = true;
+    teneduriaGarcia.tenantId = 'tenant-owner';
+    teneduriaGarcia.tenantType = 'MULTI_COMPANY';
+    teneduriaGarcia = await companyRepo.save(teneduriaGarcia);
+    console.log('OWNER Company created:', teneduriaGarcia.name);
+  } else {
+    // Ensure tenant info is set
+    teneduriaGarcia.tenantId = 'tenant-owner';
+    teneduriaGarcia.tenantType = 'MULTI_COMPANY';
+    teneduriaGarcia = await companyRepo.save(teneduriaGarcia);
+    console.log('OWNER Company updated:', teneduriaGarcia.name, 'ID:', teneduriaGarcia.id);
+  }
+
   let company2 = await companyRepo.findOneBy({ name: 'Distribuidora Norte' });
   if (!company2) {
     company2 = new Company();
@@ -66,21 +88,75 @@ async function seed() {
     console.log('Company created:', company2.name);
   }
 
+  // --- Hashing helper ---
+  const bcrypt = await import('bcryptjs');
+  const hashPassword = async (pw: string) => bcrypt.hash(pw, 10);
+
   // --- Users ---
+  // SUPERADMIN: Owner of the system (Teneduria Garcia)
+  let superadminUser = await userRepo.findOneBy({ email: 'admin@teneduriagarcia.com' });
+  if (!superadminUser) {
+    superadminUser = new User();
+    superadminUser.email = 'admin@teneduriagarcia.com';
+    superadminUser.password = await hashPassword('Admin1234');
+    superadminUser.firstName = 'Administrador';
+    superadminUser.lastName = 'Garcia';
+    superadminUser.role = UserRole.SUPERADMIN;
+    superadminUser.tenantId = 'tenant-owner';
+    superadminUser.tenantName = 'Teneduria Garcia';
+    superadminUser.tenantType = 'MULTI_COMPANY';
+    superadminUser.companyId = teneduriaGarcia.id;
+    await userRepo.save(superadminUser);
+    console.log('SUPERADMIN created:', superadminUser.email, '(Teneduria Garcia)');
+  } else {
+    // Update existing to ensure superadmin role
+    superadminUser.role = UserRole.SUPERADMIN;
+    superadminUser.password = await hashPassword('Admin1234');
+    superadminUser.companyId = teneduriaGarcia.id;
+    superadminUser.tenantId = 'tenant-owner';
+    superadminUser.tenantName = 'Teneduria Garcia';
+    superadminUser.tenantType = 'MULTI_COMPANY';
+    await userRepo.save(superadminUser);
+    console.log('SUPERADMIN updated:', superadminUser.email);
+  }
+
+  // Accountant user for Teneduria Garcia (handles accounting for clients)
+  let accountantUser = await userRepo.findOneBy({ email: 'contable@teneduriagarcia.com' });
+  if (!accountantUser) {
+    accountantUser = new User();
+    accountantUser.email = 'contable@teneduriagarcia.com';
+    accountantUser.password = await hashPassword('Contable1234');
+    accountantUser.firstName = 'Maria';
+    accountantUser.lastName = 'Contable';
+    accountantUser.role = UserRole.USER;
+    accountantUser.tenantId = 'tenant-owner';
+    accountantUser.tenantName = 'Teneduria Garcia';
+    accountantUser.tenantType = 'MULTI_COMPANY';
+    accountantUser.companyId = teneduriaGarcia.id;
+    await userRepo.save(accountantUser);
+    console.log('Accountant user created:', accountantUser.email);
+  }
+
+  // Demo admin user for Empresa Demo
   let adminUser = await userRepo.findOneBy({ email: 'admin@nexum.com' });
   if (!adminUser) {
     adminUser = new User();
     adminUser.email = 'admin@nexum.com';
-    adminUser.password = '1234';
+    adminUser.password = await hashPassword('1234');
     adminUser.firstName = 'Admin';
     adminUser.lastName = 'NEXUM';
     adminUser.role = UserRole.ADMIN;
-    adminUser.tenantId = 'tenant-multi-1';
-    adminUser.tenantName = 'Grupo Empresarial Demo';
+    adminUser.tenantId = 'tenant-demo';
+    adminUser.tenantName = 'Empresa Demo S.A.';
     adminUser.tenantType = 'MULTI_COMPANY';
     adminUser.companyId = company1.id;
     await userRepo.save(adminUser);
-    console.log('User created:', adminUser.email);
+    console.log('Demo admin created:', adminUser.email);
+  } else {
+    // Update password to bcrypt hash
+    adminUser.password = await hashPassword('1234');
+    await userRepo.save(adminUser);
+    console.log('Demo admin password updated');
   }
 
   // --- Warehouses ---

@@ -1,5 +1,6 @@
 export { Company } from './company.entity';
 export { User } from './user.entity';
+export { UserCompany } from './user-company.entity';
 export { Warehouse } from './warehouse.entity';
 export { Inventory } from './inventory.entity';
 export { InventoryWarehouse } from './inventory-warehouse.entity';
@@ -14,3 +15,8 @@ export { DeliveryReport } from './delivery-report.entity';
 export { StockLimit } from './stock-limit.entity';
 export { RegistrationRequest } from './registration-request.entity';
 export { AuditLog, AuditAction, AuditResource } from './audit-log.entity';
+export { Account } from './account.entity';
+export { JournalEntry } from './journal-entry.entity';
+export { Department } from './department.entity';
+export { Employee } from './employee.entity';
+export { Message } from './message.entity';
