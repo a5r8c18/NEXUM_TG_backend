@@ -25,6 +25,7 @@ import { ForbiddenException } from '@nestjs/common';
 export class CompaniesController {
   constructor(private readonly companiesService: CompaniesService) {}
 
+  
   private mapToResponseDto(company: Company): CompanyResponseDto {
     return {
       id: company.id,

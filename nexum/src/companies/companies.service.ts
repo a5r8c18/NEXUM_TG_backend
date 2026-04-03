@@ -106,4 +106,34 @@ export class CompaniesService {
     await this.companyRepo.remove(company);
     return { message: 'Empresa eliminada correctamente' };
   }
+
+  // Buscar empresas por nombre (para login público)
+  async searchByName(searchTerm: string): Promise<Company[]> {
+    return this.companyRepo
+      .createQueryBuilder('company')
+      .where('company.name ILIKE :searchTerm', { searchTerm: `%${searchTerm}%` })
+      .orWhere('company.email ILIKE :searchTerm', { searchTerm: `%${searchTerm}%` })
+      .andWhere('company.isActive = :isActive', { isActive: true })
+      .orderBy('company.name', 'ASC')
+      .getMany();
+  }
+
+  // Encontrar empresas activas
+  async findActive(): Promise<Company[]> {
+    return this.companyRepo.find({
+      where: { isActive: true },
+      order: { name: 'ASC' },
+    });
+  }
+
+  // Buscar empresas asociadas a un email de usuario
+  async findByUserEmail(email: string): Promise<Company[]> {
+    return this.companyRepo
+      .createQueryBuilder('company')
+      .innerJoin('company.users', 'user')
+      .where('user.email = :email', { email })
+      .andWhere('company.isActive = :isActive', { isActive: true })
+      .orderBy('company.name', 'ASC')
+      .getMany();
+  }
 }
