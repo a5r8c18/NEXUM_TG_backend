@@ -255,10 +255,7 @@ export class AccountingController {
   }
 
   @Get('reports/balance-sheet')
-  getBalanceSheet(
-    @Req() req: Request,
-    @Query('asOfDate') asOfDate?: string,
-  ) {
+  getBalanceSheet(@Req() req: Request, @Query('asOfDate') asOfDate?: string) {
     const companyId = getCompanyId(req);
     return this.accountingService.getBalanceSheet(companyId, asOfDate);
   }
@@ -330,7 +327,12 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportTrialBalanceExcel(companyId, fromDate, toDate, res);
+    return this.accountingService.exportTrialBalanceExcel(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+    );
   }
 
   @Get('reports/trial-balance/export/pdf')
@@ -341,7 +343,12 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportTrialBalancePDF(companyId, fromDate, toDate, res);
+    return this.accountingService.exportTrialBalancePDF(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+    );
   }
 
   @Get('reports/balance-sheet/export/excel')
@@ -351,7 +358,11 @@ export class AccountingController {
     @Query('asOfDate') asOfDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportBalanceSheetExcel(companyId, asOfDate, res);
+    return this.accountingService.exportBalanceSheetExcel(
+      companyId,
+      asOfDate,
+      res,
+    );
   }
 
   @Get('reports/balance-sheet/export/pdf')
@@ -361,7 +372,11 @@ export class AccountingController {
     @Query('asOfDate') asOfDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportBalanceSheetPDF(companyId, asOfDate, res);
+    return this.accountingService.exportBalanceSheetPDF(
+      companyId,
+      asOfDate,
+      res,
+    );
   }
 
   @Get('reports/income-statement/export/excel')
@@ -372,7 +387,12 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportIncomeStatementExcel(companyId, fromDate, toDate, res);
+    return this.accountingService.exportIncomeStatementExcel(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+    );
   }
 
   @Get('reports/income-statement/export/pdf')
@@ -383,7 +403,12 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportIncomeStatementPDF(companyId, fromDate, toDate, res);
+    return this.accountingService.exportIncomeStatementPDF(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+    );
   }
 
   // ══════════════════════════════════════════════════════════
@@ -432,11 +457,7 @@ export class AccountingController {
     @Body() body: { status: string },
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.updateEntryStatus(
-      companyId,
-      id,
-      body.status,
-    );
+    return this.accountingService.updateEntryStatus(companyId, id, body.status);
   }
 
   @Delete('entries/:id')
@@ -483,9 +504,15 @@ export class AccountingController {
   }
 
   @Get('accounts/:parentCode/subaccounts')
-  findAccountsByParentCode(@Req() req: Request, @Param('parentCode') parentCode: string) {
+  findAccountsByParentCode(
+    @Req() req: Request,
+    @Param('parentCode') parentCode: string,
+  ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAccountsByParentCode(companyId, parentCode);
+    return this.accountingService.findAccountsByParentCode(
+      companyId,
+      parentCode,
+    );
   }
 
   @Post('accounts')
@@ -505,10 +532,7 @@ export class AccountingController {
   }
 
   @Delete('accounts/:id')
-  deleteAccount(
-    @Req() req: Request,
-    @Param('id') id: string,
-  ) {
+  deleteAccount(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
     return this.accountingService.deleteAccount(companyId, id);
   }
@@ -573,13 +597,159 @@ export class AccountingController {
     @Body() body: { status: 'posted' | 'cancelled' },
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.updateJournalEntryStatus(companyId, id, body.status);
+    return this.accountingService.updateJournalEntryStatus(
+      companyId,
+      id,
+      body.status,
+    );
   }
 
   @Delete('journal-entries/:id')
   deleteJournalEntry(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
     return this.accountingService.deleteJournalEntry(companyId, id);
+  }
+
+  // ================================
+  // PARTIDAS (Partidas de Gastos)
+  // ================================
+
+  @Get('partidas')
+  findAllPartidas(
+    @Req() req: Request,
+    @Query('status') status?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('accountCode') accountCode?: string,
+    @Query('search') search?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.findAllPartidas(companyId, {
+      status,
+      fromDate,
+      toDate,
+      accountCode,
+      search,
+    });
+  }
+
+  @Get('partidas/:id')
+  findOnePartida(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.findOnePartida(companyId, id);
+  }
+
+  @Get('partidas/statistics')
+  getPartidaStatistics(@Req() req: Request) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.getPartidaStatistics(companyId);
+  }
+
+  @Post('partidas')
+  createPartida(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.createPartida(companyId, body);
+  }
+
+  @Put('partidas/:id')
+  updatePartida(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.updatePartida(companyId, id, body);
+  }
+
+  @Patch('partidas/:id/status')
+  updatePartidaStatus(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { status: 'posted' | 'cancelled' },
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.updatePartidaStatus(
+      companyId,
+      id,
+      body.status,
+    );
+  }
+
+  @Delete('partidas/:id')
+  deletePartida(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.deletePartida(companyId, id);
+  }
+
+  // ================================
+  // ELEMENTOS (Elementos de Gastos)
+  // ================================
+
+  @Get('elementos')
+  findAllElementos(
+    @Req() req: Request,
+    @Query('status') status?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('accountCode') accountCode?: string,
+    @Query('search') search?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.findAllElementos(companyId, {
+      status,
+      fromDate,
+      toDate,
+      accountCode,
+      search,
+    });
+  }
+
+  @Get('elementos/:id')
+  findOneElemento(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.findOneElemento(companyId, id);
+  }
+
+  @Get('elementos/statistics')
+  getElementoStatistics(@Req() req: Request) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.getElementoStatistics(companyId);
+  }
+
+  @Post('elementos')
+  createElemento(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.createElemento(companyId, body);
+  }
+
+  @Put('elementos/:id')
+  updateElemento(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.updateElemento(companyId, id, body);
+  }
+
+  @Patch('elementos/:id/status')
+  updateElementoStatus(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { status: 'posted' | 'cancelled' },
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.updateElementoStatus(
+      companyId,
+      id,
+      body.status,
+    );
+  }
+
+  @Delete('elementos/:id')
+  deleteElemento(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.deleteElemento(companyId, id);
   }
 
   // ================================

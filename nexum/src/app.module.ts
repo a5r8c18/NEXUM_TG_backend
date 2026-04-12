@@ -42,6 +42,8 @@ import { AuditLog } from './entities/audit-log.entity';
 import { UserCompany } from './entities/user-company.entity';
 import { Account } from './entities/account.entity';
 import { JournalEntry } from './entities/journal-entry.entity';
+import { Partida } from './entities/partida.entity';
+import { Elemento } from './entities/elemento.entity';
 import { Voucher } from './entities/voucher.entity';
 import { VoucherLine } from './entities/voucher-line.entity';
 import { CostCenter } from './entities/cost-center.entity';
@@ -85,6 +87,8 @@ import { Message } from './entities/message.entity';
           UserCompany,
           Account,
           JournalEntry,
+          Partida,
+          Elemento,
           Voucher,
           VoucherLine,
           CostCenter,

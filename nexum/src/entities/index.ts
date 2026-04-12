@@ -17,6 +17,8 @@ export { RegistrationRequest } from './registration-request.entity';
 export { AuditLog, AuditAction, AuditResource } from './audit-log.entity';
 export { Account } from './account.entity';
 export { JournalEntry } from './journal-entry.entity';
+export { Partida } from './partida.entity';
+export { Elemento } from './elemento.entity';
 export { Voucher } from './voucher.entity';
 export { VoucherLine } from './voucher-line.entity';
 export { CostCenter } from './cost-center.entity';

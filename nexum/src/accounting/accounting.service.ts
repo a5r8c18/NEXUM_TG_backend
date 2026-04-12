@@ -8,9 +8,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Response } from 'express';
 import * as XLSX from 'xlsx';
-import { 
-  JournalEntry, 
+import {
+  JournalEntry,
   JournalEntryType } from '../entities/journal-entry.entity';
+import { Partida } from '../entities/partida.entity';
+import { Elemento } from '../entities/elemento.entity';
 import { Account } from '../entities/account.entity';
 import { Voucher, SourceModule } from '../entities/voucher.entity';
 import { VoucherLine } from '../entities/voucher-line.entity';
@@ -24,6 +26,10 @@ export class AccountingService {
   constructor(
     @InjectRepository(JournalEntry)
     private readonly journalRepo: Repository<JournalEntry>,
+    @InjectRepository(Partida)
+    private readonly partidaRepo: Repository<Partida>,
+    @InjectRepository(Elemento)
+    private readonly elementoRepo: Repository<Elemento>,
     @InjectRepository(Account)
     private readonly accountRepo: Repository<Account>,
     @InjectRepository(Voucher)
@@ -1618,6 +1624,468 @@ export class AccountingService {
       .addSelect('SUM(je.debit)', 'totalDebit')
       .addSelect('SUM(je.credit)', 'totalCredit')
       .where('je.companyId = :companyId', { companyId })
+      .setParameter('posted', 'posted')
+      .setParameter('draft', 'draft')
+      .setParameter('cancelled', 'cancelled')
+      .getRawOne();
+
+    return {
+      total: parseInt(stats.total) || 0,
+      posted: parseInt(stats.posted) || 0,
+      draft: parseInt(stats.draft) || 0,
+      cancelled: parseInt(stats.cancelled) || 0,
+      totalDebit: parseFloat(stats.totalDebit) || 0,
+      totalCredit: parseFloat(stats.totalCredit) || 0,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── PARTIDAS (Partidas de Gastos) ──
+  // ══════════════════════════════════════════════════════════
+
+  async findAllPartidas(
+    companyId: number,
+    filters?: {
+      status?: string;
+      fromDate?: string;
+      toDate?: string;
+      accountCode?: string;
+      search?: string;
+    },
+  ) {
+    const qb = this.partidaRepo
+      .createQueryBuilder('p')
+      .leftJoinAndSelect('p.account', 'account')
+      .leftJoinAndSelect('p.costCenter', 'costCenter')
+      .where('p.companyId = :companyId', { companyId });
+
+    if (filters?.status)
+      qb.andWhere('p.status = :status', { status: filters.status });
+    if (filters?.fromDate)
+      qb.andWhere('p.date >= :fromDate', { fromDate: filters.fromDate });
+    if (filters?.toDate)
+      qb.andWhere('p.date <= :toDate', { toDate: filters.toDate });
+    if (filters?.accountCode)
+      qb.andWhere('p.accountCode = :accountCode', { accountCode: filters.accountCode });
+    if (filters?.search)
+      qb.andWhere(
+        '(p.description ILIKE :search OR p.entryNumber ILIKE :search OR p.accountName ILIKE :search)',
+        { search: `%${filters.search}%` },
+      );
+
+    qb.orderBy('p.date', 'DESC').addOrderBy('p.entryNumber', 'DESC');
+    return qb.getMany();
+  }
+
+  async findOnePartida(companyId: number, id: string) {
+    const partida = await this.partidaRepo.findOne({
+      where: { id, companyId },
+      relations: ['account', 'costCenter'],
+    });
+    if (!partida)
+      throw new NotFoundException(`Partida #${id} no encontrada`);
+    return partida;
+  }
+
+  async createPartida(
+    companyId: number,
+    data: {
+      date?: string;
+      description?: string;
+      accountCode: string;
+      subaccountCode?: string;
+      entryNumber?: string;
+      debit?: number;
+      credit?: number;
+      lineDescription?: string;
+      costCenterId?: string;
+      reference?: string;
+      type?: string;
+      createdBy?: string;
+    },
+  ) {
+    // Validar que exista la cuenta y que sea de gasto
+    const account = await this.accountRepo.findOneBy({
+      code: data.accountCode,
+      companyId,
+    });
+    if (!account) {
+      throw new NotFoundException(`Cuenta ${data.accountCode} no encontrada`);
+    }
+    if (account.type !== 'expense') {
+      throw new BadRequestException(`La cuenta ${data.accountCode} no es una cuenta de gasto`);
+    }
+
+    // Buscar subcuenta si se proporcionó
+    let subaccountName: string | null = null;
+    if (data.subaccountCode) {
+      const subaccount = await this.accountRepo.findOneBy({
+        code: data.subaccountCode,
+        companyId,
+      });
+      subaccountName = subaccount?.name || null;
+    }
+
+    // Usar entryNumber personalizado o generar uno automático
+    let entryNumber = data.entryNumber;
+    if (!entryNumber) {
+      const today = new Date().toISOString().split('T')[0];
+      const count = await this.partidaRepo.count({
+        where: {
+          companyId,
+          date: today,
+        },
+      });
+      entryNumber = `PT-${today.replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
+    }
+
+    const partida = new Partida();
+    partida.companyId = companyId;
+    partida.entryNumber = entryNumber;
+    partida.date = data.date || new Date().toISOString().split('T')[0];
+    partida.description = data.description || entryNumber;
+    partida.accountId = account.id;
+    partida.accountCode = account.code;
+    partida.accountName = account.name;
+    partida.subaccountCode = data.subaccountCode || null;
+    partida.subaccountName = subaccountName;
+    partida.debit = data.debit || 0;
+    partida.credit = data.credit || 0;
+    partida.lineDescription = data.lineDescription || null;
+    partida.costCenterId = data.costCenterId || null;
+    partida.reference = data.reference || null;
+    partida.type = data.type || 'manual';
+    partida.createdBy = data.createdBy || null;
+
+    return this.partidaRepo.save(partida);
+  }
+
+  async updatePartida(
+    companyId: number,
+    id: string,
+    data: {
+      date?: string;
+      description?: string;
+      accountCode?: string;
+      subaccountCode?: string;
+      entryNumber?: string;
+      debit?: number;
+      credit?: number;
+      lineDescription?: string;
+      costCenterId?: string;
+      reference?: string;
+    },
+  ) {
+    const partida = await this.findOnePartida(companyId, id);
+
+    // No permitir editar si ya está contabilizada
+    if (partida.status === 'posted') {
+      throw new BadRequestException('No se puede editar una partida contabilizada');
+    }
+
+    if (data.accountCode) {
+      const account = await this.accountRepo.findOneBy({
+        code: data.accountCode,
+        companyId,
+      });
+      if (account) {
+        if (account.type !== 'expense') {
+          throw new BadRequestException(`La cuenta ${data.accountCode} no es una cuenta de gasto`);
+        }
+        partida.accountId = account.id;
+        partida.accountCode = account.code;
+        partida.accountName = account.name;
+      }
+    }
+
+    if (data.subaccountCode !== undefined) {
+      partida.subaccountCode = data.subaccountCode || null;
+      if (data.subaccountCode) {
+        const subaccount = await this.accountRepo.findOneBy({
+          code: data.subaccountCode,
+          companyId,
+        });
+        partida.subaccountName = subaccount?.name || null;
+      } else {
+        partida.subaccountName = null;
+      }
+    }
+
+    if (data.entryNumber) partida.entryNumber = data.entryNumber;
+    if (data.date) partida.date = data.date;
+    if (data.description) partida.description = data.description;
+    if (data.debit !== undefined) partida.debit = data.debit;
+    if (data.credit !== undefined) partida.credit = data.credit;
+    if (data.lineDescription !== undefined) partida.lineDescription = data.lineDescription;
+    if (data.costCenterId !== undefined) partida.costCenterId = data.costCenterId;
+    if (data.reference !== undefined) partida.reference = data.reference;
+
+    return this.partidaRepo.save(partida);
+  }
+
+  async deletePartida(companyId: number, id: string) {
+    const partida = await this.findOnePartida(companyId, id);
+
+    // No permitir eliminar si ya está contabilizada
+    if (partida.status === 'posted') {
+      throw new BadRequestException('No se puede eliminar una partida contabilizada');
+    }
+
+    await this.partidaRepo.remove(partida);
+    return { message: 'Partida eliminada correctamente' };
+  }
+
+  async updatePartidaStatus(companyId: number, id: string, status: 'posted' | 'cancelled') {
+    const partida = await this.findOnePartida(companyId, id);
+    partida.status = status;
+    return this.partidaRepo.save(partida);
+  }
+
+  async getPartidaStatistics(companyId: number) {
+    const stats = await this.partidaRepo
+      .createQueryBuilder('p')
+      .select('COUNT(*)', 'total')
+      .addSelect('SUM(CASE WHEN p.status = :posted THEN 1 ELSE 0 END)', 'posted')
+      .addSelect('SUM(CASE WHEN p.status = :draft THEN 1 ELSE 0 END)', 'draft')
+      .addSelect('SUM(CASE WHEN p.status = :cancelled THEN 1 ELSE 0 END)', 'cancelled')
+      .addSelect('SUM(p.debit)', 'totalDebit')
+      .addSelect('SUM(p.credit)', 'totalCredit')
+      .where('p.companyId = :companyId', { companyId })
+      .setParameter('posted', 'posted')
+      .setParameter('draft', 'draft')
+      .setParameter('cancelled', 'cancelled')
+      .getRawOne();
+
+    return {
+      total: parseInt(stats.total) || 0,
+      posted: parseInt(stats.posted) || 0,
+      draft: parseInt(stats.draft) || 0,
+      cancelled: parseInt(stats.cancelled) || 0,
+      totalDebit: parseFloat(stats.totalDebit) || 0,
+      totalCredit: parseFloat(stats.totalCredit) || 0,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── ELEMENTOS (Elementos de Gastos) ──
+  // ══════════════════════════════════════════════════════════
+
+  async findAllElementos(
+    companyId: number,
+    filters?: {
+      status?: string;
+      fromDate?: string;
+      toDate?: string;
+      accountCode?: string;
+      search?: string;
+    },
+  ) {
+    const qb = this.elementoRepo
+      .createQueryBuilder('e')
+      .leftJoinAndSelect('e.account', 'account')
+      .leftJoinAndSelect('e.costCenter', 'costCenter')
+      .where('e.companyId = :companyId', { companyId });
+
+    if (filters?.status)
+      qb.andWhere('e.status = :status', { status: filters.status });
+    if (filters?.fromDate)
+      qb.andWhere('e.date >= :fromDate', { fromDate: filters.fromDate });
+    if (filters?.toDate)
+      qb.andWhere('e.date <= :toDate', { toDate: filters.toDate });
+    if (filters?.accountCode)
+      qb.andWhere('e.accountCode = :accountCode', { accountCode: filters.accountCode });
+    if (filters?.search)
+      qb.andWhere(
+        '(e.description ILIKE :search OR e.entryNumber ILIKE :search OR e.accountName ILIKE :search OR e.element ILIKE :search)',
+        { search: `%${filters.search}%` },
+      );
+
+    qb.orderBy('e.date', 'DESC').addOrderBy('e.entryNumber', 'DESC');
+    return qb.getMany();
+  }
+
+  async findOneElemento(companyId: number, id: string) {
+    const elemento = await this.elementoRepo.findOne({
+      where: { id, companyId },
+      relations: ['account', 'costCenter'],
+    });
+    if (!elemento)
+      throw new NotFoundException(`Elemento #${id} no encontrado`);
+    return elemento;
+  }
+
+  async createElemento(
+    companyId: number,
+    data: {
+      date?: string;
+      description?: string;
+      accountCode: string;
+      subaccountCode?: string;
+      entryNumber?: string;
+      element: string;
+      elementDescription?: string;
+      debit?: number;
+      credit?: number;
+      lineDescription?: string;
+      costCenterId?: string;
+      reference?: string;
+      type?: string;
+      createdBy?: string;
+    },
+  ) {
+    // Validar que exista la cuenta y que sea de gasto
+    const account = await this.accountRepo.findOneBy({
+      code: data.accountCode,
+      companyId,
+    });
+    if (!account) {
+      throw new NotFoundException(`Cuenta ${data.accountCode} no encontrada`);
+    }
+    if (account.type !== 'expense') {
+      throw new BadRequestException(`La cuenta ${data.accountCode} no es una cuenta de gasto`);
+    }
+
+    // Buscar subcuenta si se proporcionó
+    let subaccountName: string | null = null;
+    if (data.subaccountCode) {
+      const subaccount = await this.accountRepo.findOneBy({
+        code: data.subaccountCode,
+        companyId,
+      });
+      subaccountName = subaccount?.name || null;
+    }
+
+    // Usar entryNumber personalizado o generar uno automático
+    let entryNumber = data.entryNumber;
+    if (!entryNumber) {
+      const today = new Date().toISOString().split('T')[0];
+      const count = await this.elementoRepo.count({
+        where: {
+          companyId,
+          date: today,
+        },
+      });
+      entryNumber = `EL-${today.replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`;
+    }
+
+    const elemento = new Elemento();
+    elemento.companyId = companyId;
+    elemento.entryNumber = entryNumber;
+    elemento.date = data.date || new Date().toISOString().split('T')[0];
+    elemento.description = data.description || entryNumber;
+    elemento.accountId = account.id;
+    elemento.accountCode = account.code;
+    elemento.accountName = account.name;
+    elemento.subaccountCode = data.subaccountCode || null;
+    elemento.subaccountName = subaccountName;
+    elemento.element = data.element;
+    elemento.elementDescription = data.elementDescription || null;
+    elemento.debit = data.debit || 0;
+    elemento.credit = data.credit || 0;
+    elemento.lineDescription = data.lineDescription || null;
+    elemento.costCenterId = data.costCenterId || null;
+    elemento.reference = data.reference || null;
+    elemento.type = data.type || 'manual';
+    elemento.createdBy = data.createdBy || null;
+
+    return this.elementoRepo.save(elemento);
+  }
+
+  async updateElemento(
+    companyId: number,
+    id: string,
+    data: {
+      date?: string;
+      description?: string;
+      accountCode?: string;
+      subaccountCode?: string;
+      entryNumber?: string;
+      element?: string;
+      elementDescription?: string;
+      debit?: number;
+      credit?: number;
+      lineDescription?: string;
+      costCenterId?: string;
+      reference?: string;
+    },
+  ) {
+    const elemento = await this.findOneElemento(companyId, id);
+
+    // No permitir editar si ya está contabilizado
+    if (elemento.status === 'posted') {
+      throw new BadRequestException('No se puede editar un elemento contabilizado');
+    }
+
+    if (data.accountCode) {
+      const account = await this.accountRepo.findOneBy({
+        code: data.accountCode,
+        companyId,
+      });
+      if (account) {
+        if (account.type !== 'expense') {
+          throw new BadRequestException(`La cuenta ${data.accountCode} no es una cuenta de gasto`);
+        }
+        elemento.accountId = account.id;
+        elemento.accountCode = account.code;
+        elemento.accountName = account.name;
+      }
+    }
+
+    if (data.subaccountCode !== undefined) {
+      elemento.subaccountCode = data.subaccountCode || null;
+      if (data.subaccountCode) {
+        const subaccount = await this.accountRepo.findOneBy({
+          code: data.subaccountCode,
+          companyId,
+        });
+        elemento.subaccountName = subaccount?.name || null;
+      } else {
+        elemento.subaccountName = null;
+      }
+    }
+
+    if (data.entryNumber) elemento.entryNumber = data.entryNumber;
+    if (data.date) elemento.date = data.date;
+    if (data.description) elemento.description = data.description;
+    if (data.element !== undefined) elemento.element = data.element;
+    if (data.elementDescription !== undefined) elemento.elementDescription = data.elementDescription;
+    if (data.debit !== undefined) elemento.debit = data.debit;
+    if (data.credit !== undefined) elemento.credit = data.credit;
+    if (data.lineDescription !== undefined) elemento.lineDescription = data.lineDescription;
+    if (data.costCenterId !== undefined) elemento.costCenterId = data.costCenterId;
+    if (data.reference !== undefined) elemento.reference = data.reference;
+
+    return this.elementoRepo.save(elemento);
+  }
+
+  async deleteElemento(companyId: number, id: string) {
+    const elemento = await this.findOneElemento(companyId, id);
+
+    // No permitir eliminar si ya está contabilizado
+    if (elemento.status === 'posted') {
+      throw new BadRequestException('No se puede eliminar un elemento contabilizado');
+    }
+
+    await this.elementoRepo.remove(elemento);
+    return { message: 'Elemento eliminado correctamente' };
+  }
+
+  async updateElementoStatus(companyId: number, id: string, status: 'posted' | 'cancelled') {
+    const elemento = await this.findOneElemento(companyId, id);
+    elemento.status = status;
+    return this.elementoRepo.save(elemento);
+  }
+
+  async getElementoStatistics(companyId: number) {
+    const stats = await this.elementoRepo
+      .createQueryBuilder('e')
+      .select('COUNT(*)', 'total')
+      .addSelect('SUM(CASE WHEN e.status = :posted THEN 1 ELSE 0 END)', 'posted')
+      .addSelect('SUM(CASE WHEN e.status = :draft THEN 1 ELSE 0 END)', 'draft')
+      .addSelect('SUM(CASE WHEN e.status = :cancelled THEN 1 ELSE 0 END)', 'cancelled')
+      .addSelect('SUM(e.debit)', 'totalDebit')
+      .addSelect('SUM(e.credit)', 'totalCredit')
+      .where('e.companyId = :companyId', { companyId })
       .setParameter('posted', 'posted')
       .setParameter('draft', 'draft')
       .setParameter('cancelled', 'cancelled')
