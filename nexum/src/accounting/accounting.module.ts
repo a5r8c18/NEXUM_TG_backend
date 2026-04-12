@@ -4,11 +4,26 @@ import { AccountingController } from './accounting.controller';
 import { AccountingService } from './accounting.service';
 import { JournalEntry } from '../entities/journal-entry.entity';
 import { Account } from '../entities/account.entity';
+import { Voucher, SourceModule } from '../entities/voucher.entity';
+import { VoucherLine } from '../entities/voucher-line.entity';
+import { CostCenter } from '../entities/cost-center.entity';
+import { FiscalYear } from '../entities/fiscal-year.entity';
+import { AccountingPeriod } from '../entities/accounting-period.entity';
+import { ExpenseType } from '../entities/expense-type.entity';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([JournalEntry, Account]),
+    TypeOrmModule.forFeature([
+      JournalEntry,
+      Account,
+      Voucher,
+      VoucherLine,
+      CostCenter,
+      FiscalYear,
+      AccountingPeriod,
+      ExpenseType,
+    ]),
     forwardRef(() => AuthModule),
   ],
   controllers: [AccountingController],

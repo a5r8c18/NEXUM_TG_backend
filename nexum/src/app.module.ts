@@ -42,8 +42,14 @@ import { AuditLog } from './entities/audit-log.entity';
 import { UserCompany } from './entities/user-company.entity';
 import { Account } from './entities/account.entity';
 import { JournalEntry } from './entities/journal-entry.entity';
+import { Voucher } from './entities/voucher.entity';
+import { VoucherLine } from './entities/voucher-line.entity';
+import { CostCenter } from './entities/cost-center.entity';
+import { FiscalYear } from './entities/fiscal-year.entity';
+import { AccountingPeriod } from './entities/accounting-period.entity';
 import { Department } from './entities/department.entity';
 import { Employee } from './entities/employee.entity';
+import { ExpenseType } from './entities/expense-type.entity';
 import { Message } from './entities/message.entity';
 
 @Module({
@@ -79,9 +85,15 @@ import { Message } from './entities/message.entity';
           UserCompany,
           Account,
           JournalEntry,
+          Voucher,
+          VoucherLine,
+          CostCenter,
+          FiscalYear,
+          AccountingPeriod,
           Department,
           Employee,
           Message,
+          ExpenseType,
         ],
         synchronize: true,
       }),

@@ -5,6 +5,7 @@ import { Company } from './entities/company.entity';
 import { User, UserRole } from './entities/user.entity';
 import { Warehouse } from './entities/warehouse.entity';
 import { Inventory } from './entities/inventory.entity';
+import { ExpenseType } from './entities/expense-type.entity';
 
 // Load .env manually
 const envPath = path.resolve(__dirname, '..', '.env');
@@ -38,6 +39,7 @@ async function seed() {
   const userRepo = ds.getRepository(User);
   const warehouseRepo = ds.getRepository(Warehouse);
   const inventoryRepo = ds.getRepository(Inventory);
+  const expenseTypeRepo = ds.getRepository(ExpenseType);
 
   // --- Companies ---
   let company1 = await companyRepo.findOneBy({ name: 'Empresa Demo S.A.' });
@@ -86,6 +88,42 @@ async function seed() {
     company2.isActive = true;
     company2 = await companyRepo.save(company2);
     console.log('Company created:', company2.name);
+  }
+
+  // --- Default Partidas (ExpenseTypes) for each company ---
+  const defaultPartidas = [
+    { code: '11', name: 'Materia Primas y Materiaes' },
+    { code: '30', name: 'Combustibles y Lubricantes' },
+    { code: '40', name: 'Energia' },
+    { code: '50', name: 'Gastos de personal' },
+    { code: '70', name: 'Depreciacion y Amortizacion' },
+    { code: '80', name: 'Otros gastos monetarios' },
+    { code: '81', name: 'Gastos por importacion de servicios' },
+    { code: '82', name: 'Del presupuesto de la seguridad social' },
+    { code: '83', name: 'De la asistencia social' },
+    { code: '84', name: 'Transferencias, subsidios y subvenciones' },
+    { code: '90', name: 'Otras transferencias corrientes' },
+  ];
+
+  const companies = [company1, company2, teneduriaGarcia];
+  for (const company of companies) {
+    for (const partida of defaultPartidas) {
+      const existing = await expenseTypeRepo.findOneBy({
+        code: partida.code,
+        companyId: company.id,
+      });
+      if (!existing) {
+        const et = new ExpenseType();
+        et.companyId = company.id;
+        et.code = partida.code;
+        et.name = partida.name;
+        et.isActive = true;
+        await expenseTypeRepo.save(et);
+        console.log(
+          `Partida created for ${company.name}: ${partida.code} - ${partida.name}`,
+        );
+      }
+    }
   }
 
   // --- Hashing helper ---

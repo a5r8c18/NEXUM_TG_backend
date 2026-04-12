@@ -2,10 +2,13 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryService } from '../inventory/inventory.service';
+import { AccountingService } from '../accounting/accounting.service';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
@@ -14,6 +17,8 @@ import { Movement } from '../entities/movement.entity';
 export class InvoicesService {
   constructor(
     private readonly inventoryService: InventoryService,
+    @Inject(forwardRef(() => AccountingService))
+    private readonly accountingService: AccountingService,
     @InjectRepository(Invoice)
     private readonly invoiceRepo: Repository<Invoice>,
     @InjectRepository(InvoiceItem)
@@ -176,6 +181,13 @@ export class InvoicesService {
     }
 
     invoice.items = items;
+
+    // ── Automatic Accounting Voucher (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
+    // try {
+    //   await this.accountingService.createVoucherFromModule(companyId, 'invoices', invoice.id, { ... });
+    // } catch (e) { console.warn(...); }
+
     return { invoice };
   }
 
@@ -207,6 +219,7 @@ export class InvoicesService {
     const prevStatus = invoice.status;
     invoice.status = status;
 
+    // ── Inventory reversal on cancellation ──
     if (status === 'cancelled' && prevStatus !== 'cancelled') {
       for (const item of invoice.items) {
         if (item.productCode) {
@@ -233,6 +246,12 @@ export class InvoicesService {
         }
       }
     }
+
+    // ── Accounting: Voucher on PAID (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
+
+    // ── Accounting: Reversal voucher on CANCELLED (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
 
     const saved = await this.invoiceRepo.save(invoice);
     return { invoice: saved };

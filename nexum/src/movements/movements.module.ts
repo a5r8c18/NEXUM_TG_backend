@@ -6,12 +6,14 @@ import { InventoryWarehouseModule } from '../inventory-warehouse/inventory-wareh
 import { Movement } from '../entities/movement.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import { AuthModule } from '../auth/auth.module';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Movement, DeliveryReport]),
     InventoryWarehouseModule,
     forwardRef(() => AuthModule),
+    forwardRef(() => AccountingModule),
   ],
   controllers: [MovementsController],
   providers: [MovementsService],

@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
+import { AccountingService } from '../accounting/accounting.service';
 import { Movement, MovementType } from '../entities/movement.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 
@@ -10,6 +11,8 @@ import { DeliveryReport } from '../entities/delivery-report.entity';
 export class MovementsService {
   constructor(
     private readonly inventoryWarehouseService: InventoryWarehouseService,
+    @Inject(forwardRef(() => AccountingService))
+    private readonly accountingService: AccountingService,
     @InjectRepository(Movement)
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(DeliveryReport)
@@ -173,6 +176,10 @@ export class MovementsService {
         userName: userName || 'System',
       }),
     );
+
+    // ── Accounting: Voucher for direct entry (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
+
     return this.enrichMovement(companyId, mov);
   }
 
@@ -218,7 +225,9 @@ export class MovementsService {
       companyId,
       data.product_code,
     );
-    const inventory = inventories.find(inv => inv.warehouseId === data.warehouseId);
+    const inventory = inventories.find(
+      (inv) => inv.warehouseId === data.warehouseId,
+    );
 
     await this.drRepo.save(
       this.drRepo.create({
@@ -242,6 +251,9 @@ export class MovementsService {
         createdByName: userName || 'System',
       }),
     );
+
+    // ── Accounting: Voucher for exit (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
 
     return this.enrichMovement(companyId, mov);
   }
@@ -354,7 +366,10 @@ export class MovementsService {
       }),
     );
 
-        return this.enrichMovement(companyId, mov);
+    // ── Accounting: Voucher for return (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
+
+    return this.enrichMovement(companyId, mov);
   }
 
   async getTransfersByWarehouse(

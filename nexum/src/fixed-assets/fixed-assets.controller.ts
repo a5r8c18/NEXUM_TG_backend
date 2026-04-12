@@ -44,6 +44,19 @@ export class FixedAssetsController {
     return this.fixedAssetsService.getDepreciationCatalog();
   }
 
+  @Post('process-depreciation')
+  processDepreciation(
+    @Req() req: Request,
+    @Body() body: { year: number; month: number },
+  ) {
+    const companyId = getCompanyId(req);
+    return this.fixedAssetsService.processMonthlyDepreciation(
+      companyId,
+      body.year,
+      body.month,
+    );
+  }
+
   @Get('statistics')
   getStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);

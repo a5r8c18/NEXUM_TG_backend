@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
+import { AccountingService } from '../accounting/accounting.service';
 import {
   mockDepreciationCatalog,
   getDepreciationRate,
@@ -10,6 +11,8 @@ import {
 @Injectable()
 export class FixedAssetsService {
   constructor(
+    @Inject(forwardRef(() => AccountingService))
+    private readonly accountingService: AccountingService,
     @InjectRepository(FixedAsset)
     private readonly assetRepo: Repository<FixedAsset>,
   ) {}
@@ -83,6 +86,13 @@ export class FixedAssetsService {
     asset.currentValue = data.acquisition_value;
     asset.status = 'active';
     await this.assetRepo.save(asset);
+
+    // ── Automatic Accounting Voucher (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
+    // try {
+    //   await this.accountingService.createVoucherFromModule(companyId, 'fixed-assets', String(asset.id), { ... });
+    // } catch (e) { console.warn(...); }
+
     return { asset };
   }
 
@@ -203,5 +213,44 @@ export class FixedAssetsService {
       records.push(...monthResult.records);
     }
     return { records };
+  }
+
+  async processMonthlyDepreciation(
+    companyId: number,
+    year: number,
+    month: number,
+  ) {
+    const result = await this.calculateMonthlyDepreciation(companyId, year, month);
+    const records = result.records;
+
+    if (records.length === 0) {
+      return { message: 'No depreciation records for this period', voucher: null };
+    }
+
+    const totalDepreciation = records.reduce(
+      (sum, r) => sum + Number(r.monthlyDepreciation),
+      0,
+    );
+
+    // ── Generate Accounting Voucher for Monthly Depreciation (DESHABILITADO — contabilidad manual) ──
+    // TODO: Reactivar cuando se indique
+
+    // Update asset current values
+    for (const record of records) {
+      const asset = await this.assetRepo.findOneBy({
+        id: record.assetId,
+        companyId,
+      });
+      if (asset) {
+        asset.currentValue = record.currentValue;
+        await this.assetRepo.save(asset);
+      }
+    }
+
+    return {
+      message: `Depreciation processed for ${records.length} assets`,
+      totalDepreciation,
+      voucher: null,
+    };
   }
 }

@@ -5,11 +5,13 @@ import { HrService } from './hr.service';
 import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
 import { AuthModule } from '../auth/auth.module';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Employee, Department]),
     forwardRef(() => AuthModule),
+    forwardRef(() => AccountingModule),
   ],
   controllers: [HrController],
   providers: [HrService],

@@ -4,6 +4,7 @@ import { PurchasesController } from './purchases.controller';
 import { PurchasesService } from './purchases.service';
 import { AuthModule } from '../auth/auth.module';
 import { InventoryModule } from '../inventory/inventory.module';
+import { AccountingModule } from '../accounting/accounting.module';
 import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
 import { Movement } from '../entities/movement.entity';
@@ -18,6 +19,7 @@ import { ReceptionReport } from '../entities/reception-report.entity';
       ReceptionReport,
     ]),
     InventoryModule,
+    forwardRef(() => AccountingModule),
     forwardRef(() => AuthModule),
   ],
   controllers: [PurchasesController],
