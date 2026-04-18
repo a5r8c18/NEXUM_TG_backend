@@ -411,6 +411,38 @@ export class AccountingController {
     );
   }
 
+  // ── Modelos SIEN (5920 / 5921) ──
+
+  @Get('reports/modelo-5920/export/excel')
+  exportModelo5920Excel(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('asOfDate') asOfDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.exportModelo5920Excel(
+      companyId,
+      asOfDate,
+      res,
+    );
+  }
+
+  @Get('reports/modelo-5921/export/excel')
+  exportModelo5921Excel(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.exportModelo5921Excel(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+    );
+  }
+
   // ══════════════════════════════════════════════════════════
   // ── LEGACY: Journal Entries (backward compatibility) ──
   // ══════════════════════════════════════════════════════════

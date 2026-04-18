@@ -8,6 +8,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Response } from 'express';
 import * as XLSX from 'xlsx';
+import * as ExcelJS from 'exceljs';
+import * as path from 'path';
 import {
   JournalEntry,
   JournalEntryType } from '../entities/journal-entry.entity';
@@ -1307,6 +1309,276 @@ export class AccountingService {
     }
     
     return Buffer.from('PDF placeholder');
+  }
+
+  // ── Modelo 5920-04 / 5921-04 (SIEN) ──
+
+  private async getAccountRangeBalance(
+    companyId: number,
+    codeRanges: string[],
+    asOfDate?: string,
+  ): Promise<number> {
+    const qb = this.voucherLineRepo
+      .createQueryBuilder('vl')
+      .select('SUM(vl.debit) - SUM(vl.credit)', 'balance')
+      .innerJoin('vl.voucher', 'v')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere('v.status = :status', { status: 'posted' });
+
+    if (asOfDate) qb.andWhere('v.date <= :asOfDate', { asOfDate });
+
+    const conditions: string[] = [];
+    const params: Record<string, any> = {};
+    codeRanges.forEach((range, i) => {
+      if (range.includes('-')) {
+        const [from, to] = range.split('-').map((s) => s.trim());
+        conditions.push(
+          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
+        );
+        params[`from${i}`] = parseInt(from);
+        params[`to${i}`] = parseInt(to);
+      } else {
+        conditions.push(`vl.account_code = :code${i}`);
+        params[`code${i}`] = range.trim();
+      }
+    });
+
+    if (conditions.length > 0) {
+      qb.andWhere(`(${conditions.join(' OR ')})`, params);
+    }
+
+    const result = await qb.getRawOne();
+    return Number(result?.balance || 0);
+  }
+
+  private async getAccountRangeBalanceCredit(
+    companyId: number,
+    codeRanges: string[],
+    asOfDate?: string,
+  ): Promise<number> {
+    const balance = await this.getAccountRangeBalance(
+      companyId,
+      codeRanges,
+      asOfDate,
+    );
+    return Math.abs(balance);
+  }
+
+  private async getAccountRangePeriodAmount(
+    companyId: number,
+    codeRanges: string[],
+    fromDate?: string,
+    toDate?: string,
+  ): Promise<{ debit: number; credit: number }> {
+    const qb = this.voucherLineRepo
+      .createQueryBuilder('vl')
+      .select('COALESCE(SUM(vl.debit), 0)', 'totalDebit')
+      .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit')
+      .innerJoin('vl.voucher', 'v')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere('v.status = :status', { status: 'posted' });
+
+    if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
+    if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
+
+    const conditions: string[] = [];
+    const params: Record<string, any> = {};
+    codeRanges.forEach((range, i) => {
+      if (range.includes('-')) {
+        const [from, to] = range.split('-').map((s) => s.trim());
+        conditions.push(
+          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
+        );
+        params[`from${i}`] = parseInt(from);
+        params[`to${i}`] = parseInt(to);
+      } else {
+        conditions.push(`vl.account_code = :code${i}`);
+        params[`code${i}`] = range.trim();
+      }
+    });
+
+    if (conditions.length > 0) {
+      qb.andWhere(`(${conditions.join(' OR ')})`, params);
+    }
+
+    const result = await qb.getRawOne();
+    return {
+      debit: Number(result?.totalDebit || 0),
+      credit: Number(result?.totalCredit || 0),
+    };
+  }
+
+  async exportModelo5920Excel(
+    companyId: number,
+    asOfDate?: string,
+    res?: Response,
+  ) {
+    const templatePath = path.join(__dirname, 'templates', '5920.xlsx');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(templatePath);
+    const ws = wb.worksheets[0];
+
+    // Fetch balances for data cells (column K = 11)
+    const efectivoCaja = await this.getAccountRangeBalance(companyId, ['101-108'], asOfDate);
+    const efectivoBanco = await this.getAccountRangeBalance(companyId, ['109-119'], asOfDate);
+    const cxcCorto = await this.getAccountRangeBalance(companyId, ['135-139', '154'], asOfDate);
+    const pagosAnticipadosSumin = await this.getAccountRangeBalance(companyId, ['146-149'], asOfDate);
+    const adeudosPresupuesto = await this.getAccountRangeBalance(companyId, ['164-166'], asOfDate);
+    const materiasPrimas = await this.getAccountRangeBalance(companyId, ['183'], asOfDate);
+    const utilesHerramientas = await this.getAccountRangeBalance(companyId, ['187'], asOfDate);
+    const alimentos = await this.getAccountRangeBalance(companyId, ['193'], asOfDate);
+    const aftTangibles = await this.getAccountRangeBalance(companyId, ['240-251'], asOfDate);
+    const depreciacionAft = await this.getAccountRangeBalanceCredit(companyId, ['375-388'], asOfDate);
+    const gastosDeficit = await this.getAccountRangeBalance(companyId, ['312'], asOfDate);
+    const cxcDiversas = await this.getAccountRangeBalance(companyId, ['334-341'], asOfDate);
+
+    const cxpCorto = await this.getAccountRangeBalanceCredit(companyId, ['405-415'], asOfDate);
+    const dividendosPagar = await this.getAccountRangeBalanceCredit(companyId, ['417'], asOfDate);
+    const obligPresupuesto = await this.getAccountRangeBalanceCredit(companyId, ['440-449'], asOfDate);
+    const nominasPagar = await this.getAccountRangeBalanceCredit(companyId, ['455-459'], asOfDate);
+    const gastosAcumulados = await this.getAccountRangeBalanceCredit(companyId, ['480-489'], asOfDate);
+    const provVacaciones = await this.getAccountRangeBalanceCredit(companyId, ['492'], asOfDate);
+    const provSubsidiosSS = await this.getAccountRangeBalanceCredit(companyId, ['500'], asOfDate);
+    const cxpDiversas = await this.getAccountRangeBalanceCredit(companyId, ['565-569'], asOfDate);
+
+    const inversionEstatal = await this.getAccountRangeBalanceCredit(companyId, ['600-612'], asOfDate);
+    const reservasContingencias = await this.getAccountRangeBalanceCredit(companyId, ['645'], asOfDate);
+    const otrasReservas = await this.getAccountRangeBalanceCredit(companyId, ['646-654'], asOfDate);
+    const pagoCuentaUtilidades = await this.getAccountRangeBalance(companyId, ['690'], asOfDate);
+    const pagoCuentaDividendos = await this.getAccountRangeBalance(companyId, ['691'], asOfDate);
+    const resultadoPeriodo = await this.getAccountRangeBalanceCredit(companyId, ['800-899'], asOfDate);
+
+    // Fill ONLY data cells in column K (col 11) — formulas are preserved from template
+    // ACTIVO
+    ws.getCell('K11').value = efectivoCaja;        // Efectivo en Caja (101-108)
+    ws.getCell('K12').value = efectivoBanco;        // Efectivo en Banco (109-119)
+    ws.getCell('K13').value = cxcCorto;             // CxC Corto Plazo (135-139, 154)
+    ws.getCell('K14').value = pagosAnticipadosSumin; // Pagos Anticipados (146-149)
+    ws.getCell('K15').value = adeudosPresupuesto;   // Adeudos Presupuesto (164-166)
+    ws.getCell('K17').value = materiasPrimas;       // Materias Primas (183)
+    ws.getCell('K18').value = utilesHerramientas;   // Útiles, Herramientas (187)
+    ws.getCell('K19').value = alimentos;            // Alimentos (193)
+    ws.getCell('K21').value = aftTangibles;         // AFT (240-251)
+    ws.getCell('K22').value = depreciacionAft;      // Depreciación AFT (375-388)
+    ws.getCell('K23').value = gastosDeficit;        // Activos Diferidos
+    ws.getCell('K24').value = gastosDeficit;        // Gastos Faltantes (312)
+    ws.getCell('K25').value = cxcDiversas;          // Otros Activos
+    ws.getCell('K26').value = cxcDiversas;          // CxC Diversas (334-341)
+    // PASIVO
+    ws.getCell('K30').value = cxpCorto;             // CxP Corto Plazo (405-415)
+    ws.getCell('K31').value = dividendosPagar;      // Dividendos por Pagar (417)
+    ws.getCell('K32').value = obligPresupuesto;     // Obligaciones Presupuesto (440-449)
+    ws.getCell('K33').value = nominasPagar;         // Nóminas por Pagar (455-459)
+    ws.getCell('K34').value = gastosAcumulados;     // Gastos Acumulados (480-489)
+    ws.getCell('K35').value = provVacaciones;       // Provisión Vacaciones (492)
+    ws.getCell('K36').value = provSubsidiosSS;      // Provisión Subsidios SS (500)
+    ws.getCell('K39').value = cxpDiversas;          // CxP Diversas (565-569)
+    // PATRIMONIO
+    ws.getCell('K42').value = inversionEstatal;     // Inversión Estatal (600-612)
+    ws.getCell('K43').value = reservasContingencias; // Reservas Contingencias (645)
+    ws.getCell('K44').value = otrasReservas;        // Otras Reservas (646-654)
+    ws.getCell('K45').value = pagoCuentaUtilidades; // Pago a Cuenta Utilidades (690)
+    ws.getCell('K46').value = pagoCuentaDividendos; // Pago a Cuenta Dividendos (691)
+    ws.getCell('K47').value = resultadoPeriodo;     // Resultado del Período
+
+    const buffer = await wb.xlsx.writeBuffer();
+
+    if (res) {
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename=Modelo_5920-04.xlsx',
+      );
+      res.send(Buffer.from(buffer as ArrayBuffer));
+    }
+
+    return Buffer.from(buffer as ArrayBuffer);
+  }
+
+  async exportModelo5921Excel(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    res?: Response,
+  ) {
+    const templatePath = path.join(__dirname, 'templates', '5921.xlsx');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(templatePath);
+    const ws = wb.worksheets[0];
+
+    // Fetch amounts for data cells (column K = 11) — formulas preserved from template
+    const ventas = await this.getAccountRangePeriodAmount(companyId, ['900-913'], fromDate, toDate);
+    const ventasVal = Math.abs(ventas.credit - ventas.debit);
+
+    const impVentas = await this.getAccountRangePeriodAmount(companyId, ['805-809'], fromDate, toDate);
+    const impVentasVal = Math.abs(impVentas.debit - impVentas.credit);
+
+    const costoVentas = await this.getAccountRangePeriodAmount(companyId, ['810-813'], fromDate, toDate);
+    const costoVentasVal = Math.abs(costoVentas.debit - costoVentas.credit);
+
+    const gastosAdmin = await this.getAccountRangePeriodAmount(companyId, ['822-824'], fromDate, toDate);
+    const gastosAdminVal = Math.abs(gastosAdmin.debit - gastosAdmin.credit);
+
+    const gastosOper = await this.getAccountRangePeriodAmount(companyId, ['826-833'], fromDate, toDate);
+    const gastosOperVal = Math.abs(gastosOper.debit - gastosOper.credit);
+
+    const gastosFinancieros = await this.getAccountRangePeriodAmount(companyId, ['835-838'], fromDate, toDate);
+    const gastosFinancierosVal = Math.abs(gastosFinancieros.debit - gastosFinancieros.credit);
+
+    const gastosPerdidas = await this.getAccountRangePeriodAmount(companyId, ['845-848'], fromDate, toDate);
+    const gastosPerdidasVal = Math.abs(gastosPerdidas.debit - gastosPerdidas.credit);
+
+    const gastosPerdidasDesastres = await this.getAccountRangePeriodAmount(companyId, ['849'], fromDate, toDate);
+    const gastosPerdidasDesastresVal = Math.abs(gastosPerdidasDesastres.debit - gastosPerdidasDesastres.credit);
+
+    const otrosImpuestos = await this.getAccountRangePeriodAmount(companyId, ['855-864'], fromDate, toDate);
+    const otrosImpuestosVal = Math.abs(otrosImpuestos.debit - otrosImpuestos.credit);
+
+    const otrosGastos = await this.getAccountRangePeriodAmount(companyId, ['865-866'], fromDate, toDate);
+    const otrosGastosVal = Math.abs(otrosGastos.debit - otrosGastos.credit);
+
+    const gastosRecupDesastres = await this.getAccountRangePeriodAmount(companyId, ['873'], fromDate, toDate);
+    const gastosRecupDesastresVal = Math.abs(gastosRecupDesastres.debit - gastosRecupDesastres.credit);
+
+    const ingresosFinancieros = await this.getAccountRangePeriodAmount(companyId, ['920-922'], fromDate, toDate);
+    const ingresosFinancierosVal = Math.abs(ingresosFinancieros.credit - ingresosFinancieros.debit);
+
+    const otrosIngresos = await this.getAccountRangePeriodAmount(companyId, ['950-952'], fromDate, toDate);
+    const otrosIngresosVal = Math.abs(otrosIngresos.credit - otrosIngresos.debit);
+
+    // Fill ONLY data cells in column K — formula cells are preserved from template
+    ws.getCell('K9').value = ventasVal;              // Ventas (900-913)
+    ws.getCell('K10').value = impVentasVal;           // Impuesto Ventas (805-809)
+    ws.getCell('K12').value = costoVentasVal;         // Costo de Ventas (810-813)
+    ws.getCell('K15').value = gastosAdminVal;         // Gastos Admin (822-824)
+    ws.getCell('K16').value = gastosOperVal;          // Gastos Operación (826-833)
+    ws.getCell('K18').value = gastosFinancierosVal;   // Gastos Financieros (835-838)
+    ws.getCell('K19').value = gastosPerdidasVal;      // Gastos Pérdidas (845-848)
+    ws.getCell('K20').value = gastosPerdidasDesastresVal; // Pérdidas Desastres (849)
+    ws.getCell('K21').value = otrosImpuestosVal;      // Otros Impuestos (855-864)
+    ws.getCell('K22').value = otrosGastosVal;         // Otros Gastos (865-866)
+    ws.getCell('K23').value = gastosRecupDesastresVal; // Gastos Recup. Desastres (873)
+    ws.getCell('K24').value = ingresosFinancierosVal; // Ingresos Financieros (920-922)
+    ws.getCell('K25').value = otrosIngresosVal;       // Otros Ingresos (950-952)
+
+    const buffer = await wb.xlsx.writeBuffer();
+
+    if (res) {
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename=Modelo_5921-04.xlsx',
+      );
+      res.send(Buffer.from(buffer as ArrayBuffer));
+    }
+
+    return Buffer.from(buffer as ArrayBuffer);
   }
 
   // ── Accounts (Chart of Accounts) ──
