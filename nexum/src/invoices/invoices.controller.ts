@@ -18,6 +18,7 @@ import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { getCompanyId } from '../common/get-company-id';
+import { CreateInvoiceDto, UpdateInvoiceDto, UpdateInvoiceStatusDto } from './dto/create-invoice.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
@@ -97,13 +98,13 @@ export class InvoicesController {
   }
 
   @Post()
-  create(@Req() req: Request, @Body() body: any) {
+  create(@Req() req: Request, @Body() body: CreateInvoiceDto) {
     const companyId = getCompanyId(req);
     return this.invoicesService.create(companyId, body);
   }
 
   @Put(':id')
-  update(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+  update(@Req() req: Request, @Param('id') id: string, @Body() body: UpdateInvoiceDto) {
     const companyId = getCompanyId(req);
     return this.invoicesService.update(companyId, id, body);
   }
@@ -118,7 +119,7 @@ export class InvoicesController {
   async updateStatus(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { status: string },
+    @Body() body: UpdateInvoiceStatusDto,
   ) {
     const companyId = getCompanyId(req);
     const result = await this.invoicesService.updateStatus(companyId, id, body.status);

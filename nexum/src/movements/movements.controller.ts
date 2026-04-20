@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import { CreateDirectEntryDto, CreateExitDto, CreateTransferDto, CreateReturnDto } from './dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -36,70 +37,25 @@ export class MovementsController {
   }
 
   @Post('direct-entry')
-  createDirectEntry(
-    @Req() req: Request,
-    @Body()
-    body: {
-      productCode: string;
-      productName: string;
-      productDescription?: string;
-      quantity: number;
-      label?: string;
-      entity?: string;
-      warehouseId: string;
-      unitPrice?: number;
-      unit?: string;
-      location?: string;
-    },
-  ) {
+  createDirectEntry(@Req() req: Request, @Body() body: CreateDirectEntryDto) {
     const companyId = getCompanyId(req);
     return this.movementsService.createDirectEntry(companyId, body);
   }
 
   @Post('exit')
-  createExit(
-    @Req() req: Request,
-    @Body()
-    body: {
-      product_code: string;
-      quantity: number;
-      reason?: string;
-      entity?: string;
-      warehouseId: string;
-    },
-  ) {
+  createExit(@Req() req: Request, @Body() body: CreateExitDto) {
     const companyId = getCompanyId(req);
     return this.movementsService.createExit(companyId, body);
   }
 
   @Post('transfer')
-  createTransfer(
-    @Req() req: Request,
-    @Body()
-    body: {
-      productCode: string;
-      quantity: number;
-      sourceWarehouseId: string;
-      destinationWarehouseId: string;
-      reason?: string;
-    },
-  ) {
+  createTransfer(@Req() req: Request, @Body() body: CreateTransferDto) {
     const companyId = getCompanyId(req);
     return this.movementsService.createTransfer(companyId, body);
   }
 
   @Post('return')
-  createReturn(
-    @Req() req: Request,
-    @Body()
-    body: {
-      product_code: string;
-      quantity: number;
-      purchase_id?: string;
-      reason: string;
-      warehouseId: string;
-    },
-  ) {
+  createReturn(@Req() req: Request, @Body() body: CreateReturnDto) {
     const companyId = getCompanyId(req);
     return this.movementsService.createReturn(companyId, body);
   }

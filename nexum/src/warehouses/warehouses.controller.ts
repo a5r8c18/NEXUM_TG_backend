@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import { CreateWarehouseDto, UpdateWarehouseDto } from './dto/warehouse.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -46,7 +47,7 @@ export class WarehousesController {
   @Post('warehouses')
   create(
     @Req() req: Request,
-    @Body() body: { name: string; code: string; address?: string },
+    @Body() body: CreateWarehouseDto,
   ) {
     const companyId = getCompanyId(req);
     return this.warehousesService.create(companyId, body);
@@ -56,13 +57,7 @@ export class WarehousesController {
   update(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body()
-    body: {
-      name?: string;
-      code?: string;
-      address?: string;
-      isActive?: boolean;
-    },
+    @Body() body: UpdateWarehouseDto,
   ) {
     const companyId = getCompanyId(req);
     return this.warehousesService.update(companyId, id, body);

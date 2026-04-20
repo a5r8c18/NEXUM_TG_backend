@@ -4,14 +4,18 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   OneToMany,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 import { PurchaseProduct } from './purchase-product.entity';
 
 @Entity('purchases')
+@Index('IDX_purchases_company_id', ['companyId'])
+@Index('IDX_purchases_created_at', ['createdAt'])
 export class Purchase {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -46,4 +50,7 @@ export class Purchase {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt: Date | null;
 }

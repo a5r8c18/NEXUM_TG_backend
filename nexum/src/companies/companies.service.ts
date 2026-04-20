@@ -25,6 +25,13 @@ export class CompaniesService {
     });
   }
 
+  findActiveCompanies() {
+    return this.companyRepo.find({
+      where: { isActive: true },
+      order: { id: 'ASC' },
+    });
+  }
+
   async findOne(id: number) {
     const company = await this.companyRepo.findOneBy({ id });
     if (!company) throw new NotFoundException('Empresa no encontrada');

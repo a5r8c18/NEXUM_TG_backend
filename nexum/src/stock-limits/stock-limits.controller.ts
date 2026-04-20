@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { CreateStockLimitDto, UpdateStockLimitDto } from './dto/stock-limit.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -61,17 +62,17 @@ export class StockLimitsController {
   }
 
   @Post()
-  create(@Body() body: any) {
+  create(@Body() body: CreateStockLimitDto) {
     return this.stockLimitsService.create(body);
   }
 
   @Post('bulk')
-  bulkCreate(@Body() body: any[]) {
+  bulkCreate(@Body() body: CreateStockLimitDto[]) {
     return this.stockLimitsService.bulkCreate(body);
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
+  update(@Param('id') id: string, @Body() body: UpdateStockLimitDto) {
     return this.stockLimitsService.update(id, body);
   }
 

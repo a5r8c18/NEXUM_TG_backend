@@ -21,6 +21,7 @@ import { Roles } from './roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { v4 as uuidv4 } from 'uuid';
+import { CreateTenantRequestDto, ApproveRequestDto, RejectRequestDto } from './dto';
 
 @Controller('api/tenant-requests')
 export class TenantRequestsController {
@@ -31,24 +32,7 @@ export class TenantRequestsController {
 
   // Crear nueva solicitud de tenant (equivalente a tenant request del frontend)
   @Post()
-  async createRequest(
-    @Body()
-    requestData: {
-      firstName: string;
-      lastName: string;
-      email: string;
-      phone: string;
-      position: string;
-      companyName: string;
-      industry: string;
-      country: string;
-      website?: string;
-      tenantType: 'MULTI_COMPANY' | 'SINGLE_COMPANY';
-      useCase: string;
-      message: string;
-      referralSource?: string;
-    },
-  ) {
+  async createRequest(@Body() requestData: CreateTenantRequestDto) {
     try {
       // Mapear los datos del frontend al formato del backend
       const mappedData = {
@@ -134,7 +118,7 @@ export class TenantRequestsController {
   @Roles(UserRole.SUPERADMIN)
   async approveRequest(
     @Param('email') email: string,
-    @Body() body: { adminNotes?: string },
+    @Body() body: ApproveRequestDto,
   ) {
     try {
       const result = await this.registrationRequestsService.approveRequest(
@@ -171,7 +155,7 @@ export class TenantRequestsController {
   @Roles(UserRole.SUPERADMIN)
   async rejectRequest(
     @Param('email') email: string,
-    @Body() body: { rejectionReason: string; adminNotes?: string },
+    @Body() body: RejectRequestDto,
   ) {
     try {
       const result = await this.registrationRequestsService.denyRequest(

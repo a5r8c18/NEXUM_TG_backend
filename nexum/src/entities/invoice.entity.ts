@@ -4,14 +4,20 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   OneToMany,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 import { InvoiceItem } from './invoice-item.entity';
 
 @Entity('invoices')
+@Index('IDX_invoices_company_id', ['companyId'])
+@Index('IDX_invoices_status', ['status'])
+@Index('IDX_invoices_date', ['date'])
+@Index('IDX_invoices_company_status', ['companyId', 'status'])
 export class Invoice {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -85,4 +91,7 @@ export class Invoice {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt: Date | null;
 }

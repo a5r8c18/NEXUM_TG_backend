@@ -6,6 +6,8 @@ import { User, UserRole } from './entities/user.entity';
 import { Warehouse } from './entities/warehouse.entity';
 import { Inventory } from './entities/inventory.entity';
 import { ExpenseType } from './entities/expense-type.entity';
+import * as bcrypt from 'bcryptjs';
+import { LoggerService } from './logger/logger.service';
 
 // Load .env manually
 const envPath = path.resolve(__dirname, '..', '.env');
@@ -33,7 +35,8 @@ async function seed() {
   });
 
   await ds.initialize();
-  console.log('Database connected');
+  const logger = new LoggerService();
+  logger.log('Database connected', 'Seed');
 
   const companyRepo = ds.getRepository(Company);
   const userRepo = ds.getRepository(User);
@@ -52,7 +55,7 @@ async function seed() {
     company1.email = 'contacto@empresademo.com';
     company1.isActive = true;
     company1 = await companyRepo.save(company1);
-    console.log('Company created:', company1.name);
+    logger.log(`Company created: ${company1.name}`, 'Seed');
   }
 
   // Buscar o crear Teneduria Garcia (SYSTEM OWNER)
@@ -68,13 +71,13 @@ async function seed() {
     teneduriaGarcia.tenantId = 'tenant-owner';
     teneduriaGarcia.tenantType = 'MULTI_COMPANY';
     teneduriaGarcia = await companyRepo.save(teneduriaGarcia);
-    console.log('OWNER Company created:', teneduriaGarcia.name);
+    logger.log(`OWNER Company created: ${teneduriaGarcia.name}`, 'Seed');
   } else {
     // Ensure tenant info is set
     teneduriaGarcia.tenantId = 'tenant-owner';
     teneduriaGarcia.tenantType = 'MULTI_COMPANY';
     teneduriaGarcia = await companyRepo.save(teneduriaGarcia);
-    console.log('OWNER Company updated:', teneduriaGarcia.name, 'ID:', teneduriaGarcia.id);
+    logger.log(`OWNER Company updated: ${teneduriaGarcia.name} ID: ${teneduriaGarcia.id}`, 'Seed');
   }
 
   let company2 = await companyRepo.findOneBy({ name: 'Distribuidora Norte' });
@@ -87,7 +90,7 @@ async function seed() {
     company2.email = 'info@distnorte.com';
     company2.isActive = true;
     company2 = await companyRepo.save(company2);
-    console.log('Company created:', company2.name);
+    logger.log(`Company created: ${company2.name}`, 'Seed');
   }
 
   // --- Default Partidas (ExpenseTypes) for each company ---
@@ -119,8 +122,9 @@ async function seed() {
         et.name = partida.name;
         et.isActive = true;
         await expenseTypeRepo.save(et);
-        console.log(
+        logger.log(
           `Partida created for ${company.name}: ${partida.code} - ${partida.name}`,
+          'Seed',
         );
       }
     }
@@ -145,7 +149,7 @@ async function seed() {
     superadminUser.tenantType = 'MULTI_COMPANY';
     superadminUser.companyId = teneduriaGarcia.id;
     await userRepo.save(superadminUser);
-    console.log('SUPERADMIN created:', superadminUser.email, '(Teneduria Garcia)');
+    logger.log(`SUPERADMIN created: ${superadminUser.email} (Teneduria Garcia)`, 'Seed');
   } else {
     // Update existing to ensure superadmin role
     superadminUser.role = UserRole.SUPERADMIN;
@@ -155,7 +159,7 @@ async function seed() {
     superadminUser.tenantName = 'Teneduria Garcia';
     superadminUser.tenantType = 'MULTI_COMPANY';
     await userRepo.save(superadminUser);
-    console.log('SUPERADMIN updated:', superadminUser.email);
+    logger.log(`SUPERADMIN updated: ${superadminUser.email}`, 'Seed');
   }
 
   // Accountant user for Teneduria Garcia (handles accounting for clients)
@@ -172,7 +176,7 @@ async function seed() {
     accountantUser.tenantType = 'MULTI_COMPANY';
     accountantUser.companyId = teneduriaGarcia.id;
     await userRepo.save(accountantUser);
-    console.log('Accountant user created:', accountantUser.email);
+    logger.log(`Accountant user created: ${accountantUser.email}`, 'Seed');
   }
 
   // Demo admin user for Empresa Demo
@@ -189,12 +193,12 @@ async function seed() {
     adminUser.tenantType = 'MULTI_COMPANY';
     adminUser.companyId = company1.id;
     await userRepo.save(adminUser);
-    console.log('Demo admin created:', adminUser.email);
+    logger.log(`Demo admin created: ${adminUser.email}`, 'Seed');
   } else {
     // Update password to bcrypt hash
     adminUser.password = await hashPassword('1234');
     await userRepo.save(adminUser);
-    console.log('Demo admin password updated');
+    logger.log('Demo admin password updated', 'Seed');
   }
 
   // --- Warehouses ---
@@ -231,7 +235,7 @@ async function seed() {
       w.companyId = wh.companyId;
       w.isActive = true;
       await warehouseRepo.save(w);
-      console.log('Warehouse created:', w.name);
+      logger.log(`Warehouse created: ${w.name}`, 'Seed');
     }
   }
 
@@ -337,11 +341,11 @@ async function seed() {
       inv.warehouse = p.warehouse;
       inv.entity = p.entity;
       await inventoryRepo.save(inv);
-      console.log('Inventory created:', p.productName);
+      logger.log(`Inventory created: ${p.productName}`, 'Seed');
     }
   }
 
-  console.log('\nSeed completed successfully!');
+  logger.log('\nSeed completed successfully!', 'Seed');
   await ds.destroy();
 }
 

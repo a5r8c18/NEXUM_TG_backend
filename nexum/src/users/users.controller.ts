@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
+import { CreateUserDto, UpdateUserDto, ChangePasswordDto, AssignCompaniesDto } from './dto/user.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -65,14 +66,7 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   async create(
     @Req() req: any,
-    @Body()
-    data: {
-      firstName: string;
-      lastName: string;
-      email: string;
-      role?: string;
-      companyId: number;
-    },
+    @Body() data: CreateUserDto,
   ) {
     const user = req.user;
 
@@ -99,14 +93,7 @@ export class UsersController {
   async update(
     @Param('id') id: string,
     @Req() req: any,
-    @Body() data: {
-      firstName?: string;
-      lastName?: string;
-      email?: string;
-      password?: string;
-      role?: string;
-      isActive?: boolean;
-    },
+    @Body() data: UpdateUserDto,
   ) {
     const user = req.user;
 
@@ -134,7 +121,7 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   async changePassword(
     @Param('id') id: string,
-    @Body() data: { newPassword: string },
+    @Body() data: ChangePasswordDto,
   ) {
     return this.usersService.changePassword(id, data.newPassword);
   }
@@ -143,7 +130,7 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   async assignCompanies(
     @Param('id') userId: string,
-    @Body() body: { companyIds: number[]; role?: string },
+    @Body() body: AssignCompaniesDto,
     @Req() req: any,
   ) {
     return this.userCompaniesService.assignCompaniesToUser(

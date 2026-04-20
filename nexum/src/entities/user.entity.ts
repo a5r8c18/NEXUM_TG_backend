@@ -4,9 +4,11 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   JoinColumn,
   OneToMany,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 import { UserCompany } from './user-company.entity';
@@ -19,6 +21,9 @@ export enum UserRole {
 }
 
 @Entity('users')
+@Index('IDX_users_tenant_id', ['tenantId'])
+@Index('IDX_users_company_id', ['companyId'])
+@Index('IDX_users_is_active', ['isActive'])
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -77,4 +82,7 @@ export class User {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt: Date | null;
 }

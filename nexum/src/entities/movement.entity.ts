@@ -5,12 +5,17 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 
 export type MovementType = 'entry' | 'exit' | 'return' | 'transfer';
 
 @Entity('movements')
+@Index('IDX_movements_company_id', ['companyId'])
+@Index('IDX_movements_type', ['movementType'])
+@Index('IDX_movements_created_at', ['createdAt'])
+@Index('IDX_movements_company_type', ['companyId', 'movementType'])
 export class Movement {
   @PrimaryGeneratedColumn('uuid')
   id: string;

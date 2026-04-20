@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 
@@ -39,6 +40,11 @@ export enum AuditResource {
 }
 
 @Entity('audit_logs')
+@Index('IDX_audit_company_id', ['companyId'])
+@Index('IDX_audit_user_id', ['userId'])
+@Index('IDX_audit_action', ['action'])
+@Index('IDX_audit_created_at', ['createdAt'])
+@Index('IDX_audit_resource', ['resource'])
 export class AuditLog {
   @PrimaryGeneratedColumn('uuid')
   id: string;

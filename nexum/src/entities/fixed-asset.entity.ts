@@ -4,12 +4,17 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 
 @Entity('fixed_assets')
+@Index('IDX_fixed_assets_company_id', ['companyId'])
+@Index('IDX_fixed_assets_status', ['status'])
+@Index('IDX_fixed_assets_group', ['groupNumber'])
 export class FixedAsset {
   @PrimaryGeneratedColumn()
   id: number;
@@ -85,4 +90,7 @@ export class FixedAsset {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt: Date | null;
 }

@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import { CreatePurchaseDto } from './dto/create-purchase.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -19,24 +20,7 @@ export class PurchasesController {
   }
 
   @Post()
-  create(
-    @Req() req: Request,
-    @Body()
-    body: {
-      entity: string;
-      warehouse: string;
-      supplier: string;
-      document: string;
-      products: Array<{
-        product_code: string;
-        product_name: string;
-        quantity: number;
-        unit_price: number;
-        unit?: string;
-        expiration_date?: string;
-      }>;
-    },
-  ) {
+  create(@Req() req: Request, @Body() body: CreatePurchaseDto) {
     const companyId = getCompanyId(req);
     return this.purchasesService.create(companyId, body);
   }

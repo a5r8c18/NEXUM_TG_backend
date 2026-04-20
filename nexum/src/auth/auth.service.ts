@@ -6,6 +6,8 @@ import * as bcrypt from 'bcryptjs';
 import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
 import { RegistrationRequestsService } from './registration-requests.service';
+import { RefreshTokenService } from './refresh-token.service';
+import { LoginResponseDto } from './dto/refresh-token.dto';
 
 @Injectable()
 export class AuthService {
@@ -16,6 +18,7 @@ export class AuthService {
     private readonly companyRepo: Repository<Company>,
     private registrationRequestsService: RegistrationRequestsService,
     private jwtService: JwtService,
+    private refreshTokenService: RefreshTokenService,
   ) {}
 
   private generateToken(user: User): string {
@@ -35,33 +38,65 @@ export class AuthService {
     return userWithoutPassword;
   }
 
-  async login(email: string, password: string) {
+  async login(email: string, password: string, ipAddress?: string, userAgent?: string): Promise<LoginResponseDto> {
+    console.log('AUTH SERVICE - Login attempt for email:', email);
+    console.log('AUTH SERVICE - Password provided:', password ? 'Yes' : 'No');
+    
     const user = await this.userRepo.findOne({
       where: { email },
       relations: ['company'],
     });
 
-    if (!user) {
-      throw new UnauthorizedException('Credenciales inválidas');
+    console.log('AUTH SERVICE - User found:', user ? 'Yes' : 'No');
+    if (user) {
+      console.log('AUTH SERVICE - User details:', {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+        hasPassword: !!user.password,
+        companyId: user.companyId,
+        tenantId: user.tenantId
+      });
     }
 
-    if (!user.password) {
-      throw new UnauthorizedException('Debe establecer su contraseña primero. Acceda a la página de configuración de contraseña.');
+    if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
+      console.log('AUTH SERVICE - Authentication failed - User exists:', !!user, 'Has password:', !!user?.password);
+      if (user && user.password) {
+        const passwordMatch = await bcrypt.compare(password, user.password);
+        console.log('AUTH SERVICE - Password match:', passwordMatch);
+      }
+      throw new UnauthorizedException('Credenciales inválidas');
     }
 
     if (!user.isActive) {
-      throw new UnauthorizedException('Su cuenta está desactivada. Contacte al administrador.');
+      throw new UnauthorizedException('Usuario inactivo');
     }
 
-    const passwordValid = await bcrypt.compare(password, user.password);
-    if (!passwordValid) {
-      throw new UnauthorizedException('Credenciales inválidas');
-    }
-
-    return {
-      user: this.sanitizeUser(user),
-      token: this.generateToken(user),
+    const accessToken = this.generateToken(user);
+    const refreshTokenData = await this.refreshTokenService.createRefreshToken(user, ipAddress, userAgent);
+    
+    const response = {
+      accessToken,
+      refreshToken: (refreshTokenData as any).token,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        companyId: user.companyId,
+        tenantId: user.tenantId,
+      },
     };
+    
+    console.log('AUTH SERVICE - Login successful, returning response:', {
+      accessToken: accessToken.substring(0, 20) + '...',
+      refreshToken: response.refreshToken ? 'Present' : 'Missing',
+      user: response.user
+    });
+    
+    return response;
   }
 
   async register(data: {
@@ -176,5 +211,49 @@ export class AuthService {
 
   validateToken(token: string) {
     return this.registrationRequestsService.validateToken(token);
+  }
+
+  async refreshToken(refreshToken: string) {
+    const tokenData = await this.refreshTokenService.validateRefreshToken(refreshToken);
+    
+    if (!tokenData) {
+      throw new UnauthorizedException('Refresh token inválido o expirado');
+    }
+
+    const user = tokenData.user;
+    if (!user.isActive) {
+      throw new UnauthorizedException('Usuario inactivo');
+    }
+
+    // Revoke the used refresh token
+    await this.refreshTokenService.revokeToken(tokenData.id);
+
+    // Generate new tokens
+    const accessToken = this.generateToken(user);
+    const newRefreshTokenData = await this.refreshTokenService.createRefreshToken(user);
+
+    return {
+      accessToken,
+      refreshToken: (newRefreshTokenData as any).token,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        companyId: user.companyId,
+        tenantId: user.tenantId,
+      },
+    };
+  }
+
+  async logout(refreshToken: string) {
+    const tokenData = await this.refreshTokenService.validateRefreshToken(refreshToken);
+    
+    if (tokenData) {
+      await this.refreshTokenService.revokeToken(tokenData.id);
+    }
+
+    return { message: 'Sesión cerrada exitosamente' };
   }
 }

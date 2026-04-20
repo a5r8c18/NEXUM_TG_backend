@@ -6,10 +6,14 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 
 @Entity('inventory')
+@Index('IDX_inventory_company_id', ['companyId'])
+@Index('IDX_inventory_product_code', ['productCode'])
+@Index('IDX_inventory_company_product', ['companyId', 'productCode'])
 export class Inventory {
   @PrimaryGeneratedColumn()
   id: number;

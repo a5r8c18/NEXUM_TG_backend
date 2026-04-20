@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
+import { LoggerService } from '../logger/logger.service';
 
 @Injectable()
 export class UsersService {
@@ -14,6 +15,7 @@ export class UsersService {
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
     private readonly jwtService: JwtService,
+    private readonly logger: LoggerService,
   ) {}
 
   // Obtener usuarios de una empresa específica
@@ -77,14 +79,15 @@ export class UsersService {
     });
 
     // TODO: Enviar email con el token
-    console.log(`=== TOKEN DE CONFIGURACIÓN PARA USUARIO CREADO ===`);
-    console.log(`Usuario: ${savedUser.email}`);
-    console.log(`Empresa: ${company.name}`);
-    console.log(`Token: ${setupToken}`);
-    console.log(
+    this.logger.log(`=== TOKEN DE CONFIGURACIÓN PARA USUARIO CREADO ===`, 'UsersService');
+    this.logger.log(`Usuario: ${savedUser.email}`, 'UsersService');
+    this.logger.log(`Empresa: ${company.name}`, 'UsersService');
+    this.logger.log(`Token: ${setupToken}`, 'UsersService');
+    this.logger.log(
       `URL: http://localhost:4200/setup-password?token=${setupToken}`,
+      'UsersService',
     );
-    console.log(`================================================`);
+    this.logger.log(`================================================`, 'UsersService');
 
     return {
       user: savedUser,

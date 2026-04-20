@@ -6,10 +6,13 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 
 @Entity('stock_limits')
+@Index('IDX_stock_limits_company_id', ['companyId'])
+@Index('IDX_stock_limits_warehouse_id', ['warehouseId'])
 export class StockLimit {
   @PrimaryGeneratedColumn('uuid')
   id: string;

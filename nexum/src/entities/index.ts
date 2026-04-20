@@ -30,3 +30,4 @@ export { Message } from './message.entity';
 export { Payroll } from './payroll.entity';
 export { PayrollItem } from './payroll-item.entity';
 export { AccountMapping, MappingType } from './account-mapping.entity';
+export { Subscription, SubscriptionPlan, SubscriptionStatus } from './subscription.entity';

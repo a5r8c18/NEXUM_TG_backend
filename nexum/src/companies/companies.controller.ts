@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { CompaniesService } from './companies.service';
 import { CompanyResponseDto } from './dto/company-response.dto';
+import { CreateCompanyDto, UpdateCompanyDto } from './dto/create-company.dto';
 import { Company } from '../entities/company.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -25,7 +26,6 @@ import { ForbiddenException } from '@nestjs/common';
 export class CompaniesController {
   constructor(private readonly companiesService: CompaniesService) {}
 
-  
   private mapToResponseDto(company: Company): CompanyResponseDto {
     return {
       id: company.id,
@@ -36,11 +36,11 @@ export class CompaniesController {
       email: company.email || undefined,
       logo_path: company.logoPath || undefined,
       is_active: company.isActive,
-      created_at: company.createdAt 
-        ? company.createdAt.toISOString() 
+      created_at: company.createdAt
+        ? company.createdAt.toISOString()
         : new Date().toISOString(),
-      updated_at: company.updatedAt 
-        ? company.updatedAt.toISOString() 
+      updated_at: company.updatedAt
+        ? company.updatedAt.toISOString()
         : undefined,
       tenantId: company.tenantId || undefined,
       tenantType: company.tenantType || undefined,
@@ -48,23 +48,37 @@ export class CompaniesController {
   }
 
   @Get()
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
+  @Roles(
+    UserRole.SUPERADMIN,
+    UserRole.ADMIN,
+    UserRole.USER,
+    UserRole.FACTURADOR,
+  )
   async findAll(@Req() req: any) {
     const user = req.user;
     // Superadmin ve todas las empresas
     // Otros roles solo ven empresas de su tenant
-    const companies = user.role === UserRole.SUPERADMIN
-      ? await this.companiesService.findAll()
-      : await this.companiesService.findByTenant(user.tenantId);
+    const companies =
+      user.role === UserRole.SUPERADMIN
+        ? await this.companiesService.findAll()
+        : await this.companiesService.findByTenant(user.tenantId);
     return companies.map((company) => this.mapToResponseDto(company));
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
+  @Roles(
+    UserRole.SUPERADMIN,
+    UserRole.ADMIN,
+    UserRole.USER,
+    UserRole.FACTURADOR,
+  )
   async findOne(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
     const company = await this.companiesService.findOne(id);
     const user = req.user;
-    if (user.role !== UserRole.SUPERADMIN && company.tenantId !== user.tenantId) {
+    if (
+      user.role !== UserRole.SUPERADMIN &&
+      company.tenantId !== user.tenantId
+    ) {
       throw new ForbiddenException('No tiene acceso a esta empresa');
     }
     return this.mapToResponseDto(company);
@@ -72,18 +86,7 @@ export class CompaniesController {
 
   @Post()
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
-  async create(
-    @Req() req: any,
-    @Body()
-    body: {
-      name: string;
-      tax_id?: string;
-      address?: string;
-      phone?: string;
-      email?: string;
-      logo_path?: string;
-    },
-  ) {
+  async create(@Req() req: any, @Body() body: CreateCompanyDto) {
     const user = req.user;
     const company = await this.companiesService.create({
       ...body,
@@ -98,15 +101,7 @@ export class CompaniesController {
   async update(
     @Req() req: any,
     @Param('id', ParseIntPipe) id: number,
-    @Body()
-    body: {
-      name?: string;
-      tax_id?: string;
-      address?: string;
-      phone?: string;
-      email?: string;
-      logo_path?: string;
-    },
+    @Body() body: UpdateCompanyDto,
   ) {
     const user = req.user;
     if (user.role !== UserRole.SUPERADMIN) {
@@ -130,5 +125,45 @@ export class CompaniesController {
       }
     }
     return this.companiesService.remove(id);
+  }
+}
+
+// Controlador separado para endpoints públicos sin autenticación
+@Controller('companies/public')
+export class CompaniesPublicController {
+  constructor(private readonly companiesService: CompaniesService) {}
+
+  @Get('search')
+  async searchCompanies(@Req() req: any) {
+    const email = req.query.email as string;
+    console.log('Public search for companies with email:', email);
+
+    if (!email) {
+      return [];
+    }
+
+    // Buscar empresas activas (sin filtrar por tenant ya que no hay autenticación)
+    const companies = await this.companiesService.findActiveCompanies();
+    console.log('Found active companies:', companies.length);
+
+    // Mapear a response DTO
+    return companies.map((company) => ({
+      id: company.id,
+      name: company.name,
+      tax_id: company.taxId,
+      address: company.address || undefined,
+      phone: company.phone || undefined,
+      email: company.email || undefined,
+      logo_path: company.logoPath || undefined,
+      is_active: company.isActive,
+      created_at: company.createdAt
+        ? company.createdAt.toISOString()
+        : new Date().toISOString(),
+      updated_at: company.updatedAt
+        ? company.updatedAt.toISOString()
+        : undefined,
+      tenantId: company.tenantId || undefined,
+      tenantType: company.tenantType || undefined,
+    }));
   }
 }

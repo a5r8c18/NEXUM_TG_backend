@@ -124,7 +124,7 @@ export class FixedAssetsService {
   async remove(companyId: number, id: number) {
     const asset = await this.assetRepo.findOneBy({ id, companyId });
     if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
-    await this.assetRepo.remove(asset);
+    await this.assetRepo.softRemove(asset);
     return { message: 'Activo fijo eliminado correctamente' };
   }
 

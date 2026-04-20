@@ -205,7 +205,7 @@ export class InvoicesService {
   async remove(companyId: number, id: string) {
     const invoice = await this.invoiceRepo.findOneBy({ id, companyId });
     if (!invoice) throw new NotFoundException(`Factura #${id} no encontrada`);
-    await this.invoiceRepo.remove(invoice);
+    await this.invoiceRepo.softRemove(invoice);
     return { message: 'Factura eliminada correctamente' };
   }
 

@@ -22,6 +22,9 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { HrModule } from './hr/hr.module';
 import { MessagesModule } from './messages/messages.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { LoggerModule } from './logger/logger.module';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -53,6 +56,8 @@ import { Department } from './entities/department.entity';
 import { Employee } from './entities/employee.entity';
 import { ExpenseType } from './entities/expense-type.entity';
 import { Message } from './entities/message.entity';
+import { Subscription } from './entities/subscription.entity';
+import { RefreshToken } from './auth/refresh-token.entity';
 
 @Module({
   imports: [
@@ -98,8 +103,18 @@ import { Message } from './entities/message.entity';
           Employee,
           Message,
           ExpenseType,
+          Subscription,
+          RefreshToken,
         ],
-        synchronize: true,
+        synchronize: configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
+        // Connection pooling
+        extra: {
+          max: configService.get<number>('DB_POOL_MAX', 20),
+          min: configService.get<number>('DB_POOL_MIN', 5),
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 5000,
+        },
+        logging: configService.get<string>('DB_LOGGING', 'false') === 'true',
       }),
     }),
     AuthModule,
@@ -119,6 +134,12 @@ import { Message } from './entities/message.entity';
     AccountingModule,
     HrModule,
     MessagesModule,
+    SubscriptionsModule,
+    LoggerModule,
+    ThrottlerModule.forRoot([{
+      ttl: 60000, // 1 minute
+      limit: 100, // limit each IP to 100 requests per window
+    }]),
   ],
   controllers: [AppController],
   providers: [
