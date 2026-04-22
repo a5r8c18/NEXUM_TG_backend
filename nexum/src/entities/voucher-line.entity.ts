@@ -36,6 +36,18 @@ export class VoucherLine {
   @Column({ name: 'account_name', type: 'varchar', length: 255 })
   accountName: string;
 
+  @Column({ name: 'subaccount_code', type: 'varchar', length: 50, nullable: true })
+  subaccountCode: string | null;
+
+  @Column({ name: 'subaccount_name', type: 'varchar', length: 255, nullable: true })
+  subaccountName: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  element: string | null;
+
+  @Column({ name: 'element_name', type: 'varchar', length: 255, nullable: true })
+  elementName: string | null;
+
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   debit: number;
 

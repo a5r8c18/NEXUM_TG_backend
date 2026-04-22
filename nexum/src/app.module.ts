@@ -44,8 +44,6 @@ import { InventoryWarehouse } from './entities/inventory-warehouse.entity';
 import { AuditLog } from './entities/audit-log.entity';
 import { UserCompany } from './entities/user-company.entity';
 import { Account } from './entities/account.entity';
-import { JournalEntry } from './entities/journal-entry.entity';
-import { Partida } from './entities/partida.entity';
 import { Elemento } from './entities/elemento.entity';
 import { Voucher } from './entities/voucher.entity';
 import { VoucherLine } from './entities/voucher-line.entity';
@@ -57,6 +55,8 @@ import { Employee } from './entities/employee.entity';
 import { ExpenseType } from './entities/expense-type.entity';
 import { Message } from './entities/message.entity';
 import { Subscription } from './entities/subscription.entity';
+import { Subelement } from './entities/subelement.entity';
+import { Subaccount } from './entities/subaccount.entity';
 import { RefreshToken } from './auth/refresh-token.entity';
 
 @Module({
@@ -91,8 +91,6 @@ import { RefreshToken } from './auth/refresh-token.entity';
           AuditLog,
           UserCompany,
           Account,
-          JournalEntry,
-          Partida,
           Elemento,
           Voucher,
           VoucherLine,
@@ -104,6 +102,8 @@ import { RefreshToken } from './auth/refresh-token.entity';
           Message,
           ExpenseType,
           Subscription,
+          Subelement,
+          Subaccount,
           RefreshToken,
         ],
         synchronize: configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',

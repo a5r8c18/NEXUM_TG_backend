@@ -464,40 +464,7 @@ export class AccountingController {
     });
   }
 
-  @Get('entries/statistics')
-  getEntryStatistics(@Req() req: Request) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.getEntryStatistics(companyId);
-  }
-
-  @Get('entries/:id')
-  findOneEntry(@Req() req: Request, @Param('id') id: string) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.findOneEntry(companyId, id);
-  }
-
-  @Post('entries')
-  createEntry(@Req() req: Request, @Body() body: any) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.createEntry(companyId, body);
-  }
-
-  @Put('entries/:id/status')
-  updateEntryStatus(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() body: { status: string },
-  ) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.updateEntryStatus(companyId, id, body.status);
-  }
-
-  @Delete('entries/:id')
-  deleteEntry(@Req() req: Request, @Param('id') id: string) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.deleteEntry(companyId, id);
-  }
-
+  
   // ── Accounts (Chart of Accounts) ──
 
   @Get('accounts/statistics')
@@ -547,10 +514,25 @@ export class AccountingController {
     );
   }
 
+  @Get('subaccounts/:accountId')
+  getSubaccountsByAccount(
+    @Req() req: Request,
+    @Param('accountId') accountId: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.getSubaccountsByAccount(companyId, accountId);
+  }
+
   @Post('accounts')
   createAccount(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
     return this.accountingService.createAccount(companyId, body);
+  }
+
+  @Post('subaccounts')
+  createSubaccount(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.accountingService.createSubaccount(companyId, body);
   }
 
   @Put('accounts/:id')
@@ -570,149 +552,9 @@ export class AccountingController {
   }
 
   // ================================
-  // JOURNAL ENTRIES (Partidas Independientes)
+  
   // ================================
-
-  @Get('journal-entries')
-  findAllJournalEntries(
-    @Req() req: Request,
-    @Query('status') status?: string,
-    @Query('type') type?: string,
-    @Query('fromDate') fromDate?: string,
-    @Query('toDate') toDate?: string,
-    @Query('accountCode') accountCode?: string,
-    @Query('search') search?: string,
-  ) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.findAllJournalEntries(companyId, {
-      status,
-      type,
-      fromDate,
-      toDate,
-      accountCode,
-      search,
-    });
-  }
-
-  @Get('journal-entries/:id')
-  findOneJournalEntry(@Req() req: Request, @Param('id') id: string) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.findOneJournalEntry(companyId, id);
-  }
-
-  @Get('journal-entries/statistics')
-  getJournalEntryStatistics(@Req() req: Request) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.getJournalEntryStatistics(companyId);
-  }
-
-  @Post('journal-entries')
-  createJournalEntry(@Req() req: Request, @Body() body: any) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.createJournalEntry(companyId, body);
-  }
-
-  @Put('journal-entries/:id')
-  updateJournalEntry(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() body: any,
-  ) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.updateJournalEntry(companyId, id, body);
-  }
-
-  @Patch('journal-entries/:id/status')
-  updateJournalEntryStatus(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() body: { status: 'posted' | 'cancelled' },
-  ) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.updateJournalEntryStatus(
-      companyId,
-      id,
-      body.status,
-    );
-  }
-
-  @Delete('journal-entries/:id')
-  deleteJournalEntry(@Req() req: Request, @Param('id') id: string) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.deleteJournalEntry(companyId, id);
-  }
-
-  // ================================
-  // PARTIDAS (Partidas de Gastos)
-  // ================================
-
-  @Get('partidas')
-  findAllPartidas(
-    @Req() req: Request,
-    @Query('status') status?: string,
-    @Query('fromDate') fromDate?: string,
-    @Query('toDate') toDate?: string,
-    @Query('accountCode') accountCode?: string,
-    @Query('search') search?: string,
-  ) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.findAllPartidas(companyId, {
-      status,
-      fromDate,
-      toDate,
-      accountCode,
-      search,
-    });
-  }
-
-  @Get('partidas/:id')
-  findOnePartida(@Req() req: Request, @Param('id') id: string) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.findOnePartida(companyId, id);
-  }
-
-  @Get('partidas/statistics')
-  getPartidaStatistics(@Req() req: Request) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.getPartidaStatistics(companyId);
-  }
-
-  @Post('partidas')
-  createPartida(@Req() req: Request, @Body() body: any) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.createPartida(companyId, body);
-  }
-
-  @Put('partidas/:id')
-  updatePartida(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() body: any,
-  ) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.updatePartida(companyId, id, body);
-  }
-
-  @Patch('partidas/:id/status')
-  updatePartidaStatus(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() body: { status: 'posted' | 'cancelled' },
-  ) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.updatePartidaStatus(
-      companyId,
-      id,
-      body.status,
-    );
-  }
-
-  @Delete('partidas/:id')
-  deletePartida(@Req() req: Request, @Param('id') id: string) {
-    const companyId = getCompanyId(req);
-    return this.accountingService.deletePartida(companyId, id);
-  }
-
+  
   // ================================
   // ELEMENTOS (Elementos de Gastos)
   // ================================
