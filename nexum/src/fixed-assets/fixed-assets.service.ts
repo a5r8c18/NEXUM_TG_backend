@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/commo
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
-import { AccountingService } from '../accounting/accounting.service';
+import { AccountService } from '../accounting/account.service';
 import {
   mockDepreciationCatalog,
   getDepreciationRate,
@@ -11,8 +11,8 @@ import {
 @Injectable()
 export class FixedAssetsService {
   constructor(
-    @Inject(forwardRef(() => AccountingService))
-    private readonly accountingService: AccountingService,
+    @Inject(forwardRef(() => AccountService))
+    private readonly accountService: AccountService,
     @InjectRepository(FixedAsset)
     private readonly assetRepo: Repository<FixedAsset>,
   ) {}
@@ -90,7 +90,7 @@ export class FixedAssetsService {
     // ── Automatic Accounting Voucher (DESHABILITADO — contabilidad manual) ──
     // TODO: Reactivar cuando se indique
     // try {
-    //   await this.accountingService.createVoucherFromModule(companyId, 'fixed-assets', String(asset.id), { ... });
+    //   await this.accountService.createVoucherFromModule(companyId, 'fixed-assets', String(asset.id), { ... });
     // } catch (e) { console.warn(...); }
 
     return { asset };

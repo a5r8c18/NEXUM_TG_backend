@@ -25,7 +25,6 @@ import { CostCenter } from '../entities/cost-center.entity';
 import { FiscalYear } from '../entities/fiscal-year.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { ExpenseType } from '../entities/expense-type.entity';
-import { Subaccount } from '../entities/subaccount.entity';
 import { Subelement } from '../entities/subelement.entity';
 import { EntityManager } from 'typeorm';
 
@@ -48,10 +47,9 @@ export class AccountingService {
     private readonly periodRepo: Repository<AccountingPeriod>,
     @InjectRepository(ExpenseType)
     private readonly expenseTypeRepo: Repository<ExpenseType>,
-    @InjectRepository(Subaccount)
-    private readonly subaccountRepo: Repository<Subaccount>,
     @InjectRepository(Subelement)
     private readonly subelementRepo: Repository<Subelement>,
+    private readonly entityManager: EntityManager,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -124,77 +122,71 @@ export class AccountingService {
     companyId: number,
     data: any, // Cambiado a any para ver qué recibe realmente
   ) {
-    // Logs para depuración
-    console.log('=== BACKEND RECIBIENDO COMPROBANTE ===');
-    console.log('CompanyId:', companyId);
-    console.log('Data recibida:', JSON.stringify(data, null, 2));
-    console.log('=====================================');
+    return await this.entityManager.transaction(async (manager) => {
+      // Logs para depuración
+      console.log('=== BACKEND RECIBIENDO COMPROBANTE ===');
+      console.log('CompanyId:', companyId);
+      console.log('Data recibida:', JSON.stringify(data, null, 2));
+      console.log('=====================================');
 
-    // Validar que tenga al menos 2 líneas
-    if (!data.lines || data.lines.length < 2) {
-      throw new BadRequestException(
-        'Un comprobante debe tener al menos 2 partidas (líneas)',
-      );
-    }
+      // Validar que la fecha del voucher pertenezca a un período contable abierto
+      await this.validateOpenPeriod(companyId, data.date);
 
-    // Validar partida doble: SUM(debit) === SUM(credit)
-    const totalDebit = data.lines.reduce(
-      (sum, l) => sum + Number(l.debit || 0),
-      0,
-    );
-    const totalCredit = data.lines.reduce(
-      (sum, l) => sum + Number(l.credit || 0),
-      0,
-    );
-    if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      throw new BadRequestException(
-        `Partida doble no cuadra: Débito (${totalDebit.toFixed(2)}) ≠ Crédito (${totalCredit.toFixed(2)})`,
-      );
-    }
-
-    // Validar que cada línea tenga solo debit o credit (no ambos > 0)
-    for (const line of data.lines) {
-      if (Number(line.debit) > 0 && Number(line.credit) > 0) {
+      // Validar que tenga al menos 2 líneas
+      if (!data.lines || data.lines.length < 2) {
         throw new BadRequestException(
-          `La partida de cuenta ${line.accountCode} no puede tener débito y crédito simultáneamente`,
+          'Un comprobante debe tener al menos 2 partidas (líneas)',
         );
       }
-    }
 
-    // Resolver accountId y accountName desde accountCode si no se proporciona accountId
-    const resolvedLines = await Promise.all(
-      data.lines.map(async (line) => {
-        let accountId = line.accountId;
-        let accountName = line.accountName;
+      // Validar partida doble: SUM(debit) === SUM(credit)
+      const totalDebit = data.lines.reduce(
+        (sum, l) => sum + Number(l.debit || 0),
+        0,
+      );
+      const totalCredit = data.lines.reduce(
+        (sum, l) => sum + Number(l.credit || 0),
+        0,
+      );
+      if (Math.abs(totalDebit - totalCredit) > 0.01) {
+        throw new BadRequestException(
+          `Partida doble no cuadra: Débito (${totalDebit.toFixed(2)}) ≠ Crédito (${totalCredit.toFixed(2)})`,
+        );
+      }
 
-        if (!accountId) {
-          const account = await this.accountRepo.findOneBy({
-            code: line.accountCode,
-            companyId,
-          });
-          if (!account) {
-            throw new BadRequestException(
-              `Cuenta contable ${line.accountCode} no encontrada para esta empresa`,
-            );
-          }
-          accountId = account.id;
-          accountName = account.name;
+      // Validar que cada línea tenga solo debit o credit (no ambos > 0)
+      for (const line of data.lines) {
+        if (Number(line.debit) > 0 && Number(line.credit) > 0) {
+          throw new BadRequestException(
+            `La partida de cuenta ${line.accountCode} no puede tener débito y crédito simultáneamente`,
+          );
         }
+      }
 
-        // Buscar nombre de la subcuenta si se proporcionó
-        let subaccountName: string | null = null;
-        if (line.subaccountCode) {
-          try {
-            const subaccount = await this.subaccountRepo.findOneBy({
-              subaccountCode: line.subaccountCode,
+      // Resolver accountId y accountName desde accountCode si no se proporciona accountId
+      const resolvedLines = await Promise.all(
+        data.lines.map(async (line) => {
+          let accountId = line.accountId;
+          let accountName = line.accountName;
+
+          if (!accountId) {
+            const account = await manager.getRepository(Account).findOneBy({
+              code: line.accountCode,
               companyId,
             });
-            if (subaccount) {
-              subaccountName = subaccount.subaccountName;
+            if (!account) {
+              throw new BadRequestException(
+                `Cuenta contable ${line.accountCode} no encontrada para esta empresa`,
+              );
             }
-          } catch (error) {
-            // Si la tabla subaccounts no existe, buscar como cuenta temporalmente
-            const account = await this.accountRepo.findOneBy({
+            accountId = account.id;
+            accountName = account.name;
+          }
+
+          // Buscar nombre de la subcuenta si se proporcionó (ahora es una cuenta con level=4)
+          let subaccountName: string | null = null;
+          if (line.subaccountCode) {
+            const account = await manager.getRepository(Account).findOneBy({
               code: line.subaccountCode,
               companyId,
             });
@@ -202,131 +194,232 @@ export class AccountingService {
               subaccountName = account.name;
             }
           }
-        }
 
-        // Buscar nombre del subelemento si se proporcionó
-        let elementName: string | null = null;
-        if (line.element) {
-          try {
-            const subelement = await this.subelementRepo.findOneBy({
-              code: line.element,
-              companyId,
-            });
-            if (subelement) {
-              elementName = subelement.name;
-            } else {
-              // Si no encuentra por companyId, buscar global (subelementos pueden ser globales)
-              const globalSubelement = await this.subelementRepo.findOneBy({
-                code: line.element,
-              });
-              if (globalSubelement) {
-                elementName = globalSubelement.name;
+          // Buscar nombre del subelemento si se proporcionó
+          let elementName: string | null = null;
+          if (line.element) {
+            try {
+              const subelement = await manager
+                .getRepository(Subelement)
+                .findOneBy({
+                  code: line.element,
+                  companyId,
+                });
+              if (subelement) {
+                elementName = subelement.name;
+              } else {
+                // Si no encuentra por companyId, buscar global (subelementos pueden ser globales)
+                const globalSubelement = await manager
+                  .getRepository(Subelement)
+                  .findOneBy({
+                    code: line.element,
+                  });
+                if (globalSubelement) {
+                  elementName = globalSubelement.name;
+                }
               }
+            } catch (error) {
+              // Si hay error, usar el código como nombre temporalmente
+              elementName = line.element;
             }
-          } catch (error) {
-            // Si hay error, usar el código como nombre temporalmente
-            elementName = line.element;
           }
-        }
 
-        return {
-          accountId,
-          accountCode: line.accountCode,
-          accountName: accountName || line.accountName,
-          subaccountCode: line.subaccountCode || null,
-          subaccountName: subaccountName,
-          element: line.element || null,
-          elementName: elementName,
-          debit: line.debit || 0,
-          credit: line.credit || 0,
-          description: line.description || null,
-          costCenterId: line.costCenterId || null,
-          reference: line.reference || null,
-        };
-      }),
-    );
+          // Buscar nombre del subelemento si se proporcionó
+          let subelementName: string | null = null;
+          if (line.subelement) {
+            try {
+              const subelement = await manager
+                .getRepository(Subelement)
+                .findOneBy({
+                  code: line.subelement,
+                  companyId,
+                });
+              if (subelement) {
+                subelementName = subelement.name;
+              } else {
+                // Si no encuentra por companyId, buscar global (subelementos pueden ser globales)
+                const globalSubelement = await manager
+                  .getRepository(Subelement)
+                  .findOneBy({
+                    code: line.subelement,
+                  });
+                if (globalSubelement) {
+                  subelementName = globalSubelement.name;
+                }
+              }
+            } catch (error) {
+              // Si hay error, usar el código como nombre temporalmente
+              subelementName = line.subelement;
+            }
+          }
 
-    // Generar número de comprobante
-    const count = await this.voucherRepo.count({ where: { companyId } });
-    const voucherNumber = `COP-${String(count + 1).padStart(5, '0')}`;
+          return {
+            accountId,
+            accountCode: line.accountCode,
+            accountName: accountName || line.accountName,
+            subaccountCode: line.subaccountCode || null,
+            subaccountName: subaccountName,
+            element: line.element || null,
+            elementName: elementName,
+            subelement: line.subelement || null,
+            subelementName: subelementName,
+            debit: line.debit || 0,
+            credit: line.credit || 0,
+            description: line.description || null,
+            costCenterId: line.costCenterId || null,
+            reference: line.reference || null,
+          };
+        }),
+      );
 
-    const voucher = this.voucherRepo.create({
-      companyId,
-      voucherNumber,
-      date: data.date,
-      description: data.description,
-      type: (data.type as any) || 'otro',
-      status: 'draft',
-      totalAmount: totalDebit,
-      sourceModule: (data.sourceModule as SourceModule) || 'manual',
-      sourceDocumentId: data.sourceDocumentId || null,
-      reference: data.reference || null,
-      createdBy: data.createdBy || null,
-      lines: resolvedLines.map((line, index) => {
-        // Log para ver qué se está guardando
-        console.log(`Guardando línea ${index + 1}:`, {
-          subaccountCode: line.subaccountCode,
-          subaccountName: line.subaccountName,
-          element: line.element,
-          elementName: line.elementName,
-        });
+      // Generar número de comprobante
+      const count = await manager
+        .getRepository(Voucher)
+        .count({ where: { companyId } });
+      const voucherNumber = `COP-${String(count + 1).padStart(5, '0')}`;
 
-        return this.voucherLineRepo.create({
-          accountId: line.accountId,
-          accountCode: line.accountCode,
-          accountName: line.accountName,
-          subaccountCode: line.subaccountCode,
-          subaccountName: line.subaccountName,
-          element: line.element,
-          elementName: line.elementName,
-          debit: line.debit,
-          credit: line.credit,
-          description: line.description,
-          costCenterId: line.costCenterId,
-          reference: line.reference,
-          lineOrder: index + 1,
-        });
-      }),
+      const voucher = manager.getRepository(Voucher).create({
+        companyId,
+        voucherNumber,
+        date: data.date,
+        description: data.description,
+        type: (data.type as any) || 'otro',
+        status: 'draft',
+        totalAmount: totalDebit,
+        sourceModule: (data.sourceModule as SourceModule) || 'manual',
+        sourceDocumentId: data.sourceDocumentId || null,
+        reference: data.reference || null,
+        createdBy: data.createdBy || null,
+        lines: resolvedLines.map((line, index) => {
+          // Log para ver qué se está guardando
+          console.log(`Guardando línea ${index + 1}:`, {
+            subaccountCode: line.subaccountCode,
+            subaccountName: line.subaccountName,
+            element: line.element,
+            elementName: line.elementName,
+          });
+
+          return manager.getRepository(VoucherLine).create({
+            accountId: line.accountId,
+            accountCode: line.accountCode,
+            accountName: line.accountName,
+            subaccountCode: line.subaccountCode,
+            subaccountName: line.subaccountName,
+            element: line.element,
+            elementName: line.elementName,
+            debit: line.debit,
+            credit: line.credit,
+            description: line.description,
+            costCenterId: line.costCenterId,
+            reference: line.reference,
+            lineOrder: index + 1,
+          });
+        }),
+      });
+
+      const saved = await manager.getRepository(Voucher).save(voucher);
+
+      // Si se publica directamente, actualizar saldos dentro de la misma transacción
+      if (data.type === 'apertura') {
+        await this.postVoucherInTransaction(manager, companyId, saved.id);
+      }
+
+      return saved;
     });
-
-    const saved = await this.voucherRepo.save(voucher);
-
-    // Si se publica directamente, actualizar saldos
-    if (data.type === 'apertura') {
-      await this.postVoucher(companyId, saved.id);
-    }
-
-    return saved;
   }
 
   async updateVoucherStatus(companyId: number, id: string, status: string) {
-    const voucher = await this.findOneVoucher(companyId, id);
+    return await this.entityManager.transaction(async (manager) => {
+      // Buscar voucher dentro de la transacción
+      const voucher = await manager.getRepository(Voucher).findOne({
+        where: { id, companyId },
+      });
 
-    if (voucher.status === 'posted' && status !== 'cancelled') {
-      throw new BadRequestException(
-        'Un comprobante contabilizado solo puede ser anulado',
-      );
-    }
+      if (!voucher) {
+        throw new NotFoundException(`Voucher #${id} no encontrado`);
+      }
 
-    if (status === 'posted') {
-      return this.postVoucher(companyId, id);
-    }
+      if (voucher.status === 'posted' && status !== 'cancelled') {
+        throw new BadRequestException(
+          'Un comprobante contabilizado solo puede ser anulado',
+        );
+      }
 
-    if (status === 'cancelled' && voucher.status === 'posted') {
-      // Revertir saldos
-      await this.reverseVoucherBalances(voucher);
-    }
+      // Si se está intentando cambiar la fecha a un período cerrado, validar
+      if (status === 'posted') {
+        await this.validateOpenPeriod(companyId, voucher.date);
+      }
 
-    voucher.status = status as any;
-    return this.voucherRepo.save(voucher);
+      if (status === 'posted') {
+        // Usar el método transaccional para publicar
+        return await this.postVoucherInTransaction(manager, companyId, id);
+      }
+
+      if (status === 'cancelled' && voucher.status === 'posted') {
+        // Revertir saldos y actualizar estado en una sola transacción
+        const voucherWithLines = await manager.getRepository(Voucher).findOne({
+          where: { id, companyId },
+          relations: ['lines'],
+        });
+
+        if (!voucherWithLines) {
+          throw new NotFoundException(`Voucher #${id} no encontrado`);
+        }
+
+        // Revertir saldos de cuentas
+        for (const line of voucherWithLines.lines) {
+          const account = await manager.getRepository(Account).findOneBy({
+            id: line.accountId,
+            companyId,
+          });
+          if (account) {
+            const debit = Number(line.debit) || 0;
+            const credit = Number(line.credit) || 0;
+            // Revertir el impacto en el balance
+            if (account.nature === 'deudora') {
+              account.balance = Number(account.balance) - debit + credit;
+            } else {
+              account.balance = Number(account.balance) - credit + debit;
+            }
+            await manager.getRepository(Account).save(account);
+          }
+        }
+
+        // Actualizar estado del voucher
+        voucherWithLines.status = 'cancelled';
+        return await manager.getRepository(Voucher).save(voucherWithLines);
+      }
+
+      // Para otros cambios de estado (draft -> otros que no sean posted/cancelled)
+      voucher.status = status as any;
+      return await manager.getRepository(Voucher).save(voucher);
+    });
   }
 
   private async postVoucher(companyId: number, id: string) {
-    const voucher = await this.findOneVoucher(companyId, id);
+    return await this.entityManager.transaction(async (manager) => {
+      return await this.postVoucherInTransaction(manager, companyId, id);
+    });
+  }
 
-    // Actualizar saldos de cuentas
+  private async postVoucherInTransaction(
+    manager: EntityManager,
+    companyId: number,
+    id: string,
+  ) {
+    // Buscar voucher con líneas dentro de la transacción
+    const voucher = await manager.getRepository(Voucher).findOne({
+      where: { id, companyId },
+      relations: ['lines'],
+    });
+
+    if (!voucher) {
+      throw new NotFoundException(`Voucher #${id} no encontrado`);
+    }
+
+    // Actualizar saldos de cuentas dentro de la misma transacción
     for (const line of voucher.lines) {
-      const account = await this.accountRepo.findOneBy({
+      const account = await manager.getRepository(Account).findOneBy({
         id: line.accountId,
         companyId,
       });
@@ -340,41 +433,75 @@ export class AccountingService {
         } else {
           account.balance = Number(account.balance) + credit - debit;
         }
-        await this.accountRepo.save(account);
+        await manager.getRepository(Account).save(account);
       }
     }
 
+    // Actualizar estado del voucher dentro de la misma transacción
     voucher.status = 'posted';
-    return this.voucherRepo.save(voucher);
+    return await manager.getRepository(Voucher).save(voucher);
   }
 
   private async reverseVoucherBalances(voucher: Voucher) {
-    for (const line of voucher.lines) {
-      const account = await this.accountRepo.findOneBy({
-        id: line.accountId,
+    return await this.entityManager.transaction(async (manager) => {
+      // Buscar voucher con líneas para tener acceso a companyId
+      const voucherWithLines = await manager.getRepository(Voucher).findOne({
+        where: { id: voucher.id },
+        relations: ['lines'],
       });
-      if (account) {
-        const debit = Number(line.debit) || 0;
-        const credit = Number(line.credit) || 0;
-        if (account.nature === 'deudora') {
-          account.balance = Number(account.balance) - debit + credit;
-        } else {
-          account.balance = Number(account.balance) - credit + debit;
-        }
-        await this.accountRepo.save(account);
+
+      if (!voucherWithLines) {
+        throw new NotFoundException(`Voucher #${voucher.id} no encontrado`);
       }
-    }
+
+      // Revertir saldos de cuentas dentro de la misma transacción
+      for (const line of voucherWithLines.lines) {
+        const account = await manager.getRepository(Account).findOneBy({
+          id: line.accountId,
+          companyId: voucherWithLines.companyId,
+        });
+        if (account) {
+          const debit = Number(line.debit) || 0;
+          const credit = Number(line.credit) || 0;
+          // Revertir el impacto en el balance
+          if (account.nature === 'deudora') {
+            account.balance = Number(account.balance) - debit + credit;
+          } else {
+            account.balance = Number(account.balance) - credit + debit;
+          }
+          await manager.getRepository(Account).save(account);
+        }
+      }
+
+      // Actualizar estado del voucher a cancelled dentro de la misma transacción
+      voucherWithLines.status = 'cancelled';
+      return await manager.getRepository(Voucher).save(voucherWithLines);
+    });
   }
 
   async deleteVoucher(companyId: number, id: string) {
-    const voucher = await this.findOneVoucher(companyId, id);
-    if (voucher.status === 'posted') {
-      throw new BadRequestException(
-        'No se puede eliminar un comprobante contabilizado. Anúlelo primero.',
-      );
-    }
-    await this.voucherRepo.remove(voucher);
-    return { message: 'Comprobante eliminado correctamente' };
+    return await this.entityManager.transaction(async (manager) => {
+      const voucher = await manager.getRepository(Voucher).findOne({
+        where: { id, companyId },
+        relations: ['lines'],
+      });
+
+      if (!voucher) {
+        throw new NotFoundException(`Voucher #${id} no encontrado`);
+      }
+
+      if (voucher.status === 'posted') {
+        throw new BadRequestException(
+          'No se puede eliminar un comprobante contabilizado. Anúlelo primero.',
+        );
+      }
+
+      // Eliminar líneas primero (debido a restricciones de clave foránea)
+      await manager.getRepository(VoucherLine).remove(voucher.lines);
+
+      // Luego eliminar el voucher
+      return await manager.getRepository(Voucher).remove(voucher);
+    });
   }
 
   async getVoucherStatistics(companyId: number) {
@@ -807,25 +934,97 @@ export class AccountingService {
   // ══════════════════════════════════════════════════════════
 
   async getTrialBalance(companyId: number, fromDate?: string, toDate?: string) {
-    const qb = this.voucherLineRepo
+    // Optimized single query to eliminate N+1 problem
+    const trialBalanceQuery = this.voucherLineRepo
       .createQueryBuilder('vl')
       .select('vl.account_code', 'accountCode')
       .addSelect('vl.account_name', 'accountName')
-      .addSelect('SUM(vl.debit)', 'totalDebit')
-      .addSelect('SUM(vl.credit)', 'totalCredit')
-      .addSelect('SUM(vl.debit) - SUM(vl.credit)', 'balance')
+      .addSelect('a.nature', 'nature')
+      .addSelect('a.type', 'accountType')
+      // Opening balance calculation (movimientos antes del período)
+      .addSelect(
+        `CASE 
+          WHEN a.nature = 'deudora'
+          THEN COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0) - 
+               COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0)
+          ELSE COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0) - 
+               COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0)
+        END`,
+        'openingBalance',
+      )
+      // Period debit
+      .addSelect(
+        `COALESCE(SUM(CASE 
+          WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+          THEN vl.debit ELSE 0 END), 0)`,
+        'periodDebit',
+      )
+      // Period credit
+      .addSelect(
+        `COALESCE(SUM(CASE 
+          WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+          THEN vl.credit ELSE 0 END), 0)`,
+        'periodCredit',
+      )
+      // Closing balance calculation
+      .addSelect(
+        `CASE 
+          WHEN a.nature = 'deudora'
+          THEN (COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0) - 
+                COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0)) +
+               (COALESCE(SUM(CASE 
+                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 THEN vl.debit ELSE 0 END), 0) - 
+                COALESCE(SUM(CASE 
+                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 THEN vl.credit ELSE 0 END), 0))
+          ELSE (COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0) - 
+                COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0)) +
+               (COALESCE(SUM(CASE 
+                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 THEN vl.credit ELSE 0 END), 0) - 
+                COALESCE(SUM(CASE 
+                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 THEN vl.debit ELSE 0 END), 0))
+        END`,
+        'closingBalance',
+      )
       .innerJoin('vl.voucher', 'v')
+      .innerJoin('vl.account', 'a')
       .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' });
-
-    if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
-    if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
-
-    qb.groupBy('vl.account_code')
+      .andWhere('v.status = :status', { status: 'posted' })
+      .andWhere(
+        `(:fromDate IS NULL OR v.date <= :toDate) AND (:toDate IS NULL OR v.date >= :fromDate)`,
+      )
+      .groupBy('vl.account_code')
       .addGroupBy('vl.account_name')
+      .addGroupBy('a.nature')
+      .addGroupBy('a.type')
+      .having(
+        `COALESCE(SUM(vl.debit), 0) > 0 OR COALESCE(SUM(vl.credit), 0) > 0`,
+      )
       .orderBy('vl.account_code', 'ASC');
 
-    return qb.getRawMany();
+    // Set parameters for the query
+    trialBalanceQuery.setParameters({
+      companyId,
+      fromDate: fromDate || null,
+      toDate: toDate || null,
+    });
+
+    const results = await trialBalanceQuery.getRawMany();
+
+    // Transform results to match expected interface
+    return results.map((row: any) => ({
+      accountCode: row.accountCode,
+      accountName: row.accountName,
+      nature: row.nature || 'deudora',
+      accountType: row.accountType || '',
+      openingBalance: Number(row.openingBalance || 0),
+      periodDebit: Number(row.periodDebit || 0),
+      periodCredit: Number(row.periodCredit || 0),
+      closingBalance: Number(row.closingBalance || 0),
+    }));
   }
 
   async getBalanceSheet(companyId: number, asOfDate?: string) {
@@ -927,6 +1126,85 @@ export class AccountingService {
       income: { items: incomeRows, total: totalIncome },
       expenses: { items: expenseRows, total: totalExpenses },
       netProfit: totalIncome - totalExpenses,
+    };
+  }
+
+  async getExpenseBreakdown(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+  ) {
+    // Obtener elementos con sus subelementos y totales de gastos
+    const elementosQuery = this.voucherLineRepo
+      .createQueryBuilder('vl')
+      .select('vl.element', 'elementCode')
+      .addSelect('vl.elementName', 'elementName')
+      .addSelect('COALESCE(SUM(vl.debit), 0)', 'totalDebit')
+      .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit')
+      .innerJoin('vl.voucher', 'v')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere('v.status = :status', { status: 'posted' })
+      .andWhere('vl.element IS NOT NULL');
+
+    if (fromDate) elementosQuery.andWhere('v.date >= :fromDate', { fromDate });
+    if (toDate) elementosQuery.andWhere('v.date <= :toDate', { toDate });
+
+    const elementos = await elementosQuery
+      .groupBy('vl.element')
+      .addGroupBy('vl.elementName')
+      .orderBy('vl.element', 'ASC')
+      .getRawMany();
+
+    const result: any[] = [];
+
+    for (const elem of elementos) {
+      const totalElemento = Math.abs(
+        Number(elem.totalDebit) - Number(elem.totalCredit),
+      );
+
+      // Obtener subelementos
+      const subelementosQuery = this.voucherLineRepo
+        .createQueryBuilder('vl')
+        .select('vl.subelement', 'subelementCode')
+        .addSelect('vl.subelementName', 'subelementName')
+        .addSelect('COALESCE(SUM(vl.debit), 0)', 'totalDebit')
+        .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit')
+        .innerJoin('vl.voucher', 'v')
+        .where('v.companyId = :companyId', { companyId })
+        .andWhere('v.status = :status', { status: 'posted' })
+        .andWhere('vl.element = :elementCode', {
+          elementCode: elem.elementCode,
+        })
+        .andWhere('vl.subelement IS NOT NULL');
+
+      if (fromDate)
+        subelementosQuery.andWhere('v.date >= :fromDate', { fromDate });
+      if (toDate) subelementosQuery.andWhere('v.date <= :toDate', { toDate });
+
+      const subelementos = await subelementosQuery
+        .groupBy('vl.subelement')
+        .addGroupBy('vl.subelementName')
+        .orderBy('vl.subelement', 'ASC')
+        .getRawMany();
+
+      result.push({
+        elementCode: elem.elementCode,
+        elementName: elem.elementName,
+        total: totalElemento,
+        subelements: subelementos.map((sub: any) => ({
+          subelementCode: sub.subelementCode,
+          subelementName: sub.subelementName,
+          total: Math.abs(Number(sub.totalDebit) - Number(sub.totalCredit)),
+        })),
+      });
+    }
+
+    return {
+      elements: result,
+      grandTotal: (result as any[]).reduce(
+        (s: number, e: any) => s + e.total,
+        0,
+      ),
     };
   }
 
@@ -1244,15 +1522,48 @@ export class AccountingService {
   ) {
     const data = await this.getTrialBalance(companyId, fromDate, toDate);
 
+    // Validar que haya datos
+    if (!data || data.length === 0) {
+      // Crear Excel con mensaje de no datos
+      const ws = XLSX.utils.json_to_sheet([
+        {
+          Código: '',
+          Cuenta: 'No hay datos para el período seleccionado',
+          'Saldo Inicial': 0,
+          'Débitos del Período': 0,
+          'Créditos del Período': 0,
+          'Saldo Final': 0,
+        },
+      ]);
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Balance de Comprobación');
+
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      if (res) {
+        res.setHeader(
+          'Content-Type',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        );
+        res.setHeader(
+          'Content-Disposition',
+          'attachment; filename=balance-comprobacion.xlsx',
+        );
+        return res.send(buffer);
+      }
+
+      return buffer;
+    }
+
     const ws = XLSX.utils.json_to_sheet(
       data.map((item: any) => ({
         Código: item.accountCode,
         Cuenta: item.accountName,
-        Tipo: item.accountType,
-        Naturaleza: item.accountNature,
-        Débitos: item.totalDebit,
-        Créditos: item.totalCredit,
-        Saldo: item.balance,
+        'Saldo Inicial': item.openingBalance || 0,
+        'Débitos del Período': item.periodDebit || 0,
+        'Créditos del Período': item.periodCredit || 0,
+        'Saldo Final': item.closingBalance || 0,
       })),
     );
 
@@ -1270,7 +1581,7 @@ export class AccountingService {
         'Content-Disposition',
         'attachment; filename=balance-comprobacion.xlsx',
       );
-      res.send(buffer);
+      return res.send(buffer);
     }
 
     return buffer;
@@ -1315,29 +1626,58 @@ export class AccountingService {
   ) {
     const data = await this.getBalanceSheet(companyId, asOfDate);
 
-    const ws = XLSX.utils.json_to_sheet([
-      ...data.assets.items.map((item: any) => ({
-        Categoría: 'Activo',
-        Subcategoría: item.category,
+    const rows: any[] = [];
+    rows.push({ Categoría: 'ACTIVOS', Código: '', Cuenta: '', Saldo: '' });
+    data.assets.items.forEach((item: any) => {
+      rows.push({
+        Categoría: '',
+        Código: item.accountCode,
         Cuenta: item.accountName,
-        Saldo: item.balance,
-      })),
-      ...data.liabilities.items.map((item: any) => ({
-        Categoría: 'Pasivo',
-        Subcategoría: item.category,
-        Cuenta: item.accountName,
-        Saldo: item.balance,
-      })),
-      ...data.equity.items.map((item: any) => ({
-        Categoría: 'Patrimonio',
-        Subcategoría: item.category,
-        Cuenta: item.accountName,
-        Saldo: item.balance,
-      })),
-    ]);
+        Saldo: Number(item.balance || 0),
+      });
+    });
+    rows.push({
+      Categoría: '',
+      Código: '',
+      Cuenta: 'Total Activos',
+      Saldo: data.assets.total,
+    });
 
+    rows.push({ Categoría: 'PASIVOS', Código: '', Cuenta: '', Saldo: '' });
+    data.liabilities.items.forEach((item: any) => {
+      rows.push({
+        Categoría: '',
+        Código: item.accountCode,
+        Cuenta: item.accountName,
+        Saldo: Math.abs(Number(item.balance || 0)),
+      });
+    });
+    rows.push({
+      Categoría: '',
+      Código: '',
+      Cuenta: 'Total Pasivos',
+      Saldo: data.liabilities.total,
+    });
+
+    rows.push({ Categoría: 'PATRIMONIO', Código: '', Cuenta: '', Saldo: '' });
+    data.equity.items.forEach((item: any) => {
+      rows.push({
+        Categoría: '',
+        Código: item.accountCode,
+        Cuenta: item.accountName,
+        Saldo: Math.abs(Number(item.balance || 0)),
+      });
+    });
+    rows.push({
+      Categoría: '',
+      Código: '',
+      Cuenta: 'Total Patrimonio',
+      Saldo: data.equity.total,
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Balance General');
+    XLSX.utils.book_append_sheet(wb, ws, 'Estado de Situación');
 
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
@@ -1348,9 +1688,9 @@ export class AccountingService {
       );
       res.setHeader(
         'Content-Disposition',
-        'attachment; filename=balance-general.xlsx',
+        'attachment; filename=estado-situacion.xlsx',
       );
-      res.send(buffer);
+      return res.send(buffer);
     }
 
     return buffer;
@@ -1361,16 +1701,10 @@ export class AccountingService {
     asOfDate?: string,
     res?: Response,
   ) {
+    // PDF generation handled on frontend with jsPDF
     if (res) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        'attachment; filename=balance-general.pdf',
-      );
-      res.send(Buffer.from('PDF placeholder for balance sheet'));
+      res.status(501).json({ message: 'PDF se genera desde el frontend' });
     }
-
-    return Buffer.from('PDF placeholder');
   }
 
   async exportIncomeStatementExcel(
@@ -1381,23 +1715,52 @@ export class AccountingService {
   ) {
     const data = await this.getIncomeStatement(companyId, fromDate, toDate);
 
-    const ws = XLSX.utils.json_to_sheet([
-      ...data.income.items.map((item: any) => ({
-        Tipo: 'Ingreso',
-        Categoría: item.category,
+    const rows: any[] = [];
+    rows.push({ Tipo: 'INGRESOS', Código: '', Cuenta: '', Importe: '' });
+    data.income.items.forEach((item: any) => {
+      rows.push({
+        Tipo: '',
+        Código: item.accountCode,
         Cuenta: item.accountName,
-        Monto: item.amount,
-      })),
-      ...data.expenses.items.map((item: any) => ({
-        Tipo: 'Gasto',
-        Categoría: item.category,
-        Cuenta: item.accountName,
-        Monto: item.amount,
-      })),
-    ]);
+        Importe: Math.abs(
+          Number(item.totalCredit || 0) - Number(item.totalDebit || 0),
+        ),
+      });
+    });
+    rows.push({
+      Tipo: '',
+      Código: '',
+      Cuenta: 'Total Ingresos',
+      Importe: data.income.total,
+    });
 
+    rows.push({ Tipo: 'GASTOS', Código: '', Cuenta: '', Importe: '' });
+    data.expenses.items.forEach((item: any) => {
+      rows.push({
+        Tipo: '',
+        Código: item.accountCode,
+        Cuenta: item.accountName,
+        Importe: Math.abs(
+          Number(item.totalDebit || 0) - Number(item.totalCredit || 0),
+        ),
+      });
+    });
+    rows.push({
+      Tipo: '',
+      Código: '',
+      Cuenta: 'Total Gastos',
+      Importe: data.expenses.total,
+    });
+    rows.push({
+      Tipo: '',
+      Código: '',
+      Cuenta: 'RESULTADO NETO',
+      Importe: data.netProfit,
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Estado de Resultados');
+    XLSX.utils.book_append_sheet(wb, ws, 'Estado de Rendimiento');
 
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
@@ -1408,9 +1771,9 @@ export class AccountingService {
       );
       res.setHeader(
         'Content-Disposition',
-        'attachment; filename=estado-resultados.xlsx',
+        'attachment; filename=estado-rendimiento.xlsx',
       );
-      res.send(buffer);
+      return res.send(buffer);
     }
 
     return buffer;
@@ -1422,16 +1785,10 @@ export class AccountingService {
     toDate?: string,
     res?: Response,
   ) {
+    // PDF generation handled on frontend with jsPDF
     if (res) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        'attachment; filename=estado-resultados.pdf',
-      );
-      res.send(Buffer.from('PDF placeholder for income statement'));
+      res.status(501).json({ message: 'PDF se genera desde el frontend' });
     }
-
-    return Buffer.from('PDF placeholder');
   }
 
   // ── Modelo 5920-04 / 5921-04 (SIEN) ──
@@ -1522,6 +1879,39 @@ export class AccountingService {
 
     if (conditions.length > 0) {
       qb.andWhere(`(${conditions.join(' OR ')})`, params);
+    }
+
+    const result = await qb.getRawOne();
+    return {
+      debit: Number(result?.totalDebit || 0),
+      credit: Number(result?.totalCredit || 0),
+    };
+  }
+
+  private async getSubelementPeriodAmount(
+    companyId: number,
+    elementCode?: string,
+    subelementCode?: string,
+    fromDate?: string,
+    toDate?: string,
+  ): Promise<{ debit: number; credit: number }> {
+    const qb = this.voucherLineRepo
+      .createQueryBuilder('vl')
+      .select('COALESCE(SUM(vl.debit), 0)', 'totalDebit')
+      .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit')
+      .innerJoin('vl.voucher', 'v')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere('v.status = :status', { status: 'posted' });
+
+    if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
+    if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
+
+    if (elementCode) {
+      qb.andWhere('vl.element = :elementCode', { elementCode });
+    }
+
+    if (subelementCode) {
+      qb.andWhere('vl.subelement = :subelementCode', { subelementCode });
     }
 
     const result = await qb.getRawOne();
@@ -1887,7 +2277,115 @@ export class AccountingService {
     return Buffer.from(buffer as ArrayBuffer);
   }
 
-  // ── Accounts (Chart of Accounts) ──
+  async exportModelo5924Excel(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    res?: Response,
+  ) {
+    const templatePath = path.join(__dirname, 'templates', '5924.xlsx');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(templatePath);
+    const ws = wb.worksheets[0];
+
+    // Obtener todos los elementos únicos de los vouchers en el período
+    const elementosQuery = this.voucherLineRepo
+      .createQueryBuilder('vl')
+      .select('vl.element', 'elementCode')
+      .addSelect('vl.elementName', 'elementName')
+      .innerJoin('vl.voucher', 'v')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere('v.status = :status', { status: 'posted' })
+      .andWhere('vl.element IS NOT NULL')
+      .groupBy('vl.element, vl.elementName');
+
+    if (fromDate) elementosQuery.andWhere('v.date >= :fromDate', { fromDate });
+    if (toDate) elementosQuery.andWhere('v.date <= :toDate', { toDate });
+
+    const elementos = await elementosQuery.getRawMany();
+
+    // Obtener datos para cada elemento
+    let currentRow = 10; // Suponiendo que los datos empiezan en fila 10
+
+    for (const elemento of elementos) {
+      // Obtener total del elemento
+      const totalElemento = await this.getSubelementPeriodAmount(
+        companyId,
+        elemento.elementCode,
+        undefined,
+        fromDate,
+        toDate,
+      );
+      const totalElementoVal = Math.abs(
+        totalElemento.debit - totalElemento.credit,
+      );
+
+      // Escribir datos del elemento
+      ws.getCell(`A${currentRow}`).value = elemento.elementCode;
+      ws.getCell(`B${currentRow}`).value = elemento.elementName;
+      ws.getCell(`C${currentRow}`).value = totalElementoVal;
+
+      currentRow++;
+
+      // Obtener subelementos de este elemento
+      const subelementosQuery = this.voucherLineRepo
+        .createQueryBuilder('vl')
+        .select('vl.subelement', 'subelementCode')
+        .addSelect('vl.subelementName', 'subelementName')
+        .innerJoin('vl.voucher', 'v')
+        .where('v.companyId = :companyId', { companyId })
+        .andWhere('v.status = :status', { status: 'posted' })
+        .andWhere('vl.element = :elementCode', {
+          elementCode: elemento.elementCode,
+        })
+        .andWhere('vl.subelement IS NOT NULL')
+        .groupBy('vl.subelement, vl.subelementName');
+
+      if (fromDate)
+        subelementosQuery.andWhere('v.date >= :fromDate', { fromDate });
+      if (toDate) subelementosQuery.andWhere('v.date <= :toDate', { toDate });
+
+      const subelementos = await subelementosQuery.getRawMany();
+
+      // Escribir datos de cada subelemento
+      for (const subelemento of subelementos) {
+        const totalSubelemento = await this.getSubelementPeriodAmount(
+          companyId,
+          elemento.elementCode,
+          subelemento.subelementCode,
+          fromDate,
+          toDate,
+        );
+        const totalSubelementoVal = Math.abs(
+          totalSubelemento.debit - totalSubelemento.credit,
+        );
+
+        ws.getCell(`B${currentRow}`).value = subelemento.subelementCode;
+        ws.getCell(`C${currentRow}`).value = subelemento.subelementName;
+        ws.getCell(`D${currentRow}`).value = totalSubelementoVal;
+
+        currentRow++;
+      }
+    }
+
+    const buffer = await wb.xlsx.writeBuffer();
+
+    if (res) {
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename=Modelo_5924.xlsx',
+      );
+      res.send(Buffer.from(buffer as ArrayBuffer));
+    }
+
+    return Buffer.from(buffer as ArrayBuffer);
+  }
+
+  // Accounts (Chart of Accounts) ──
 
   async findAllAccounts(
     companyId: number,
@@ -1940,39 +2438,34 @@ export class AccountingService {
       },
     });
 
-    // Luego buscar subcuentas en la nueva tabla
+    // Buscar subcuentas (ahora cuentas con level=4 y parentCode)
     try {
-      const subaccounts = await this.subaccountRepo.find({
+      const subaccounts = await this.accountRepo.find({
         where: {
           companyId,
+          level: 4,
+          parentCode: parentCode,
           isActive: true,
         },
-        relations: ['account'],
         order: {
-          subaccountCode: 'ASC',
+          code: 'ASC',
         },
       });
 
-      // Filtrar solo las subcuentas que pertenecen a la cuenta principal
-      const filteredSubaccounts = subaccounts.filter(
-        (sa) => sa.account && sa.account.code === parentCode,
-      );
-
-      // Convertir subcuentas al formato que espera el frontend
-      const formattedSubaccounts = filteredSubaccounts.map((sa) => ({
+      // Convertir al formato que espera el frontend
+      const formattedSubaccounts = subaccounts.map((sa) => ({
         id: sa.id,
-        code: sa.subaccountCode,
-        name: sa.subaccountName,
+        code: sa.code,
+        name: sa.name,
         description: sa.description,
-        type: sa.account?.type || 'subaccount',
-        nature: sa.account?.nature || 'debit',
-        level: 4, // Subcuentas siempre nivel 4+
-        parentCode: parentCode,
-        parentAccountId: sa.accountId,
-        companyId: sa.companyId,
+        type: sa.type,
+        nature: sa.nature,
+        level: sa.level,
+        parentCode: sa.parentCode,
+        parentAccountId: sa.parentAccountId,
+        balance: sa.balance,
         isActive: sa.isActive,
-        allowsMovements: true,
-        balance: 0,
+        allowsMovements: sa.allowsMovements,
         createdAt: sa.createdAt,
         updatedAt: sa.updatedAt,
       }));
@@ -1980,25 +2473,36 @@ export class AccountingService {
       // Combinar resultados
       return [...childAccounts, ...formattedSubaccounts];
     } catch (error) {
-      // Si hay error con la tabla subaccounts, devolver solo cuentas hijas
+      // Si hay error, devolver solo cuentas hijas
       return childAccounts;
     }
   }
 
   async getSubaccountsByAccount(companyId: number, accountId: string) {
     try {
-      return this.subaccountRepo.find({
+      // Buscar la cuenta padre para obtener su código
+      const parentAccount = await this.accountRepo.findOneBy({
+        id: accountId,
+        companyId,
+      });
+
+      if (!parentAccount) {
+        return [];
+      }
+
+      // Buscar subcuentas (cuentas con level=4 y parentCode igual al código de la cuenta padre)
+      return this.accountRepo.find({
         where: {
           companyId,
-          accountId,
+          level: 4,
+          parentCode: parentAccount.code,
           isActive: true,
         },
         order: {
-          subaccountCode: 'ASC',
+          code: 'ASC',
         },
       });
     } catch (error) {
-      // Si la tabla no existe, devolver array vacío
       return [];
     }
   }
@@ -2050,47 +2554,45 @@ export class AccountingService {
       description?: string;
     },
   ) {
-    // Verificar que la cuenta principal exista
-    const account = await this.accountRepo.findOneBy({
+    // Validar que la cuenta padre exista
+    const parentAccount = await this.accountRepo.findOneBy({
       id: data.accountId,
       companyId,
     });
-    if (!account) {
-      throw new BadRequestException('Cuenta principal no encontrada');
+
+    if (!parentAccount) {
+      throw new BadRequestException('Cuenta padre no encontrada');
     }
 
-    // Verificar que no exista una subcuenta con el mismo código
-    try {
-      const existing = await this.subaccountRepo.findOneBy({
-        subaccountCode: data.subaccountCode,
-        companyId,
-      });
-      if (existing) {
-        throw new BadRequestException(
-          `Ya existe una subcuenta con el código ${data.subaccountCode}`,
-        );
-      }
-    } catch (error) {
-      // Si la tabla subaccounts no existe, verificar en accounts temporalmente
-      const existingAccount = await this.accountRepo.findOneBy({
-        code: data.subaccountCode,
-        companyId,
-      });
-      if (existingAccount) {
-        throw new BadRequestException(
-          `Ya existe una cuenta con el código ${data.subaccountCode}`,
-        );
-      }
-    }
-
-    // Crear la subcuenta
-    const subaccount = this.subaccountRepo.create({
-      ...data,
+    // Verificar que no exista una cuenta con el mismo código
+    const existing = await this.accountRepo.findOneBy({
+      code: data.subaccountCode,
       companyId,
+    });
+    if (existing) {
+      throw new BadRequestException(
+        `Ya existe una cuenta con el código ${data.subaccountCode}`,
+      );
+    }
+
+    // Crear la subcuenta como una cuenta con level=4
+    const subaccount = this.accountRepo.create({
+      companyId,
+      code: data.subaccountCode,
+      name: data.subaccountName,
+      description: data.description || null,
+      type: parentAccount.type, // Heredar tipo de la cuenta padre
+      nature: parentAccount.nature, // Heredar naturaleza de la cuenta padre
+      level: 4, // Todas las subcuentas son nivel 4
+      groupNumber: parentAccount.groupNumber, // Heredar groupNumber
+      parentCode: parentAccount.code, // Código de la cuenta padre
+      parentAccountId: parentAccount.id, // ID de la cuenta padre
+      balance: 0, // Iniciar con balance cero
       isActive: true,
+      allowsMovements: true, // Las subcuentas permiten movimientos
     });
 
-    return this.subaccountRepo.save(subaccount);
+    return this.accountRepo.save(subaccount);
   }
 
   async updateAccount(companyId: number, id: string, data: Partial<Account>) {
@@ -2427,6 +2929,59 @@ export class AccountingService {
     expenseType.description = data.description || null;
 
     return this.expenseTypeRepo.save(expenseType);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── PERIOD VALIDATION HELPERS ──
+  // ══════════════════════════════════════════════════════════
+
+  /**
+   * Valida que una fecha pertenezca a un período contable abierto para la empresa
+   * @param companyId ID de la empresa
+   * @param date Fecha a validar (formato YYYY-MM-DD)
+   * @throws BadRequestException si el período está cerrado o no existe
+   */
+  private async validateOpenPeriod(
+    companyId: number,
+    date: string,
+  ): Promise<void> {
+    const period = await this.findPeriodByDate(companyId, date);
+
+    if (!period) {
+      throw new BadRequestException(
+        `No existe un período contable para la fecha ${date}. Debe crear un año fiscal con períodos para esta empresa.`,
+      );
+    }
+
+    if (period.status !== 'open') {
+      throw new BadRequestException(
+        'No se puede registrar comprobantes en un período cerrado',
+      );
+    }
+  }
+
+  /**
+   * Busca un período contable por fecha y empresa
+   * @param companyId ID de la empresa
+   * @param date Fecha a buscar (formato YYYY-MM-DD)
+   * @returns Período encontrado o null
+   */
+  private async findPeriodByDate(
+    companyId: number,
+    date: string,
+  ): Promise<AccountingPeriod | null> {
+    // Extraer año y mes de la fecha para buscar en el rango del período
+    const dateObj = new Date(date);
+    const year = dateObj.getFullYear();
+    const month = dateObj.getMonth() + 1; // JavaScript months are 0-indexed
+
+    return this.periodRepo.findOne({
+      where: {
+        companyId,
+        year,
+        month,
+      },
+    });
   }
 
   async seedExpenseTypes(companyId: number) {

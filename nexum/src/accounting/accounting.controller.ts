@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   Controller,
   Get,
@@ -13,7 +16,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { AccountingService } from './accounting.service';
+import { VoucherService } from './voucher.service';
+import { ReportService } from './report.service';
+import { AccountService } from './account.service';
+import { CostCenterService } from './cost-center.service';
+import { FiscalYearService } from './fiscal-year.service';
+import { ElementoService } from './elemento.service';
+import { ExpenseTypeService } from './expense-type.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
@@ -23,7 +32,15 @@ import { getCompanyId } from '../common/get-company-id';
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('accounting')
 export class AccountingController {
-  constructor(private readonly accountingService: AccountingService) {}
+  constructor(
+    private readonly voucherService: VoucherService,
+    private readonly reportService: ReportService,
+    private readonly accountService: AccountService,
+    private readonly costCenterService: CostCenterService,
+    private readonly fiscalYearService: FiscalYearService,
+    private readonly elementoService: ElementoService,
+    private readonly expenseTypeService: ExpenseTypeService,
+  ) {}
 
   // ══════════════════════════════════════════════════════════
   // ── VOUCHERS (Comprobantes) ──
@@ -40,7 +57,7 @@ export class AccountingController {
     @Query('search') search?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllVouchers(companyId, {
+    return this.voucherService.findAllVouchers(companyId, {
       status,
       type,
       fromDate,
@@ -53,19 +70,19 @@ export class AccountingController {
   @Get('vouchers/statistics')
   getVoucherStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getVoucherStatistics(companyId);
+    return this.voucherService.getVoucherStatistics(companyId);
   }
 
   @Get('vouchers/:id')
   findOneVoucher(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findOneVoucher(companyId, id);
+    return this.voucherService.findOneVoucher(companyId, id);
   }
 
   @Post('vouchers')
   createVoucher(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
-    return this.accountingService.createVoucher(companyId, body);
+    return this.voucherService.createVoucher(companyId, body);
   }
 
   @Put('vouchers/:id/status')
@@ -75,40 +92,37 @@ export class AccountingController {
     @Body() body: { status: string },
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.updateVoucherStatus(
-      companyId,
-      id,
-      body.status,
-    );
+    return this.voucherService.updateVoucherStatus(companyId, id, body.status);
   }
 
   @Delete('vouchers/:id')
   deleteVoucher(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.deleteVoucher(companyId, id);
+    return this.voucherService.deleteVoucher(companyId, id);
   }
 
   // ══════════════════════════════════════════════════════════
   // ── VOUCHER LINES (Partidas) ──
   // ══════════════════════════════════════════════════════════
 
-  @Get('voucher-lines')
+  @Get('vouchers/lines')
   findAllVoucherLines(
     @Req() req: Request,
-    @Query('accountCode') accountCode?: string,
+    @Query('voucherId') voucherId?: string,
+    @Query('accountId') accountId?: string,
     @Query('costCenterId') costCenterId?: string,
+    @Query('element') element?: string,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
-    @Query('voucherId') voucherId?: string,
     @Query('search') search?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllVoucherLines(companyId, {
-      accountCode,
-      costCenterId,
+    return this.voucherService.findAllVouchers(companyId, {
+      status: undefined,
+      type: undefined,
       fromDate,
       toDate,
-      voucherId,
+      sourceModule: undefined,
       search,
     });
   }
@@ -116,7 +130,7 @@ export class AccountingController {
   @Get('voucher-lines/statistics')
   getVoucherLineStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getVoucherLineStatistics(companyId);
+    return this.voucherService.getVoucherStatistics(companyId);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -131,29 +145,29 @@ export class AccountingController {
     @Query('activeOnly') activeOnly?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllCostCenters(companyId, {
+    return this.costCenterService.findAllCostCenters(companyId, {
       type,
       search,
-      activeOnly,
+      activeOnly: activeOnly === 'true',
     });
   }
 
   @Get('cost-centers/statistics')
   getCostCenterStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getCostCenterStatistics(companyId);
+    return this.costCenterService.getCostCenterStatistics(companyId);
   }
 
   @Get('cost-centers/:id')
   findOneCostCenter(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findOneCostCenter(companyId, id);
+    return this.costCenterService.findOneCostCenter(companyId, id);
   }
 
   @Post('cost-centers')
   createCostCenter(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
-    return this.accountingService.createCostCenter(companyId, body);
+    return this.costCenterService.createCostCenter(companyId, body);
   }
 
   @Put('cost-centers/:id')
@@ -163,13 +177,13 @@ export class AccountingController {
     @Body() body: any,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.updateCostCenter(companyId, id, body);
+    return this.costCenterService.updateCostCenter(companyId, id, body);
   }
 
   @Delete('cost-centers/:id')
   deleteCostCenter(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.deleteCostCenter(companyId, id);
+    return this.costCenterService.deleteCostCenter(companyId, id);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -179,25 +193,25 @@ export class AccountingController {
   @Get('fiscal-years')
   findAllFiscalYears(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllFiscalYears(companyId);
+    return this.fiscalYearService.findAllFiscalYears(companyId);
   }
 
   @Get('fiscal-years/:id')
   findOneFiscalYear(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findOneFiscalYear(companyId, id);
+    return this.fiscalYearService.findOneFiscalYear(companyId, id);
   }
 
   @Post('fiscal-years')
   createFiscalYear(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
-    return this.accountingService.createFiscalYear(companyId, body);
+    return this.fiscalYearService.createFiscalYear(companyId, body);
   }
 
   @Patch('fiscal-years/:id/close')
   closeFiscalYear(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.closeFiscalYear(companyId, id);
+    return this.fiscalYearService.closeFiscalYear(companyId, id);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -210,14 +224,14 @@ export class AccountingController {
     @Query('fiscalYearId') fiscalYearId?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllPeriods(companyId, fiscalYearId);
+    return this.fiscalYearService.findAllPeriods(companyId, fiscalYearId);
   }
 
   @Patch('periods/:id/close')
   closePeriod(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
     const user = (req as any).user;
-    return this.accountingService.closePeriod(
+    return this.fiscalYearService.closePeriod(
       companyId,
       id,
       user?.email || 'admin',
@@ -227,17 +241,17 @@ export class AccountingController {
   @Patch('periods/:id/reopen')
   reopenPeriod(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.reopenPeriod(companyId, id);
+    return this.fiscalYearService.reopenPeriod(companyId, id);
   }
 
   // ══════════════════════════════════════════════════════════
-  // ── ELEMENTOS (Agrupación por Tipo de Cuenta) ──
+  // ── Elements (Agrupación por Tipo de Cuenta) ──
   // ══════════════════════════════════════════════════════════
 
   @Get('elements')
   getAccountElements(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getAccountElements(companyId);
+    return this.accountService.getAccountElements(companyId);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -251,13 +265,13 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getTrialBalance(companyId, fromDate, toDate);
+    return this.reportService.getTrialBalance(companyId, fromDate, toDate);
   }
 
   @Get('reports/balance-sheet')
   getBalanceSheet(@Req() req: Request, @Query('asOfDate') asOfDate?: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getBalanceSheet(companyId, asOfDate);
+    return this.reportService.getBalanceSheet(companyId, asOfDate);
   }
 
   @Get('reports/income-statement')
@@ -267,11 +281,17 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getIncomeStatement(
-      companyId,
-      fromDate,
-      toDate,
-    );
+    return this.reportService.getIncomeStatement(companyId, fromDate, toDate);
+  }
+
+  @Get('reports/expense-breakdown')
+  getExpenseBreakdown(
+    @Req() req: Request,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.reportService.getExpenseBreakdown(companyId, fromDate, toDate);
   }
 
   @Get('reports/general-ledger')
@@ -282,7 +302,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getGeneralLedger(
+    return this.reportService.getGeneralLedger(
       companyId,
       accountCode,
       fromDate,
@@ -297,11 +317,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getGeneralJournal(
-      companyId,
-      fromDate,
-      toDate,
-    );
+    return this.reportService.getGeneralJournal(companyId, fromDate, toDate);
   }
 
   @Get('reports/cost-center-analysis')
@@ -311,7 +327,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getCostCenterAnalysis(
+    return this.reportService.getCostCenterAnalysis(
       companyId,
       fromDate,
       toDate,
@@ -327,7 +343,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportTrialBalanceExcel(
+    return this.reportService.exportTrialBalanceExcel(
       companyId,
       fromDate,
       toDate,
@@ -343,7 +359,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportTrialBalancePDF(
+    return this.reportService.exportTrialBalancePDF(
       companyId,
       fromDate,
       toDate,
@@ -358,11 +374,7 @@ export class AccountingController {
     @Query('asOfDate') asOfDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportBalanceSheetExcel(
-      companyId,
-      asOfDate,
-      res,
-    );
+    return this.reportService.exportBalanceSheetExcel(companyId, asOfDate, res);
   }
 
   @Get('reports/balance-sheet/export/pdf')
@@ -372,11 +384,7 @@ export class AccountingController {
     @Query('asOfDate') asOfDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportBalanceSheetPDF(
-      companyId,
-      asOfDate,
-      res,
-    );
+    return this.reportService.exportBalanceSheetPDF(companyId, asOfDate, res);
   }
 
   @Get('reports/income-statement/export/excel')
@@ -387,7 +395,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportIncomeStatementExcel(
+    return this.reportService.exportIncomeStatementExcel(
       companyId,
       fromDate,
       toDate,
@@ -403,7 +411,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportIncomeStatementPDF(
+    return this.reportService.exportIncomeStatementPDF(
       companyId,
       fromDate,
       toDate,
@@ -420,11 +428,7 @@ export class AccountingController {
     @Query('asOfDate') asOfDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportModelo5920Excel(
-      companyId,
-      asOfDate,
-      res,
-    );
+    return this.reportService.exportModelo5920Excel(companyId, asOfDate, res);
   }
 
   @Get('reports/modelo-5921/export/excel')
@@ -435,7 +439,23 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.exportModelo5921Excel(
+    return this.reportService.exportModelo5921Excel(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+    );
+  }
+
+  @Get('reports/modelo-5924/export/excel')
+  exportModelo5924Excel(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.reportService.exportModelo5924Excel(
       companyId,
       fromDate,
       toDate,
@@ -456,7 +476,7 @@ export class AccountingController {
     @Query('accountCode') accountCode?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllEntries(companyId, {
+    return this.reportService.findAllEntries(companyId, {
       status,
       fromDate,
       toDate,
@@ -464,19 +484,18 @@ export class AccountingController {
     });
   }
 
-  
   // ── Accounts (Chart of Accounts) ──
 
   @Get('accounts/statistics')
   getAccountStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getAccountStatistics(companyId);
+    return this.accountService.getAccountStatistics(companyId);
   }
 
   @Get('kpis')
   getFinancialKPIs(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getFinancialKPIs(companyId);
+    return this.reportService.getFinancialKPIs(companyId);
   }
 
   @Get('accounts')
@@ -491,14 +510,14 @@ export class AccountingController {
     @Query('allowsMovements') allowsMovements?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllAccounts(companyId, {
+    return this.accountService.findAllAccounts(companyId, {
       type,
       search,
       nature,
       level,
       groupNumber,
-      activeOnly,
-      allowsMovements,
+      activeOnly: activeOnly === 'true',
+      allowsMovements: allowsMovements === 'true',
     });
   }
 
@@ -508,10 +527,7 @@ export class AccountingController {
     @Param('parentCode') parentCode: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAccountsByParentCode(
-      companyId,
-      parentCode,
-    );
+    return this.accountService.findAccountsByParentCode(companyId, parentCode);
   }
 
   @Get('subaccounts/:accountId')
@@ -520,19 +536,63 @@ export class AccountingController {
     @Param('accountId') accountId: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getSubaccountsByAccount(companyId, accountId);
+    return this.accountService.getSubaccountsByAccount(companyId, accountId);
   }
 
-  @Post('accounts')
-  createAccount(@Req() req: Request, @Body() body: any) {
+  @Get('subaccounts')
+  findAllSubaccounts(
+    @Req() req: Request,
+    @Query('accountId') accountId?: string,
+  ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.createAccount(companyId, body);
+    return this.accountService.findAllAccounts(companyId, { level: '4' });
+  }
+
+  @Get('subaccounts/statistics')
+  getSubaccountStatistics(@Req() req: Request) {
+    const companyId = getCompanyId(req);
+    return this.accountService.getStatistics(companyId);
+  }
+
+  @Get('subaccounts/:id')
+  findOneSubaccount(@Param('id') id: string) {
+    return this.accountService.findOne(id);
   }
 
   @Post('subaccounts')
   createSubaccount(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
-    return this.accountingService.createSubaccount(companyId, body);
+    return this.accountService.createSubaccount(companyId, body);
+  }
+
+  @Put('subaccounts/:id')
+  updateSubaccount(@Param('id') id: string, @Body() body: any) {
+    return this.accountService.update(id, body);
+  }
+
+  @Patch('subaccounts/:id/toggle-active')
+  toggleSubaccountActive(@Param('id') id: string) {
+    return this.accountService.toggleActive(id);
+  }
+
+  @Delete('subaccounts/:id')
+  deleteSubaccount(@Param('id') id: string) {
+    return this.accountService.delete(id);
+  }
+
+  @Get('accounts/children/:parentCode')
+  getChildAccounts(
+    @Req() req: Request,
+    @Param('parentCode') parentCode: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountService.findAccountsByParentCode(companyId, parentCode);
+  }
+
+  @Post('accounts')
+  createAccount(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.accountService.createAccount(companyId, body);
   }
 
   @Put('accounts/:id')
@@ -542,88 +602,78 @@ export class AccountingController {
     @Body() body: any,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.updateAccount(companyId, id, body);
+    return this.accountService.updateAccount(companyId, id, body);
   }
 
   @Delete('accounts/:id')
   deleteAccount(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.deleteAccount(companyId, id);
+    return this.accountService.deleteAccount(companyId, id);
   }
 
   // ================================
-  
-  // ================================
-  
-  // ================================
-  // ELEMENTOS (Elementos de Gastos)
+
   // ================================
 
-  @Get('elementos')
-  findAllElementos(
+  // ================================
+  // Elements (Elements de Gastos)
+  // ================================
+
+  @Get('elements')
+  findAllElements(
     @Req() req: Request,
     @Query('status') status?: string,
-    @Query('fromDate') fromDate?: string,
-    @Query('toDate') toDate?: string,
-    @Query('accountCode') accountCode?: string,
     @Query('search') search?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllElementos(companyId, {
+    return this.elementoService.findAll(companyId, {
       status,
-      fromDate,
-      toDate,
-      accountCode,
       search,
     });
   }
 
-  @Get('elementos/:id')
-  findOneElemento(@Req() req: Request, @Param('id') id: string) {
+  @Get('Elements/:id')
+  findOneElement(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findOneElemento(companyId, id);
+    return this.elementoService.findOne(companyId, id);
   }
 
-  @Get('elementos/statistics')
-  getElementoStatistics(@Req() req: Request) {
+  @Get('Elements/statistics')
+  getElementStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.getElementoStatistics(companyId);
+    return this.elementoService.getStatistics(companyId);
   }
 
-  @Post('elementos')
-  createElemento(@Req() req: Request, @Body() body: any) {
+  @Post('Elements')
+  createElement(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
-    return this.accountingService.createElemento(companyId, body);
+    return this.elementoService.create(companyId, body);
   }
 
-  @Put('elementos/:id')
-  updateElemento(
+  @Put('Elements/:id')
+  updateElement(
     @Req() req: Request,
     @Param('id') id: string,
     @Body() body: any,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.updateElemento(companyId, id, body);
+    return this.elementoService.update(companyId, id, body);
   }
 
-  @Patch('elementos/:id/status')
-  updateElementoStatus(
+  @Patch('Elements/:id/status')
+  updateElementStatus(
     @Req() req: Request,
     @Param('id') id: string,
     @Body() body: { status: 'posted' | 'cancelled' },
   ) {
     const companyId = getCompanyId(req);
-    return this.accountingService.updateElementoStatus(
-      companyId,
-      id,
-      body.status,
-    );
+    return this.elementoService.updateStatus(companyId, id, body.status);
   }
 
-  @Delete('elementos/:id')
-  deleteElemento(@Req() req: Request, @Param('id') id: string) {
+  @Delete('Elements/:id')
+  deleteElement(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.accountingService.deleteElemento(companyId, id);
+    return this.elementoService.delete(companyId, id);
   }
 
   // ================================
@@ -633,18 +683,18 @@ export class AccountingController {
   @Get('expense-types')
   findAllExpenseTypes(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.findAllExpenseTypes(companyId);
+    return this.expenseTypeService.findAll(companyId);
   }
 
   @Post('expense-types/seed')
   seedExpenseTypes(@Req() req: Request) {
     const companyId = getCompanyId(req);
-    return this.accountingService.seedExpenseTypes(companyId);
+    return this.expenseTypeService.seed(companyId);
   }
 
   @Post('expense-types')
   createExpenseType(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
-    return this.accountingService.createExpenseType(companyId, body);
+    return this.expenseTypeService.create(companyId, body);
   }
 }

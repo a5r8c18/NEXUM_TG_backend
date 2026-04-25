@@ -56,7 +56,6 @@ import { ExpenseType } from './entities/expense-type.entity';
 import { Message } from './entities/message.entity';
 import { Subscription } from './entities/subscription.entity';
 import { Subelement } from './entities/subelement.entity';
-import { Subaccount } from './entities/subaccount.entity';
 import { RefreshToken } from './auth/refresh-token.entity';
 
 @Module({
@@ -103,10 +102,10 @@ import { RefreshToken } from './auth/refresh-token.entity';
           ExpenseType,
           Subscription,
           Subelement,
-          Subaccount,
           RefreshToken,
         ],
-        synchronize: configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
+        synchronize:
+          configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
         // Connection pooling
         extra: {
           max: configService.get<number>('DB_POOL_MAX', 20),
@@ -136,10 +135,12 @@ import { RefreshToken } from './auth/refresh-token.entity';
     MessagesModule,
     SubscriptionsModule,
     LoggerModule,
-    ThrottlerModule.forRoot([{
-      ttl: 60000, // 1 minute
-      limit: 100, // limit each IP to 100 requests per window
-    }]),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000, // 1 minute
+        limit: 100, // limit each IP to 100 requests per window
+      },
+    ]),
   ],
   controllers: [AppController],
   providers: [

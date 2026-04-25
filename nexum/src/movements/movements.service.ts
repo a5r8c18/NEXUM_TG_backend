@@ -3,7 +3,7 @@ import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef 
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
-import { AccountingService } from '../accounting/accounting.service';
+import { AccountService } from '../accounting/account.service';
 import { Movement, MovementType } from '../entities/movement.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 
@@ -11,8 +11,8 @@ import { DeliveryReport } from '../entities/delivery-report.entity';
 export class MovementsService {
   constructor(
     private readonly inventoryWarehouseService: InventoryWarehouseService,
-    @Inject(forwardRef(() => AccountingService))
-    private readonly accountingService: AccountingService,
+    @Inject(forwardRef(() => AccountService))
+    private readonly accountService: AccountService,
     @InjectRepository(Movement)
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(DeliveryReport)

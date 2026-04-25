@@ -8,7 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryService } from '../inventory/inventory.service';
-import { AccountingService } from '../accounting/accounting.service';
+import { AccountService } from '../accounting/account.service';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
@@ -17,12 +17,12 @@ import { Movement } from '../entities/movement.entity';
 export class InvoicesService {
   constructor(
     private readonly inventoryService: InventoryService,
-    @Inject(forwardRef(() => AccountingService))
-    private readonly accountingService: AccountingService,
+    @Inject(forwardRef(() => AccountService))
+    private readonly accountService: AccountService,
     @InjectRepository(Invoice)
     private readonly invoiceRepo: Repository<Invoice>,
     @InjectRepository(InvoiceItem)
-    private readonly iiRepo: Repository<InvoiceItem>,
+    private readonly invoiceItemRepo: Repository<InvoiceItem>,
     @InjectRepository(Movement)
     private readonly movementRepo: Repository<Movement>,
   ) {}
@@ -144,8 +144,8 @@ export class InvoicesService {
 
     const items: InvoiceItem[] = [];
     for (const item of data.items) {
-      const ii = await this.iiRepo.save(
-        this.iiRepo.create({
+      const ii = await this.invoiceItemRepo.save(
+        this.invoiceItemRepo.create({
           invoiceId: invoice.id,
           productCode: item.productCode || '',
           description: item.description,
@@ -185,7 +185,7 @@ export class InvoicesService {
     // ── Automatic Accounting Voucher (DESHABILITADO — contabilidad manual) ──
     // TODO: Reactivar cuando se indique
     // try {
-    //   await this.accountingService.createVoucherFromModule(companyId, 'invoices', invoice.id, { ... });
+    //   await this.accountService.createVoucherFromModule(companyId, 'invoices', invoice.id, { ... });
     // } catch (e) { console.warn(...); }
 
     return { invoice };

@@ -2,7 +2,7 @@ import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/com
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryService } from '../inventory/inventory.service';
-import { AccountingService } from '../accounting/accounting.service';
+import { AccountService } from '../accounting/account.service';
 import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
 import { Movement } from '../entities/movement.entity';
@@ -12,8 +12,8 @@ import { ReceptionReport } from '../entities/reception-report.entity';
 export class PurchasesService {
   constructor(
     private readonly inventoryService: InventoryService,
-    @Inject(forwardRef(() => AccountingService))
-    private readonly accountingService: AccountingService,
+    @Inject(forwardRef(() => AccountService))
+    private readonly accountService: AccountService,
     @InjectRepository(Purchase)
     private readonly purchaseRepo: Repository<Purchase>,
     @InjectRepository(PurchaseProduct)
@@ -155,7 +155,7 @@ export class PurchasesService {
     // TODO: Reactivar cuando se indique
     // const purchaseTotal = products.reduce((sum, p) => sum + Number(p.totalPrice), 0);
     // try {
-    //   await this.accountingService.createVoucherFromModule(companyId, 'inventory', purchase.id, { ... });
+    //   await this.accountService.createVoucherFromModule(companyId, 'inventory', purchase.id, { ... });
     // } catch (e) { console.warn(...); }
 
     return { purchase, products };

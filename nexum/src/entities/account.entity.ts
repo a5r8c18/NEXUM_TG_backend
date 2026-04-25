@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { Company } from './company.entity';
 
 export type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense';
 export type AccountNature = 'deudora' | 'acreedora';
@@ -8,8 +9,12 @@ export class Account {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ name: 'companyId' })
   companyId: number;
+
+  @ManyToOne(() => Company)
+  @JoinColumn({ name: 'companyId' })
+  company: Company;
 
   @Column()
   code: string;
@@ -29,27 +34,31 @@ export class Account {
   @Column({ type: 'int', default: 1 })
   level: number;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ name: 'group_number', type: 'varchar', nullable: true })
   groupNumber: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ name: 'parent_code', type: 'varchar', nullable: true })
   parentCode: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ name: 'parent_account_id', type: 'uuid', nullable: true })
   parentAccountId: string | null;
+
+  @ManyToOne(() => Account, { nullable: true })
+  @JoinColumn({ name: 'parent_account_id' })
+  parentAccount: Account | null;
 
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   balance: number;
 
-  @Column({ default: true })
+  @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
-  @Column({ default: false })
+  @Column({ name: 'allows_movements', default: false })
   allowsMovements: boolean;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ name: 'created_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ name: 'updated_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   updatedAt: Date;
 }

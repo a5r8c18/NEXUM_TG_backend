@@ -1,9 +1,15 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccountingController } from './accounting.controller';
-import { AccountingService } from './accounting.service';
 import { SubelementsController } from './subelements.controller';
 import { SubelementsService } from './subelements.service';
+import { VoucherService } from './voucher.service';
+import { ReportService } from './report.service';
+import { AccountService } from './account.service';
+import { CostCenterService } from './cost-center.service';
+import { FiscalYearService } from './fiscal-year.service';
+import { ElementoService } from './elemento.service';
+import { ExpenseTypeService } from './expense-type.service';
 import { Elemento } from '../entities/elemento.entity';
 import { Account } from '../entities/account.entity';
 import { Voucher, SourceModule } from '../entities/voucher.entity';
@@ -13,7 +19,6 @@ import { FiscalYear } from '../entities/fiscal-year.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { ExpenseType } from '../entities/expense-type.entity';
 import { Subelement } from '../entities/subelement.entity';
-import { Subaccount } from '../entities/subaccount.entity';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
@@ -28,12 +33,26 @@ import { AuthModule } from '../auth/auth.module';
       AccountingPeriod,
       ExpenseType,
       Subelement,
-      Subaccount,
     ]),
     forwardRef(() => AuthModule),
   ],
   controllers: [AccountingController, SubelementsController],
-  providers: [AccountingService, SubelementsService],
-  exports: [AccountingService],
+  providers: [
+    VoucherService,
+    ReportService,
+    AccountService,
+    CostCenterService,
+    FiscalYearService,
+    SubelementsService,
+    ElementoService,
+    ExpenseTypeService,
+  ],
+  exports: [
+    VoucherService,
+    ReportService,
+    AccountService,
+    CostCenterService,
+    FiscalYearService,
+  ],
 })
 export class AccountingModule {}
