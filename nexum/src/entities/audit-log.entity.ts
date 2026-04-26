@@ -36,7 +36,11 @@ export enum AuditResource {
   REPORT = 'REPORT',
   FIXED_ASSET = 'FIXED_ASSET',
   AUTH = 'AUTH',
-  SYSTEM = 'SYSTEM'
+  SYSTEM = 'SYSTEM',
+  VOUCHER = 'VOUCHER',
+  ACCOUNT = 'ACCOUNT',
+  FISCAL_YEAR = 'FISCAL_YEAR',
+  ACCOUNTING_PERIOD = 'ACCOUNTING_PERIOD'
 }
 
 @Entity('audit_logs')

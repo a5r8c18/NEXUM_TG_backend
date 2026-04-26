@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
@@ -17,25 +18,10 @@ import { Account } from '../entities/account.entity';
 import { Subelement } from '../entities/subelement.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { EntityManager } from 'typeorm';
-
-// Audit logging interface
-interface AuditLog {
-  userId?: string;
-  action: string;
-  entityType: 'voucher';
-  entityId: string;
-  timestamp: Date;
-  beforeData?: any;
-  afterData?: any;
-  metadata?: {
-    companyId: number;
-    voucherNumber?: string;
-    description?: string;
-    amount?: number;
-    userAgent?: string;
-    ip?: string;
-  };
-}
+import { AuditService } from '../audit/audit.service';
+import { AuditAction, AuditResource } from '../entities/audit-log.entity';
+import { PaginationService } from '../common/pagination/pagination.service';
+import { PaginationResult, SearchPaginationDto } from '../common/pagination/pagination.dto';
 
 @Injectable()
 export class VoucherService {
@@ -51,29 +37,9 @@ export class VoucherService {
     @InjectRepository(AccountingPeriod)
     private readonly periodRepo: Repository<AccountingPeriod>,
     private readonly entityManager: EntityManager,
+    private readonly auditService: AuditService,
+    private readonly paginationService: PaginationService,
   ) {}
-
-  // ══════════════════════════════════════════════════════════
-  // ── AUDIT LOGGING ──
-  // ══════════════════════════════════════════════════════════
-
-  private logAudit(auditLog: AuditLog) {
-    // For now, log to console with structured format
-    // In production, this should be saved to audit_log table
-    console.log('AUDIT_LOG:', {
-      ...auditLog,
-      timestamp: auditLog.timestamp.toISOString(),
-      environment: process.env.NODE_ENV || 'development',
-    });
-
-    // TODO: Implement database logging when audit_log table is created
-    // Example implementation:
-    // await this.auditLogRepo.save({
-    //   ...auditLog,
-    //   userAgent: auditLog.metadata?.userAgent,
-    //   ip: auditLog.metadata?.ip
-    // });
-  }
 
   // ══════════════════════════════════════════════════════════
   // ── VOUCHERS CRUD ──
@@ -119,6 +85,44 @@ export class VoucherService {
     return qb.getMany();
   }
 
+  async findAllVouchersPaginated(
+    companyId: number,
+    filters: SearchPaginationDto & {
+      status?: string;
+      type?: string;
+      fromDate?: string;
+      toDate?: string;
+      sourceModule?: string;
+    },
+  ): Promise<PaginationResult<Voucher>> {
+    const qb = this.voucherRepo
+      .createQueryBuilder('v')
+      .leftJoinAndSelect('v.lines', 'lines')
+      .leftJoinAndSelect('lines.costCenter', 'costCenter')
+      .where('v.companyId = :companyId', { companyId });
+
+    if (filters.status)
+      qb.andWhere('v.status = :status', { status: filters.status });
+    if (filters.type) qb.andWhere('v.type = :type', { type: filters.type });
+    if (filters.fromDate)
+      qb.andWhere('v.date >= :fromDate', { fromDate: filters.fromDate });
+    if (filters.toDate)
+      qb.andWhere('v.date <= :toDate', { toDate: filters.toDate });
+    if (filters.sourceModule)
+      qb.andWhere('v.source_module = :sourceModule', {
+        sourceModule: filters.sourceModule,
+      });
+
+    // Apply search and sorting using pagination service
+    this.paginationService.applySearchAndSort(qb, filters, [
+      'v.description',
+      'v.voucher_number',
+      'v.reference',
+    ]);
+
+    return this.paginationService.paginate(qb, filters);
+  }
+
   async findOneVoucher(companyId: number, id: string) {
     const voucher = await this.voucherRepo.findOne({
       where: { id, companyId },
@@ -140,8 +144,18 @@ export class VoucherService {
 
   async createVoucher(companyId: number, data: any) {
     return await this.entityManager.transaction(async (manager) => {
-      // Validar período contable abierto
-      await this.validateOpenPeriod(companyId, data.date);
+      // Validar período contable abierto y obtener su ID
+      const period = await this.findPeriodByDate(companyId, data.date);
+      if (!period) {
+        throw new BadRequestException(
+          `No existe un período contable para la fecha ${data.date}. Debe crear un año fiscal con períodos para esta empresa.`,
+        );
+      }
+      if (period.status !== 'open') {
+        throw new BadRequestException(
+          'No se puede registrar comprobantes en un período cerrado',
+        );
+      }
 
       // Validar que tenga al menos 2 líneas
       if (!data.lines || data.lines.length < 2) {
@@ -199,6 +213,7 @@ export class VoucherService {
         sourceModule: (data.sourceModule as SourceModule) || 'manual',
         sourceDocumentId: data.sourceDocumentId || null,
         reference: data.reference || null,
+        periodId: period.id,
         createdBy: data.createdBy || null,
         lines: resolvedLines.map((line, index) =>
           manager.getRepository(VoucherLine).create({
@@ -224,24 +239,19 @@ export class VoucherService {
       const saved = await manager.getRepository(Voucher).save(voucher);
 
       // Log audit for voucher creation
-      this.logAudit({
+      await this.auditService.log({
+        companyId,
         userId: data.createdBy,
-        action: 'CREATE',
-        entityType: 'voucher',
-        entityId: saved.id,
-        timestamp: new Date(),
-        afterData: {
+        action: AuditAction.CREATE,
+        resource: AuditResource.VOUCHER,
+        resourceId: saved.id,
+        resourceName: saved.voucherNumber,
+        newValues: {
           voucherNumber: saved.voucherNumber,
           description: saved.description,
           status: saved.status,
           totalAmount: saved.totalAmount,
           linesCount: saved.lines?.length || 0,
-        },
-        metadata: {
-          companyId,
-          voucherNumber: saved.voucherNumber,
-          description: saved.description,
-          amount: saved.totalAmount,
         },
       });
 
@@ -251,6 +261,145 @@ export class VoucherService {
       }
 
       return saved;
+    });
+  }
+
+  async updateVoucher(companyId: number, id: string, data: any) {
+    return await this.entityManager.transaction(async (manager) => {
+      const voucher = await manager.getRepository(Voucher).findOne({
+        where: { id, companyId },
+        relations: ['lines'],
+      });
+
+      if (!voucher) {
+        throw new NotFoundException(`Voucher #${id} no encontrado`);
+      }
+
+      if (voucher.status !== 'draft') {
+        throw new BadRequestException(
+          'Solo se pueden editar comprobantes en estado borrador',
+        );
+      }
+
+      // Validar período contable abierto
+      const date = data.date || voucher.date;
+      const period = await this.findPeriodByDate(companyId, date);
+      if (!period) {
+        throw new BadRequestException(
+          `No existe un período contable para la fecha ${date}.`,
+        );
+      }
+      if (period.status !== 'open') {
+        throw new BadRequestException(
+          'No se puede modificar comprobantes en un período cerrado',
+        );
+      }
+
+      // Validar líneas si se proporcionan
+      if (data.lines) {
+        if (data.lines.length < 2) {
+          throw new BadRequestException(
+            'Un comprobante debe tener al menos 2 partidas (líneas)',
+          );
+        }
+
+        const totalDebit = data.lines.reduce(
+          (sum, l) => sum + Number(l.debit || 0),
+          0,
+        );
+        const totalCredit = data.lines.reduce(
+          (sum, l) => sum + Number(l.credit || 0),
+          0,
+        );
+        if (Math.abs(totalDebit - totalCredit) > 0.01) {
+          throw new BadRequestException(
+            `Partida doble no cuadra: Débito (${totalDebit.toFixed(2)}) ≠ Crédito (${totalCredit.toFixed(2)})`,
+          );
+        }
+
+        for (const line of data.lines) {
+          if (Number(line.debit) > 0 && Number(line.credit) > 0) {
+            throw new BadRequestException(
+              `La partida de cuenta ${line.accountCode} no puede tener débito y crédito simultáneamente`,
+            );
+          }
+        }
+
+        // Delete old lines
+        await manager
+          .getRepository(VoucherLine)
+          .delete({ voucherId: voucher.id });
+
+        // Resolve and create new lines
+        const resolvedLines = await this.resolveVoucherLines(
+          manager,
+          companyId,
+          data.lines,
+        );
+
+        const newLines = resolvedLines.map((line, index) =>
+          manager.getRepository(VoucherLine).create({
+            voucherId: voucher.id,
+            accountId: line.accountId,
+            accountCode: line.accountCode,
+            accountName: line.accountName,
+            subaccountCode: line.subaccountCode || null,
+            subaccountName: line.subaccountName,
+            element: line.element || null,
+            elementName: line.elementName,
+            subelement: line.subelement || null,
+            subelementName: line.subelementName,
+            debit: line.debit,
+            credit: line.credit,
+            description: line.description,
+            costCenterId: line.costCenterId,
+            reference: line.reference,
+            lineOrder: index + 1,
+          }),
+        );
+
+        await manager.getRepository(VoucherLine).save(newLines);
+
+        voucher.totalAmount = data.lines.reduce(
+          (sum, l) => sum + Number(l.debit || 0),
+          0,
+        );
+      }
+
+      // Update voucher fields
+      if (data.description !== undefined)
+        voucher.description = data.description;
+      if (data.date !== undefined) {
+        voucher.date = data.date;
+        voucher.periodId = period.id;
+      }
+      if (data.type !== undefined) voucher.type = data.type;
+      if (data.reference !== undefined) voucher.reference = data.reference;
+
+      const saved = await manager.getRepository(Voucher).save(voucher);
+
+      await this.auditService.log({
+        companyId,
+        userId: data.createdBy,
+        action: AuditAction.UPDATE,
+        resource: AuditResource.VOUCHER,
+        resourceId: saved.id,
+        resourceName: saved.voucherNumber,
+        oldValues: {
+          voucherNumber: voucher.voucherNumber,
+          description: voucher.description,
+          status: voucher.status,
+          totalAmount: voucher.totalAmount,
+        },
+        newValues: {
+          voucherNumber: saved.voucherNumber,
+          description: saved.description,
+          status: saved.status,
+          totalAmount: saved.totalAmount,
+        },
+      });
+
+      return this.findOneVoucher(companyId, saved.id);
     });
   }
 
@@ -283,20 +432,15 @@ export class VoucherService {
         );
 
         // Log audit for voucher posting
-        this.logAudit({
+        await this.auditService.log({
+          companyId,
           userId: voucher.createdBy || undefined,
-          action: 'POST',
-          entityType: 'voucher',
-          entityId: voucher.id,
-          timestamp: new Date(),
-          beforeData: { status: voucher.status },
-          afterData: { status: 'posted' },
-          metadata: {
-            companyId,
-            voucherNumber: voucher.voucherNumber,
-            description: voucher.description,
-            amount: voucher.totalAmount,
-          },
+          action: AuditAction.UPDATE,
+          resource: AuditResource.VOUCHER,
+          resourceId: voucher.id,
+          resourceName: voucher.voucherNumber,
+          oldValues: { status: voucher.status },
+          newValues: { status: 'posted' },
         });
 
         return result;
@@ -306,20 +450,15 @@ export class VoucherService {
         await this.reverseVoucherBalancesInTransaction(manager, voucher);
 
         // Log audit for voucher cancellation
-        this.logAudit({
+        await this.auditService.log({
+          companyId,
           userId: voucher.createdBy || undefined,
-          action: 'CANCEL',
-          entityType: 'voucher',
-          entityId: voucher.id,
-          timestamp: new Date(),
-          beforeData: { status: voucher.status },
-          afterData: { status: 'cancelled' },
-          metadata: {
-            companyId,
-            voucherNumber: voucher.voucherNumber,
-            description: voucher.description,
-            amount: voucher.totalAmount,
-          },
+          action: AuditAction.UPDATE,
+          resource: AuditResource.VOUCHER,
+          resourceId: voucher.id,
+          resourceName: voucher.voucherNumber,
+          oldValues: { status: voucher.status },
+          newValues: { status: 'cancelled' },
         });
       }
 
@@ -327,20 +466,15 @@ export class VoucherService {
       const result = await manager.getRepository(Voucher).save(voucher);
 
       // Log audit for status change
-      this.logAudit({
+      await this.auditService.log({
+        companyId,
         userId: voucher.createdBy || undefined,
-        action: 'STATUS_CHANGE',
-        entityType: 'voucher',
-        entityId: voucher.id,
-        timestamp: new Date(),
-        beforeData: { status: voucher.status },
-        afterData: { status: status },
-        metadata: {
-          companyId,
-          voucherNumber: voucher.voucherNumber,
-          description: voucher.description,
-          amount: voucher.totalAmount,
-        },
+        action: AuditAction.UPDATE,
+        resource: AuditResource.VOUCHER,
+        resourceId: voucher.id,
+        resourceName: voucher.voucherNumber,
+        oldValues: { status: voucher.status },
+        newValues: { status: status },
       });
 
       return result;
@@ -365,24 +499,19 @@ export class VoucherService {
       }
 
       // Log audit before deletion
-      this.logAudit({
+      await this.auditService.log({
+        companyId,
         userId: voucher.createdBy || undefined,
-        action: 'DELETE',
-        entityType: 'voucher',
-        entityId: voucher.id,
-        timestamp: new Date(),
-        beforeData: {
+        action: AuditAction.DELETE,
+        resource: AuditResource.VOUCHER,
+        resourceId: voucher.id,
+        resourceName: voucher.voucherNumber,
+        oldValues: {
           voucherNumber: voucher.voucherNumber,
           description: voucher.description,
           status: voucher.status,
           totalAmount: voucher.totalAmount,
           linesCount: voucher.lines?.length || 0,
-        },
-        metadata: {
-          companyId,
-          voucherNumber: voucher.voucherNumber,
-          description: voucher.description,
-          amount: voucher.totalAmount,
         },
       });
 

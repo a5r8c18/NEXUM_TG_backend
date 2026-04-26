@@ -87,6 +87,7 @@ export class FiscalYearService {
     // Crear año fiscal
     const fiscalYear = this.fiscalYearRepo.create({
       ...data,
+      companyId,
       status: 'open',
     });
 

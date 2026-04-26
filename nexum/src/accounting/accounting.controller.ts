@@ -1,3 +1,5 @@
+/* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
@@ -27,6 +29,21 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import {
+  CreateVoucherDto,
+  UpdateVoucherDto,
+  UpdateVoucherStatusDto,
+  CreateAccountDto,
+  UpdateAccountDto,
+  CreateSubaccountDto,
+  CreateCostCenterDto,
+  UpdateCostCenterDto,
+  CreateFiscalYearDto,
+  CreateElementoDto,
+  UpdateElementoDto,
+} from './dto';
+import { PaginationService } from '../common/pagination/pagination.service';
+import { SearchPaginationDto } from '../common/pagination/pagination.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -40,6 +57,7 @@ export class AccountingController {
     private readonly fiscalYearService: FiscalYearService,
     private readonly elementoService: ElementoService,
     private readonly expenseTypeService: ExpenseTypeService,
+    private readonly paginationService: PaginationService,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -49,21 +67,23 @@ export class AccountingController {
   @Get('vouchers')
   findAllVouchers(
     @Req() req: Request,
+    @Query() paginationDto: SearchPaginationDto,
     @Query('status') status?: string,
     @Query('type') type?: string,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
     @Query('sourceModule') sourceModule?: string,
-    @Query('search') search?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.voucherService.findAllVouchers(companyId, {
+    return this.voucherService.findAllVouchersPaginated(companyId, {
+      ...paginationDto,
       status,
       type,
       fromDate,
       toDate,
       sourceModule,
-      search,
+      calculatedOffset: 0,
+      calculatedLimit: 0
     });
   }
 
@@ -80,16 +100,26 @@ export class AccountingController {
   }
 
   @Post('vouchers')
-  createVoucher(@Req() req: Request, @Body() body: any) {
+  createVoucher(@Req() req: Request, @Body() body: CreateVoucherDto) {
     const companyId = getCompanyId(req);
     return this.voucherService.createVoucher(companyId, body);
+  }
+
+  @Put('vouchers/:id')
+  updateVoucher(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateVoucherDto,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.voucherService.updateVoucher(companyId, id, body);
   }
 
   @Put('vouchers/:id/status')
   updateVoucherStatus(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { status: string },
+    @Body() body: UpdateVoucherStatusDto,
   ) {
     const companyId = getCompanyId(req);
     return this.voucherService.updateVoucherStatus(companyId, id, body.status);
@@ -165,7 +195,7 @@ export class AccountingController {
   }
 
   @Post('cost-centers')
-  createCostCenter(@Req() req: Request, @Body() body: any) {
+  createCostCenter(@Req() req: Request, @Body() body: CreateCostCenterDto) {
     const companyId = getCompanyId(req);
     return this.costCenterService.createCostCenter(companyId, body);
   }
@@ -174,7 +204,7 @@ export class AccountingController {
   updateCostCenter(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: any,
+    @Body() body: UpdateCostCenterDto,
   ) {
     const companyId = getCompanyId(req);
     return this.costCenterService.updateCostCenter(companyId, id, body);
@@ -203,7 +233,7 @@ export class AccountingController {
   }
 
   @Post('fiscal-years')
-  createFiscalYear(@Req() req: Request, @Body() body: any) {
+  createFiscalYear(@Req() req: Request, @Body() body: CreateFiscalYearDto) {
     const companyId = getCompanyId(req);
     return this.fiscalYearService.createFiscalYear(companyId, body);
   }
@@ -560,13 +590,13 @@ export class AccountingController {
   }
 
   @Post('subaccounts')
-  createSubaccount(@Req() req: Request, @Body() body: any) {
+  createSubaccount(@Req() req: Request, @Body() body: CreateSubaccountDto) {
     const companyId = getCompanyId(req);
     return this.accountService.createSubaccount(companyId, body);
   }
 
   @Put('subaccounts/:id')
-  updateSubaccount(@Param('id') id: string, @Body() body: any) {
+  updateSubaccount(@Param('id') id: string, @Body() body: UpdateAccountDto) {
     return this.accountService.update(id, body);
   }
 
@@ -590,7 +620,7 @@ export class AccountingController {
   }
 
   @Post('accounts')
-  createAccount(@Req() req: Request, @Body() body: any) {
+  createAccount(@Req() req: Request, @Body() body: CreateAccountDto) {
     const companyId = getCompanyId(req);
     return this.accountService.createAccount(companyId, body);
   }
@@ -599,7 +629,7 @@ export class AccountingController {
   updateAccount(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: any,
+    @Body() body: UpdateAccountDto,
   ) {
     const companyId = getCompanyId(req);
     return this.accountService.updateAccount(companyId, id, body);
@@ -645,7 +675,7 @@ export class AccountingController {
   }
 
   @Post('Elements')
-  createElement(@Req() req: Request, @Body() body: any) {
+  createElement(@Req() req: Request, @Body() body: CreateElementoDto) {
     const companyId = getCompanyId(req);
     return this.elementoService.create(companyId, body);
   }
@@ -654,7 +684,7 @@ export class AccountingController {
   updateElement(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: any,
+    @Body() body: UpdateElementoDto,
   ) {
     const companyId = getCompanyId(req);
     return this.elementoService.update(companyId, id, body);
@@ -693,7 +723,7 @@ export class AccountingController {
   }
 
   @Post('expense-types')
-  createExpenseType(@Req() req: Request, @Body() body: any) {
+  createExpenseType(@Req() req: Request, @Body() body: CreateElementoDto) {
     const companyId = getCompanyId(req);
     return this.expenseTypeService.create(companyId, body);
   }

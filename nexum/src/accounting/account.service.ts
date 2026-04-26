@@ -222,28 +222,20 @@ export class AccountService {
   }
 
   async getSubaccountsByAccount(companyId: number, accountId: string) {
-    // Buscar la cuenta padre para obtener su código
-    const parentAccount = await this.accountRepo.findOneBy({
-      id: accountId,
-      companyId,
-    });
-
-    if (!parentAccount) {
-      return [];
-    }
-
-    // Buscar subcuentas (cuentas con level=4 y parentCode igual al código de la cuenta padre)
-    return this.accountRepo.find({
+    // Buscar subcuentas directamente usando parentAccountId
+    const subaccounts = await this.accountRepo.find({
       where: {
         companyId,
         level: 4,
-        parentCode: parentAccount.code, // Usar código en lugar de ID
+        parentAccountId: accountId,
         isActive: true,
       },
       order: {
         code: 'ASC',
       },
     });
+
+    return subaccounts;
   }
 
   async createSubaccount(

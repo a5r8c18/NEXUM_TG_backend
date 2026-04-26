@@ -1812,11 +1812,12 @@ export class AccountingService {
     codeRanges.forEach((range, i) => {
       if (range.includes('-')) {
         const [from, to] = range.split('-').map((s) => s.trim());
+        // Usar LPAD para comparación lexicográfica segura (soporta códigos no numéricos)
         conditions.push(
-          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
+          `(LPAD(vl.account_code, 10, '0') >= LPAD(:from${i}, 10, '0') AND LPAD(vl.account_code, 10, '0') <= LPAD(:to${i}, 10, '0'))`,
         );
-        params[`from${i}`] = parseInt(from);
-        params[`to${i}`] = parseInt(to);
+        params[`from${i}`] = from;
+        params[`to${i}`] = to;
       } else {
         conditions.push(`vl.account_code = :code${i}`);
         params[`code${i}`] = range.trim();
@@ -1867,10 +1868,10 @@ export class AccountingService {
       if (range.includes('-')) {
         const [from, to] = range.split('-').map((s) => s.trim());
         conditions.push(
-          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
+          `(LPAD(vl.account_code, 10, '0') >= LPAD(:from${i}, 10, '0') AND LPAD(vl.account_code, 10, '0') <= LPAD(:to${i}, 10, '0'))`,
         );
-        params[`from${i}`] = parseInt(from);
-        params[`to${i}`] = parseInt(to);
+        params[`from${i}`] = from;
+        params[`to${i}`] = to;
       } else {
         conditions.push(`vl.account_code = :code${i}`);
         params[`code${i}`] = range.trim();

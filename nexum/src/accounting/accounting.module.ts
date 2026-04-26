@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccountingController } from './accounting.controller';
@@ -20,6 +21,8 @@ import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { ExpenseType } from '../entities/expense-type.entity';
 import { Subelement } from '../entities/subelement.entity';
 import { AuthModule } from '../auth/auth.module';
+import { AuditModule } from '../audit/audit.module';
+import { PaginationModule } from '../common/pagination/pagination.module';
 
 @Module({
   imports: [
@@ -35,6 +38,8 @@ import { AuthModule } from '../auth/auth.module';
       Subelement,
     ]),
     forwardRef(() => AuthModule),
+    AuditModule,
+    PaginationModule,
   ],
   controllers: [AccountingController, SubelementsController],
   providers: [

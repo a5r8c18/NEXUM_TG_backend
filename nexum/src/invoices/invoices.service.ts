@@ -12,11 +12,17 @@ import { AccountService } from '../accounting/account.service';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
+import { PaginationService } from '../common/pagination/pagination.service';
+import {
+  PaginationDto,
+  PaginationResult,
+} from '../common/pagination/pagination.dto';
 
 @Injectable()
 export class InvoicesService {
   constructor(
     private readonly inventoryService: InventoryService,
+    private readonly paginationService: PaginationService,
     @Inject(forwardRef(() => AccountService))
     private readonly accountService: AccountService,
     @InjectRepository(Invoice)
@@ -37,7 +43,7 @@ export class InvoicesService {
       page?: number;
       limit?: number;
     },
-  ) {
+  ): Promise<PaginationResult<Invoice>> {
     const qb = this.invoiceRepo
       .createQueryBuilder('inv')
       .leftJoinAndSelect('inv.items', 'items')
@@ -59,8 +65,13 @@ export class InvoicesService {
     }
 
     qb.orderBy('inv.created_at', 'DESC');
-    const result = await qb.getMany();
-    return { invoices: result };
+
+    // Apply pagination
+    const paginationDto = new PaginationDto();
+    if (filters?.page) paginationDto.page = filters.page;
+    if (filters?.limit) paginationDto.limit = filters.limit;
+
+    return await this.paginationService.paginate(qb, paginationDto);
   }
 
   async findOne(companyId: number, id: string) {
