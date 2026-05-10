@@ -25,6 +25,7 @@ import { MessagesModule } from './messages/messages.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { LoggerModule } from './logger/logger.module';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { RedisCacheModule } from './cache';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -56,6 +57,7 @@ import { ExpenseType } from './entities/expense-type.entity';
 import { Message } from './entities/message.entity';
 import { Subscription } from './entities/subscription.entity';
 import { Subelement } from './entities/subelement.entity';
+import { GeneratedReport } from './entities/generated-report.entity';
 import { RefreshToken } from './auth/refresh-token.entity';
 
 @Module({
@@ -102,6 +104,7 @@ import { RefreshToken } from './auth/refresh-token.entity';
           ExpenseType,
           Subscription,
           Subelement,
+          GeneratedReport,
           RefreshToken,
         ],
         synchronize:
@@ -135,6 +138,7 @@ import { RefreshToken } from './auth/refresh-token.entity';
     MessagesModule,
     SubscriptionsModule,
     LoggerModule,
+    RedisCacheModule,
     ThrottlerModule.forRoot([
       {
         ttl: 60000, // 1 minute

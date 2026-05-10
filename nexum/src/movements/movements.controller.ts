@@ -8,6 +8,7 @@ import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
 import { CreateDirectEntryDto, CreateExitDto, CreateTransferDto, CreateReturnDto } from './dto';
+import { getEntryTypes, getExitTypes, MOVEMENT_TYPES_CATALOG } from './movement-types.catalog';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -58,6 +59,17 @@ export class MovementsController {
   createReturn(@Req() req: Request, @Body() body: CreateReturnDto) {
     const companyId = getCompanyId(req);
     return this.movementsService.createReturn(companyId, body);
+  }
+
+  @Get('types')
+  getMovementTypes(
+    @Query('direction') direction?: 'entry' | 'exit',
+    @Query('category') category?: 'insumo' | 'mercancia' | 'produccion',
+  ) {
+    if (direction === 'entry') return getEntryTypes(category);
+    if (direction === 'exit') return getExitTypes(category);
+    if (category) return MOVEMENT_TYPES_CATALOG.filter((t) => t.category === category);
+    return MOVEMENT_TYPES_CATALOG;
   }
 
   @Get('transfers/:warehouseId')

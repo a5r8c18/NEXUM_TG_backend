@@ -4,11 +4,12 @@ import {
   BadRequestException,
   Inject,
   forwardRef,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryService } from '../inventory/inventory.service';
-import { AccountService } from '../accounting/account.service';
+import { VoucherService } from '../accounting/voucher.service';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
@@ -20,11 +21,13 @@ import {
 
 @Injectable()
 export class InvoicesService {
+  private readonly logger = new Logger(InvoicesService.name);
+
   constructor(
     private readonly inventoryService: InventoryService,
     private readonly paginationService: PaginationService,
-    @Inject(forwardRef(() => AccountService))
-    private readonly accountService: AccountService,
+    @Inject(forwardRef(() => VoucherService))
+    private readonly voucherService: VoucherService,
     @InjectRepository(Invoice)
     private readonly invoiceRepo: Repository<Invoice>,
     @InjectRepository(InvoiceItem)
@@ -64,7 +67,7 @@ export class InvoicesService {
       qb.andWhere('inv.date <= :endDate', { endDate: filters.endDate });
     }
 
-    qb.orderBy('inv.created_at', 'DESC');
+    qb.orderBy('inv.createdAt', 'DESC');
 
     // Apply pagination
     const paginationDto = new PaginationDto();
@@ -193,11 +196,40 @@ export class InvoicesService {
 
     invoice.items = items;
 
-    // ── Automatic Accounting Voucher (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
-    // try {
-    //   await this.accountService.createVoucherFromModule(companyId, 'invoices', invoice.id, { ... });
-    // } catch (e) { console.warn(...); }
+    // ── Contabilización automática de factura (venta) ──
+    const invoiceTotal = Number(invoice.total || 0);
+    if (invoiceTotal > 0) {
+      try {
+        await this.voucherService.createVoucherFromModule(
+          companyId,
+          'invoices',
+          invoice.id,
+          {
+            date: invoice.date || new Date().toISOString().split('T')[0],
+            description: `Factura ${invoice.invoiceNumber} - ${invoice.customerName}`,
+            type: 'sales',
+            reference: `FAC-${invoice.invoiceNumber}`,
+            createdBy: data.createdByName || 'Sistema',
+            lines: [
+              {
+                accountCode: '135', // Cuentas por Cobrar a Clientes
+                debit: invoiceTotal,
+                credit: 0,
+                description: `Cobro pendiente ${invoice.invoiceNumber}`,
+              },
+              {
+                accountCode: '900', // Ventas
+                debit: 0,
+                credit: invoiceTotal,
+                description: `Venta ${invoice.invoiceNumber}`,
+              },
+            ],
+          },
+        );
+      } catch (error) {
+        this.logger.error(`Error contabilización factura ${invoice.id}: ${error.message}`);
+      }
+    }
 
     return { invoice };
   }
@@ -258,11 +290,79 @@ export class InvoicesService {
       }
     }
 
-    // ── Accounting: Voucher on PAID (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización al marcar como PAGADA ──
+    if (status === 'paid' && prevStatus !== 'paid') {
+      const total = Number(invoice.total || 0);
+      if (total > 0) {
+        try {
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'invoices',
+            invoice.id,
+            {
+              date: new Date().toISOString().split('T')[0],
+              description: `Cobro factura ${invoice.invoiceNumber}`,
+              type: 'sales',
+              reference: `COBRO-${invoice.invoiceNumber}`,
+              createdBy: 'Sistema',
+              lines: [
+                {
+                  accountCode: '101', // Efectivo en Caja
+                  debit: total,
+                  credit: 0,
+                  description: `Cobro factura ${invoice.invoiceNumber}`,
+                },
+                {
+                  accountCode: '135', // Cuentas por Cobrar
+                  debit: 0,
+                  credit: total,
+                  description: `Liquidación CxC ${invoice.invoiceNumber}`,
+                },
+              ],
+            },
+          );
+        } catch (error) {
+          this.logger.error(`Error contabilización cobro ${invoice.id}: ${error.message}`);
+        }
+      }
+    }
 
-    // ── Accounting: Reversal voucher on CANCELLED (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización reverso al CANCELAR ──
+    if (status === 'cancelled' && prevStatus !== 'cancelled') {
+      const total = Number(invoice.total || 0);
+      if (total > 0) {
+        try {
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'invoices',
+            invoice.id,
+            {
+              date: new Date().toISOString().split('T')[0],
+              description: `Cancelación factura ${invoice.invoiceNumber}`,
+              type: 'sales',
+              reference: `CANCEL-${invoice.invoiceNumber}`,
+              createdBy: 'Sistema',
+              lines: [
+                {
+                  accountCode: '900', // Ventas (reverso)
+                  debit: total,
+                  credit: 0,
+                  description: `Reverso venta ${invoice.invoiceNumber}`,
+                },
+                {
+                  accountCode: '135', // Cuentas por Cobrar (reverso)
+                  debit: 0,
+                  credit: total,
+                  description: `Reverso CxC ${invoice.invoiceNumber}`,
+                },
+              ],
+            },
+          );
+        } catch (error) {
+          this.logger.error(`Error contabilización cancelación ${invoice.id}: ${error.message}`);
+        }
+      }
+    }
 
     const saved = await this.invoiceRepo.save(invoice);
     return { invoice: saved };

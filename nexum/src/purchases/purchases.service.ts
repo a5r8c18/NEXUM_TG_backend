@@ -1,19 +1,22 @@
-import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryService } from '../inventory/inventory.service';
-import { AccountService } from '../accounting/account.service';
+import { VoucherService } from '../accounting/voucher.service';
 import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
 import { Movement } from '../entities/movement.entity';
 import { ReceptionReport } from '../entities/reception-report.entity';
+import { getMovementType } from '../movements/movement-types.catalog';
 
 @Injectable()
 export class PurchasesService {
+  private readonly logger = new Logger(PurchasesService.name);
+
   constructor(
     private readonly inventoryService: InventoryService,
-    @Inject(forwardRef(() => AccountService))
-    private readonly accountService: AccountService,
+    @Inject(forwardRef(() => VoucherService))
+    private readonly voucherService: VoucherService,
     @InjectRepository(Purchase)
     private readonly purchaseRepo: Repository<Purchase>,
     @InjectRepository(PurchaseProduct)
@@ -112,12 +115,20 @@ export class PurchasesService {
         'entry',
       );
 
+      // Código de movimiento: 102 (Insumo) o 202 (Mercancía) según categoría
+      const movCode = '202'; // Default: Compra mercancía (EMP)
+      const movType = getMovementType(movCode);
       await this.movementRepo.save(
         this.movementRepo.create({
           companyId,
           movementType: 'entry',
+          movementCode: movCode,
+          movementDescription: movType?.description || 'Compras a proveedores (EMP)',
+          category: 'mercancia',
           productCode: p.product_code,
           quantity: p.quantity,
+          unitPrice: p.unit_price,
+          totalAmount: totalPrice,
           reason: `Compra ${data.document}`,
           userName: userName || 'System',
           purchaseId: purchase.id,
@@ -151,12 +162,44 @@ export class PurchasesService {
       }),
     );
 
-    // ── Automatic Accounting Voucher (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
-    // const purchaseTotal = products.reduce((sum, p) => sum + Number(p.totalPrice), 0);
-    // try {
-    //   await this.accountService.createVoucherFromModule(companyId, 'inventory', purchase.id, { ... });
-    // } catch (e) { console.warn(...); }
+    // ── Contabilización automática de compra ──
+    const purchaseTotal = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
+    if (purchaseTotal > 0) {
+      try {
+        await this.voucherService.createVoucherFromModule(
+          companyId,
+          'inventory',
+          purchase.id,
+          {
+            date: new Date().toISOString().split('T')[0],
+            description: `Compra ${data.document} - ${data.supplier}`,
+            type: 'inventory',
+            reference: `COMPRA-${purchase.id.substring(0, 8)}`,
+            createdBy: userName || 'Sistema',
+            lines: [
+              {
+                accountCode: '189', // Mercancías para la Venta
+                debit: purchaseTotal,
+                credit: 0,
+                description: `Compra mercancías - ${data.document}`,
+              },
+              {
+                accountCode: '410', // Cuentas por Pagar a Proveedores
+                debit: 0,
+                credit: purchaseTotal,
+                description: `Obligación proveedor ${data.supplier}`,
+              },
+            ],
+          },
+        );
+        this.logger.log(`Comprobante contable generado para compra ${purchase.id}`);
+      } catch (error) {
+        this.logger.error(
+          `Error al generar comprobante para compra ${purchase.id}: ${error.message}`,
+          error.stack,
+        );
+      }
+    }
 
     return { purchase, products };
   }

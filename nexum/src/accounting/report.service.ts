@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/require-await */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
@@ -16,9 +17,14 @@ import { jsPDF } from 'jspdf';
 import { VoucherLine } from '../entities/voucher-line.entity';
 import { Voucher } from '../entities/voucher.entity';
 import { Account } from '../entities/account.entity';
+import { GeneratedReport } from '../entities/generated-report.entity';
+import { CacheService } from '../cache/cache.service';
+import { Efe5920Data, Efe5921Data, Efe5924Data } from './pdf.service';
 
 @Injectable()
 export class ReportService {
+  private static readonly CACHE_TTL = 300; // 5 minutes
+
   constructor(
     @InjectRepository(VoucherLine)
     private readonly voucherLineRepo: Repository<VoucherLine>,
@@ -26,6 +32,9 @@ export class ReportService {
     private readonly voucherRepo: Repository<Voucher>,
     @InjectRepository(Account)
     private readonly accountRepo: Repository<Account>,
+    @InjectRepository(GeneratedReport)
+    private readonly generatedReportRepo: Repository<GeneratedReport>,
+    private readonly cacheService: CacheService,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -33,7 +42,16 @@ export class ReportService {
   // ══════════════════════════════════════════════════════════
 
   async getTrialBalance(companyId: number, fromDate?: string, toDate?: string) {
-    // Optimized single query to eliminate N+1 problem
+    const cacheKey = `reports:${companyId}:trial-balance:${fromDate || 'all'}:${toDate || 'all'}`;
+    return this.cacheService.getOrSet(cacheKey, () => this._getTrialBalance(companyId, fromDate, toDate), ReportService.CACHE_TTL);
+  }
+
+  private async _getTrialBalance(companyId: number, fromDate?: string, toDate?: string) {
+    // Default date range: if not provided, use full year range to avoid PostgreSQL NULL type inference error
+    const effectiveFromDate = fromDate || '1900-01-01';
+    const effectiveToDate = toDate || '2999-12-31';
+    const hasDateFilter = !!(fromDate || toDate);
+
     const trialBalanceQuery = this.voucherLineRepo
       .createQueryBuilder('vl')
       .select('vl.account_code', 'accountCode')
@@ -54,14 +72,14 @@ export class ReportService {
       // Period debit
       .addSelect(
         `COALESCE(SUM(CASE 
-          WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+          WHEN v.date >= :fromDate AND v.date <= :toDate 
           THEN vl.debit ELSE 0 END), 0)`,
         'periodDebit',
       )
       // Period credit
       .addSelect(
         `COALESCE(SUM(CASE 
-          WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+          WHEN v.date >= :fromDate AND v.date <= :toDate 
           THEN vl.credit ELSE 0 END), 0)`,
         'periodCredit',
       )
@@ -72,18 +90,18 @@ export class ReportService {
           THEN (COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0) - 
                 COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0)) +
                (COALESCE(SUM(CASE 
-                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 WHEN v.date >= :fromDate AND v.date <= :toDate 
                  THEN vl.debit ELSE 0 END), 0) - 
                 COALESCE(SUM(CASE 
-                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 WHEN v.date >= :fromDate AND v.date <= :toDate 
                  THEN vl.credit ELSE 0 END), 0))
           ELSE (COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0) - 
                 COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0)) +
                (COALESCE(SUM(CASE 
-                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 WHEN v.date >= :fromDate AND v.date <= :toDate 
                  THEN vl.credit ELSE 0 END), 0) - 
                 COALESCE(SUM(CASE 
-                 WHEN (:fromDate IS NULL OR v.date >= :fromDate) AND (:toDate IS NULL OR v.date <= :toDate) 
+                 WHEN v.date >= :fromDate AND v.date <= :toDate 
                  THEN vl.debit ELSE 0 END), 0))
         END`,
         'closingBalance',
@@ -91,10 +109,13 @@ export class ReportService {
       .innerJoin('vl.voucher', 'v')
       .innerJoin('vl.account', 'a')
       .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' })
-      .andWhere(
-        `(:fromDate IS NULL OR v.date <= :toDate) AND (:toDate IS NULL OR v.date >= :fromDate)`,
-      )
+      .andWhere('v.status = :status', { status: 'posted' });
+
+    if (hasDateFilter) {
+      trialBalanceQuery.andWhere('v.date >= :fromDate AND v.date <= :toDate');
+    }
+
+    trialBalanceQuery
       .groupBy('vl.account_code')
       .addGroupBy('vl.account_name')
       .addGroupBy('a.nature')
@@ -105,9 +126,8 @@ export class ReportService {
       .orderBy('vl.account_code', 'ASC');
 
     trialBalanceQuery.setParameters({
-      companyId,
-      fromDate: fromDate || null,
-      toDate: toDate || null,
+      fromDate: effectiveFromDate,
+      toDate: effectiveToDate,
     });
 
     const results = await trialBalanceQuery.getRawMany();
@@ -198,6 +218,7 @@ export class ReportService {
 
       const buffer = await workbook.xlsx.writeBuffer();
       res.send(buffer);
+      return;
     }
 
     return workbook;
@@ -208,6 +229,11 @@ export class ReportService {
   // ══════════════════════════════════════════════════════════
 
   async getBalanceSheet(companyId: number, asOfDate?: string) {
+    const cacheKey = `reports:${companyId}:balance-sheet:${asOfDate || 'all'}`;
+    return this.cacheService.getOrSet(cacheKey, () => this._getBalanceSheet(companyId, asOfDate), ReportService.CACHE_TTL);
+  }
+
+  private async _getBalanceSheet(companyId: number, asOfDate?: string) {
     const qb = this.voucherLineRepo
       .createQueryBuilder('vl')
       .select('a.type', 'accountType')
@@ -354,6 +380,7 @@ export class ReportService {
 
       const buffer = await workbook.xlsx.writeBuffer();
       res.send(buffer);
+      return;
     }
 
     return workbook;
@@ -364,6 +391,15 @@ export class ReportService {
   // ══════════════════════════════════════════════════════════
 
   async getIncomeStatement(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+  ) {
+    const cacheKey = `reports:${companyId}:income-statement:${fromDate || 'all'}:${toDate || 'all'}`;
+    return this.cacheService.getOrSet(cacheKey, () => this._getIncomeStatement(companyId, fromDate, toDate), ReportService.CACHE_TTL);
+  }
+
+  private async _getIncomeStatement(
     companyId: number,
     fromDate?: string,
     toDate?: string,
@@ -489,6 +525,7 @@ export class ReportService {
 
       const buffer = await workbook.xlsx.writeBuffer();
       res.send(buffer);
+      return;
     }
 
     return workbook;
@@ -499,6 +536,15 @@ export class ReportService {
   // ══════════════════════════════════════════════════════════
 
   async getExpenseBreakdown(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+  ) {
+    const cacheKey = `reports:${companyId}:expense-breakdown:${fromDate || 'all'}:${toDate || 'all'}`;
+    return this.cacheService.getOrSet(cacheKey, () => this._getExpenseBreakdown(companyId, fromDate, toDate), ReportService.CACHE_TTL);
+  }
+
+  private async _getExpenseBreakdown(
     companyId: number,
     fromDate?: string,
     toDate?: string,
@@ -518,7 +564,7 @@ export class ReportService {
     if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
     if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
 
-    qb.groupBy('vl.element, vl.element_name').orderBy('totalExpense', 'DESC');
+    qb.groupBy('vl.element, vl.element_name').orderBy('"totalExpense"', 'DESC');
 
     const results = await qb.getRawMany();
 
@@ -596,6 +642,7 @@ export class ReportService {
 
       const buffer = await workbook.xlsx.writeBuffer();
       res.send(buffer);
+      return;
     }
 
     return workbook;
@@ -643,15 +690,18 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
   ) {
-    return this.voucherRepo.find({
-      where: {
-        companyId,
-        status: 'posted',
-        ...(fromDate && { date: fromDate }),
-      }, // ajustar rango
-      relations: ['lines'],
-      order: { date: 'ASC', voucherNumber: 'ASC' },
-    });
+    const qb = this.voucherRepo
+      .createQueryBuilder('v')
+      .leftJoinAndSelect('v.lines', 'lines')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere('v.status = :status', { status: 'posted' });
+
+    if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
+    if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
+
+    qb.orderBy('v.date', 'ASC').addOrderBy('v.voucherNumber', 'ASC');
+
+    return qb.getMany();
   }
 
   async getCostCenterAnalysis(
@@ -1486,7 +1536,12 @@ export class ReportService {
   }
 
   async getFinancialKPIs(companyId: number) {
-    const balanceSheet = await this.getBalanceSheet(companyId);
+    const cacheKey = `reports:${companyId}:kpis`;
+    return this.cacheService.getOrSet(cacheKey, () => this._getFinancialKPIs(companyId), 120); // 2 min TTL for KPIs
+  }
+
+  private async _getFinancialKPIs(companyId: number) {
+    const balanceSheet = await this._getBalanceSheet(companyId);
     const totalAssets = balanceSheet.totals.assets;
     const totalLiabilities = balanceSheet.totals.liabilities;
     const totalEquity = balanceSheet.totals.equity;
@@ -1607,13 +1662,13 @@ export class ReportService {
     const conditions: string[] = [];
     const params: Record<string, any> = {};
     codeRanges.forEach((range, i) => {
-      if (range.includes('-')) {
-        const [from, to] = range.split('-').map((s) => s.trim());
+      const parts = range.split('-').map((s) => s.trim());
+      if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
         conditions.push(
-          `(LPAD(vl.account_code, 10, '0') >= LPAD(:from${i}, 10, '0') AND LPAD(vl.account_code, 10, '0') <= LPAD(:to${i}, 10, '0'))`,
+          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
         );
-        params[`from${i}`] = from;
-        params[`to${i}`] = to;
+        params[`from${i}`] = parseInt(parts[0], 10);
+        params[`to${i}`] = parseInt(parts[1], 10);
       } else {
         conditions.push(`vl.account_code = :code${i}`);
         params[`code${i}`] = range.trim();
@@ -1661,13 +1716,13 @@ export class ReportService {
     const conditions: string[] = [];
     const params: Record<string, any> = {};
     codeRanges.forEach((range, i) => {
-      if (range.includes('-')) {
-        const [from, to] = range.split('-').map((s) => s.trim());
+      const parts = range.split('-').map((s) => s.trim());
+      if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
         conditions.push(
-          `(LPAD(vl.account_code, 10, '0') >= LPAD(:from${i}, 10, '0') AND LPAD(vl.account_code, 10, '0') <= LPAD(:to${i}, 10, '0'))`,
+          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
         );
-        params[`from${i}`] = from;
-        params[`to${i}`] = to;
+        params[`from${i}`] = parseInt(parts[0], 10);
+        params[`to${i}`] = parseInt(parts[1], 10);
       } else {
         conditions.push(`vl.account_code = :code${i}`);
         params[`code${i}`] = range.trim();
@@ -1710,6 +1765,388 @@ export class ReportService {
     return {
       debit: Number(result?.totalDebit || 0),
       credit: Number(result?.totalCredit || 0),
+    };
+  }
+
+  /**
+   * Invalidate all cached reports for a company.
+   * Call this when vouchers are posted, cancelled, or deleted.
+   */
+  async invalidateCompanyCache(companyId: number): Promise<void> {
+    await this.cacheService.invalidatePattern(`reports:${companyId}:*`);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── GENERATED REPORTS CRUD ──
+  // ══════════════════════════════════════════════════════════
+
+  async getGeneratedReports(companyId: number) {
+    return this.generatedReportRepo.find({
+      where: { companyId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async saveGeneratedReport(
+    companyId: number,
+    reportData: {
+      type: string;
+      title: string;
+      description?: string;
+      generatedBy?: string;
+      data: any;
+      period?: any;
+      options?: any;
+    },
+  ) {
+    const report = this.generatedReportRepo.create({
+      companyId,
+      type: reportData.type,
+      title: reportData.title,
+      description: reportData.description || null,
+      generatedBy: reportData.generatedBy || 'Usuario',
+      data: reportData.data,
+      period: reportData.period || null,
+      options: reportData.options || null,
+    });
+    return this.generatedReportRepo.save(report);
+  }
+
+  async deleteGeneratedReport(companyId: number, reportId: string) {
+    const report = await this.generatedReportRepo.findOne({
+      where: { id: reportId, companyId },
+    });
+    if (!report) {
+      throw new NotFoundException('Informe no encontrado');
+    }
+    await this.generatedReportRepo.remove(report);
+    return { success: true };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── PDF MODELO 5920 DATA ──
+  // ══════════════════════════════════════════════════════════
+
+  async getEfe5920Data(companyId: number, asOfDate?: string): Promise<Efe5920Data> {
+    const today = new Date().toISOString().split('T')[0];
+    const date = asOfDate || today;
+    
+    // ACTIVO
+    const efectivoCaja = await this.getAccountRangeBalance(companyId, ['101-108'], date);
+    const efectivoBanco = await this.getAccountRangeBalance(companyId, ['109-119'], date);
+    const cxcCorto = await this.getAccountRangeBalance(companyId, ['135-139', '154'], date);
+    const pagosAnticipadosSumin = await this.getAccountRangeBalance(companyId, ['146-149'], date);
+    const adeudosPresupuesto = await this.getAccountRangeBalance(companyId, ['164-166'], date);
+    const materiasPrimas = await this.getAccountRangeBalance(companyId, ['183'], date);
+    const utilesHerramientas = await this.getAccountRangeBalance(companyId, ['187'], date);
+    const alimentos = await this.getAccountRangeBalance(companyId, ['193'], date);
+    const aftTangibles = await this.getAccountRangeBalance(companyId, ['240-251'], date);
+    const depreciacionAft = await this.getAccountRangeBalanceCredit(companyId, ['375-388'], date);
+    const gastosDeficit = await this.getAccountRangeBalance(companyId, ['312'], date);
+    const cxcDiversas = await this.getAccountRangeBalance(companyId, ['334-341'], date);
+    
+    // PASIVO
+    const cxpCorto = await this.getAccountRangeBalanceCredit(companyId, ['405-415'], date);
+    const dividendosXPagar = await this.getAccountRangeBalanceCredit(companyId, ['417'], date);
+    const obligacionesPresupuesto = await this.getAccountRangeBalanceCredit(companyId, ['440-449'], date);
+    const nominasXPagar = await this.getAccountRangeBalanceCredit(companyId, ['455-459'], date);
+    const gastosAcumuladosXPagar = await this.getAccountRangeBalanceCredit(companyId, ['480-489'], date);
+    const provisionVacaciones = await this.getAccountRangeBalanceCredit(companyId, ['492'], date);
+    const provisionSeguridadSocial = await this.getAccountRangeBalanceCredit(companyId, ['500'], date);
+    const cuentasXPagarDiversas = await this.getAccountRangeBalanceCredit(companyId, ['565-569'], date);
+    
+    // PATRIMONIO
+    const inversionEstatal = await this.getAccountRangeBalanceCredit(companyId, ['600-612'], date);
+    const reservasContingencias = await this.getAccountRangeBalanceCredit(companyId, ['645'], date);
+    const otrasReservas = await this.getAccountRangeBalanceCredit(companyId, ['646-654'], date);
+    const pagoUtilidades = await this.getAccountRangeBalanceCredit(companyId, ['690'], date);
+    const pagoDividendos = await this.getAccountRangeBalanceCredit(companyId, ['691'], date);
+    
+    // TOTALES
+    const totalInventarios = materiasPrimas + utilesHerramientas + alimentos;
+    const activosCirculantes = efectivoCaja + efectivoBanco + cxcCorto + pagosAnticipadosSumin + adeudosPresupuesto + totalInventarios;
+    const activosFijos = aftTangibles - depreciacionAft;
+    const otrosActivos = gastosDeficit + cxcDiversas;
+    const totalActivo = activosCirculantes + activosFijos + gastosDeficit + otrosActivos;
+    
+    const pasivosCirculantes = cxpCorto + dividendosXPagar + obligacionesPresupuesto + nominasXPagar + gastosAcumuladosXPagar + provisionVacaciones + provisionSeguridadSocial;
+    const otrosPasivos = cuentasXPagarDiversas;
+    const totalPasivo = pasivosCirculantes + otrosPasivos;
+    
+    const totalPatrimonio = inversionEstatal + reservasContingencias + otrasReservas + pagoUtilidades + pagoDividendos;
+    const resultadoPeriodo = totalActivo - (totalPasivo + totalPatrimonio);
+    const totalPasivoYPatrimonio = totalPasivo + totalPatrimonio + resultadoPeriodo;
+    
+    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const d = new Date(date);
+    
+    return {
+      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      codigoCentroInformante: '0001',
+      centroInformante: 'Empresa Demo',
+      
+      activos: {
+        activosCirculantes: { planAnual: 0, apertura: 0, real: activosCirculantes },
+        efectivoCaja: { planAnual: 0, apertura: 0, real: efectivoCaja },
+        efectivoBanco: { planAnual: 0, apertura: 0, real: efectivoBanco },
+        cuentasXCobrarCP: { planAnual: 0, apertura: 0, real: cxcCorto },
+        pagosAnticipadosSuministros: { planAnual: 0, apertura: 0, real: pagosAnticipadosSumin },
+        adeudosPresupuesto: { planAnual: 0, apertura: 0, real: adeudosPresupuesto },
+        totalInventarios: { planAnual: 0, apertura: 0, real: totalInventarios },
+        materiasPrimas: { planAnual: 0, apertura: 0, real: materiasPrimas },
+        utilesHerramientas: { planAnual: 0, apertura: 0, real: utilesHerramientas },
+        alimentos: { planAnual: 0, apertura: 0, real: alimentos },
+        activosFijos: { planAnual: 0, apertura: 0, real: activosFijos },
+        activosFijosTangibles: { planAnual: 0, apertura: 0, real: aftTangibles },
+        depreciacionAFT: { planAnual: 0, apertura: 0, real: depreciacionAft },
+        activosDiferidos: { planAnual: 0, apertura: 0, real: 0 },
+        gastosFaltantesDiferidos: { planAnual: 0, apertura: 0, real: gastosDeficit },
+        otrosActivos: { planAnual: 0, apertura: 0, real: otrosActivos },
+        cuentasXCobrarDiversas: { planAnual: 0, apertura: 0, real: cxcDiversas },
+        totalActivo: { planAnual: 0, apertura: 0, real: totalActivo },
+      },
+      
+      pasivos: {
+        pasivosCirculantes: { planAnual: 0, apertura: 0, real: pasivosCirculantes },
+        cuentasXPagarCP: { planAnual: 0, apertura: 0, real: cxpCorto },
+        dividendosXPagar: { planAnual: 0, apertura: 0, real: dividendosXPagar },
+        obligacionesPresupuesto: { planAnual: 0, apertura: 0, real: obligacionesPresupuesto },
+        nominasXPagar: { planAnual: 0, apertura: 0, real: nominasXPagar },
+        gastosAcumuladosXPagar: { planAnual: 0, apertura: 0, real: gastosAcumuladosXPagar },
+        provisionVacaciones: { planAnual: 0, apertura: 0, real: provisionVacaciones },
+        provisionSeguridadSocial: { planAnual: 0, apertura: 0, real: provisionSeguridadSocial },
+        otrosPasivos: { planAnual: 0, apertura: 0, real: otrosPasivos },
+        cuentasXPagarDiversas: { planAnual: 0, apertura: 0, real: cuentasXPagarDiversas },
+        totalPasivo: { planAnual: 0, apertura: 0, real: totalPasivo },
+      },
+      
+      patrimonio: {
+        inversionEstatal: { planAnual: 0, apertura: 0, real: inversionEstatal },
+        reservasContingencias: { planAnual: 0, apertura: 0, real: reservasContingencias },
+        otrasReservas: { planAnual: 0, apertura: 0, real: otrasReservas },
+        pagoUtilidades: { planAnual: 0, apertura: 0, real: pagoUtilidades },
+        pagoDividendos: { planAnual: 0, apertura: 0, real: pagoDividendos },
+        resultadoPeriodo: { planAnual: 0, apertura: 0, real: resultadoPeriodo },
+        totalPatrimonio: { planAnual: 0, apertura: 0, real: totalPatrimonio },
+        totalPasivoYPatrimonio: { planAnual: 0, apertura: 0, real: totalPasivoYPatrimonio },
+      },
+      
+      hechoNombre: '',
+      aprobadoNombre: '',
+      fechaDia: d.getDate().toString(),
+      fechaMes: (d.getMonth() + 1).toString(),
+      fechaAnio: d.getFullYear().toString(),
+      observaciones: '',
+    };
+  }
+
+  async getEfe5921Data(companyId: number, fromDate?: string, toDate?: string): Promise<Efe5921Data> {
+    const today = new Date().toISOString().split('T')[0];
+    const fd = fromDate || today;
+    const td = toDate || today;
+    
+    // INGRESOS
+    const ventasBienes = await this.getAccountRangePeriodAmount(companyId, ['400-404'], fd, td);
+    const ingresosFinancieras = await this.getAccountRangePeriodAmount(companyId, ['405-409'], fd, td);
+    const ingresosFinancierasPresup = await this.getAccountRangePeriodAmount(companyId, ['410-414'], fd, td);
+    const ingresosSubvenciones = await this.getAccountRangePeriodAmount(companyId, ['415-419'], fd, td);
+    const otrosIngresosOper = await this.getAccountRangePeriodAmount(companyId, ['420-424'], fd, td);
+    
+    const ingresosOperacionales = ventasBienes.credit + ingresosFinancieras.credit + ingresosFinancierasPresup.credit + ingresosSubvenciones.credit + otrosIngresosOper.credit;
+    
+    // GASTOS
+    const costoVentas = await this.getAccountRangePeriodAmount(companyId, ['500-504'], fd, td);
+    const gastosPersonal = await this.getAccountRangePeriodAmount(companyId, ['505-509'], fd, td);
+    const gastosSuministros = await this.getAccountRangePeriodAmount(companyId, ['510-514'], fd, td);
+    const gastosActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['515-519'], fd, td);
+    const otrosGastosOper = await this.getAccountRangePeriodAmount(companyId, ['520-524'], fd, td);
+    
+    const gastosOperacionales = costoVentas.debit + gastosPersonal.debit + gastosSuministros.debit + gastosActivosFijos.debit + otrosGastosOper.debit;
+    
+    // NO OPERACIONALES
+    const ventaActivosFijosIng = await this.getAccountRangePeriodAmount(companyId, ['525-529'], fd, td);
+    const otrosIngresosNoOper = await this.getAccountRangePeriodAmount(companyId, ['530-534'], fd, td);
+    const ventaActivosFijosGastos = await this.getAccountRangePeriodAmount(companyId, ['535-539'], fd, td);
+    const otrosGastosNoOper = await this.getAccountRangePeriodAmount(companyId, ['540-544'], fd, td);
+    
+    const ingresosNoOperacionales = ventaActivosFijosIng.credit + otrosIngresosNoOper.credit;
+    const gastosNoOperacionales = ventaActivosFijosGastos.debit + otrosGastosNoOper.debit;
+    
+    // RESULTADOS
+    const resultadoOperacional = ingresosOperacionales - gastosOperacionales;
+    const resultadoAntesImpuestos = resultadoOperacional + ingresosNoOperacionales - gastosNoOperacionales;
+    const impuestoRenta = Math.max(0, resultadoAntesImpuestos * 0.25); // 25% estimado
+    const resultadoNeto = resultadoAntesImpuestos - impuestoRenta;
+    
+    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const d = new Date(fd);
+    
+    return {
+      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      codigoCentroInformante: '0001',
+      centroInformante: 'Empresa Demo',
+      
+      ingresos: {
+        ingresosOperacionales: { planAnual: 0, apertura: 0, real: ingresosOperacionales },
+        ventasBienesServicios: { planAnual: 0, apertura: 0, real: ventasBienes.credit },
+        ingresosActividadesFinancieras: { planAnual: 0, apertura: 0, real: ingresosFinancieras.credit },
+        ingresosFinancierasPresupuesto: { planAnual: 0, apertura: 0, real: ingresosFinancierasPresup.credit },
+        ingresosSubvenciones: { planAnual: 0, apertura: 0, real: ingresosSubvenciones.credit },
+        otrosIngresosOperacionales: { planAnual: 0, apertura: 0, real: otrosIngresosOper.credit },
+      },
+      
+      gastos: {
+        gastosOperacionales: { planAnual: 0, apertura: 0, real: gastosOperacionales },
+        costoVentas: { planAnual: 0, apertura: 0, real: costoVentas.debit },
+        gastosPersonal: { planAnual: 0, apertura: 0, real: gastosPersonal.debit },
+        gastosSuministrosServicios: { planAnual: 0, apertura: 0, real: gastosSuministros.debit },
+        gastosActivosFijos: { planAnual: 0, apertura: 0, real: gastosActivosFijos.debit },
+        otrosGastosOperacionales: { planAnual: 0, apertura: 0, real: otrosGastosOper.debit },
+      },
+      
+      ingresosNoOperacionales: {
+        ingresosNoOperacionales: { planAnual: 0, apertura: 0, real: ingresosNoOperacionales },
+        ventaActivosFijos: { planAnual: 0, apertura: 0, real: ventaActivosFijosIng.credit },
+        otrosIngresosNoOperacionales: { planAnual: 0, apertura: 0, real: otrosIngresosNoOper.credit },
+      },
+      
+      gastosNoOperacionales: {
+        gastosNoOperacionales: { planAnual: 0, apertura: 0, real: gastosNoOperacionales },
+        ventaActivosFijosGastos: { planAnual: 0, apertura: 0, real: ventaActivosFijosGastos.debit },
+        otrosGastosNoOperacionales: { planAnual: 0, apertura: 0, real: otrosGastosNoOper.debit },
+      },
+      
+      resultado: {
+        resultadoOperacional: { planAnual: 0, apertura: 0, real: resultadoOperacional },
+        resultadoAntesImpuestos: { planAnual: 0, apertura: 0, real: resultadoAntesImpuestos },
+        impuestoRenta: { planAnual: 0, apertura: 0, real: impuestoRenta },
+        resultadoNeto: { planAnual: 0, apertura: 0, real: resultadoNeto },
+      },
+      
+      hechoNombre: '',
+      aprobadoNombre: '',
+      fechaDia: d.getDate().toString(),
+      fechaMes: (d.getMonth() + 1).toString(),
+      fechaAnio: d.getFullYear().toString(),
+      observaciones: '',
+    };
+  }
+
+  async getEfe5924Data(companyId: number, fromDate?: string, toDate?: string): Promise<Efe5924Data> {
+    const today = new Date().toISOString().split('T')[0];
+    const fd = fromDate || today;
+    const td = toDate || today;
+    
+    // GASTOS POR SUBELEMENTOS (usando rangos de cuentas representativos)
+    const salarios = await this.getAccountRangePeriodAmount(companyId, ['505'], fd, td);
+    const horasExtra = await this.getAccountRangePeriodAmount(companyId, ['506'], fd, td);
+    const seguridadSocial = await this.getAccountRangePeriodAmount(companyId, ['507'], fd, td);
+    const materiasPrimas = await this.getAccountRangePeriodAmount(companyId, ['183'], fd, td);
+    const materialesConstruccion = await this.getAccountRangePeriodAmount(companyId, ['184'], fd, td);
+    const suministrosOficina = await this.getAccountRangePeriodAmount(companyId, ['185'], fd, td);
+    const serviciosBasicos = await this.getAccountRangePeriodAmount(companyId, ['510'], fd, td);
+    const mantenimiento = await this.getAccountRangePeriodAmount(companyId, ['511'], fd, td);
+    const serviciosProfesionales = await this.getAccountRangePeriodAmount(companyId, ['512'], fd, td);
+    const depreciacion = await this.getAccountRangePeriodAmount(companyId, ['375'], fd, td);
+    const amortizacion = await this.getAccountRangePeriodAmount(companyId, ['376'], fd, td);
+    const gastosRepresentacion = await this.getAccountRangePeriodAmount(companyId, ['513'], fd, td);
+    const gastosTransporte = await this.getAccountRangePeriodAmount(companyId, ['514'], fd, td);
+    const gastosComunicacion = await this.getAccountRangePeriodAmount(companyId, ['515'], fd, td);
+    
+    // Calcular totales y porcentajes
+    const gastos = [
+      salarios.debit, horasExtra.debit, seguridadSocial.debit,
+      materiasPrimas.debit, materialesConstruccion.debit, suministrosOficina.debit,
+      serviciosBasicos.debit, mantenimiento.debit, serviciosProfesionales.debit,
+      depreciacion.debit, amortizacion.debit, gastosRepresentacion.debit,
+      gastosTransporte.debit, gastosComunicacion.debit
+    ];
+    
+    const totalReal = gastos.reduce((sum, val) => sum + val, 0);
+    const totalPlanAnual = totalReal; // Mismo valor para simplificar
+    const totalApertura = totalReal; // Mismo valor para simplificar
+    
+    const calcPorc = (value: number) => totalReal > 0 ? (value / totalReal) * 100 : 0;
+    
+    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const d = new Date(fd);
+    
+    return {
+      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      codigoCentroInformante: '0001',
+      centroInformante: 'Empresa Demo',
+      
+      gastos: {
+        salariosSueldos: {
+          planAnual: totalPlanAnual * 0.25, apertura: totalApertura * 0.25, real: salarios.debit,
+          porcPlan: 25, porcApertura: 25, porcReal: calcPorc(salarios.debit),
+        },
+        horasExtraordinarias: {
+          planAnual: totalPlanAnual * 0.05, apertura: totalApertura * 0.05, real: horasExtra.debit,
+          porcPlan: 5, porcApertura: 5, porcReal: calcPorc(horasExtra.debit),
+        },
+        seguridadSocial: {
+          planAnual: totalPlanAnual * 0.15, apertura: totalApertura * 0.15, real: seguridadSocial.debit,
+          porcPlan: 15, porcApertura: 15, porcReal: calcPorc(seguridadSocial.debit),
+        },
+        materiasPrimas: {
+          planAnual: totalPlanAnual * 0.10, apertura: totalApertura * 0.10, real: materiasPrimas.debit,
+          porcPlan: 10, porcApertura: 10, porcReal: calcPorc(materiasPrimas.debit),
+        },
+        materialesConstruccion: {
+          planAnual: totalPlanAnual * 0.08, apertura: totalApertura * 0.08, real: materialesConstruccion.debit,
+          porcPlan: 8, porcApertura: 8, porcReal: calcPorc(materialesConstruccion.debit),
+        },
+        suministrosOficina: {
+          planAnual: totalPlanAnual * 0.05, apertura: totalApertura * 0.05, real: suministrosOficina.debit,
+          porcPlan: 5, porcApertura: 5, porcReal: calcPorc(suministrosOficina.debit),
+        },
+        serviciosBasicos: {
+          planAnual: totalPlanAnual * 0.07, apertura: totalApertura * 0.07, real: serviciosBasicos.debit,
+          porcPlan: 7, porcApertura: 7, porcReal: calcPorc(serviciosBasicos.debit),
+        },
+        mantenimientoReparaciones: {
+          planAnual: totalPlanAnual * 0.06, apertura: totalApertura * 0.06, real: mantenimiento.debit,
+          porcPlan: 6, porcApertura: 6, porcReal: calcPorc(mantenimiento.debit),
+        },
+        serviciosProfesionales: {
+          planAnual: totalPlanAnual * 0.04, apertura: totalApertura * 0.04, real: serviciosProfesionales.debit,
+          porcPlan: 4, porcApertura: 4, porcReal: calcPorc(serviciosProfesionales.debit),
+        },
+        depreciacionActivosFijos: {
+          planAnual: totalPlanAnual * 0.08, apertura: totalApertura * 0.08, real: depreciacion.debit,
+          porcPlan: 8, porcApertura: 8, porcReal: calcPorc(depreciacion.debit),
+        },
+        amortizacionActivosIntangibles: {
+          planAnual: totalPlanAnual * 0.02, apertura: totalApertura * 0.02, real: amortizacion.debit,
+          porcPlan: 2, porcApertura: 2, porcReal: calcPorc(amortizacion.debit),
+        },
+        gastosRepresentacion: {
+          planAnual: totalPlanAnual * 0.03, apertura: totalApertura * 0.03, real: gastosRepresentacion.debit,
+          porcPlan: 3, porcApertura: 3, porcReal: calcPorc(gastosRepresentacion.debit),
+        },
+        gastosTransporte: {
+          planAnual: totalPlanAnual * 0.04, apertura: totalApertura * 0.04, real: gastosTransporte.debit,
+          porcPlan: 4, porcApertura: 4, porcReal: calcPorc(gastosTransporte.debit),
+        },
+        gastosComunicacion: {
+          planAnual: totalPlanAnual * 0.03, apertura: totalApertura * 0.03, real: gastosComunicacion.debit,
+          porcPlan: 3, porcApertura: 3, porcReal: calcPorc(gastosComunicacion.debit),
+        },
+      },
+      
+      totales: {
+        planAnual: totalPlanAnual,
+        apertura: totalApertura,
+        real: totalReal,
+      },
+      
+      hechoNombre: '',
+      aprobadoNombre: '',
+      fechaDia: d.getDate().toString(),
+      fechaMes: (d.getMonth() + 1).toString(),
+      fechaAnio: d.getFullYear().toString(),
+      observaciones: '',
     };
   }
 }

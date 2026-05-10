@@ -31,7 +31,7 @@ async function seed() {
     password: process.env.DB_PASSWORD || '1234',
     database: process.env.DB_NAME || 'nexum_db',
     entities: [__dirname + '/entities/*.entity{.ts,.js}'],
-    synchronize: true,
+    synchronize: false,
   });
 
   await ds.initialize();

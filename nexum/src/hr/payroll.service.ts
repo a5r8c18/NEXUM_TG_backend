@@ -6,20 +6,26 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Payroll, PayrollItem } from '../entities';
-import { AccountingService } from '../accounting/accounting.service';
+import { VoucherService } from '../accounting/voucher.service';
 
 @Injectable()
 export class PayrollService {
+  private readonly logger = new Logger(PayrollService.name);
+
   constructor(
     @InjectRepository(Payroll)
     private readonly payrollRepo: Repository<Payroll>,
     @InjectRepository(PayrollItem)
     private readonly payrollItemRepo: Repository<PayrollItem>,
-    private readonly accountingService: AccountingService,
+    @Inject(forwardRef(() => VoucherService))
+    private readonly voucherService: VoucherService,
   ) {}
 
   async findAll(
@@ -190,8 +196,53 @@ export class PayrollService {
     payroll.processedAt = new Date().toISOString().split('T')[0];
     await this.payrollRepo.save(payroll);
 
-    // Generate accounting voucher (DESHABILITADO — contabilidad manual)
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización de nómina procesada ──
+    const totalGross = Number(payroll.totalGross);
+    const totalDeductions = Number(payroll.totalDeductions);
+    const totalNet = Number(payroll.totalNet);
+    if (totalGross > 0) {
+      try {
+        await this.voucherService.createVoucherFromModule(
+          companyId,
+          'payroll',
+          String(payroll.id),
+          {
+            date: payroll.endDate || new Date().toISOString().split('T')[0],
+            description: `Nómina ${payroll.period} - Procesamiento`,
+            type: 'payroll',
+            reference: `NOM-${payroll.period}-${payroll.id}`,
+            createdBy: processedBy || 'Sistema',
+            lines: [
+              {
+                accountCode: '731', // Gasto de Salario
+                debit: totalGross,
+                credit: 0,
+                description: `Salarios brutos ${payroll.period}`,
+              },
+              {
+                accountCode: '455', // Nóminas por Pagar
+                debit: 0,
+                credit: totalNet,
+                description: `Nómina neta por pagar ${payroll.period}`,
+              },
+              ...(totalDeductions > 0
+                ? [
+                    {
+                      accountCode: '440', // Retenciones por Pagar
+                      debit: 0,
+                      credit: totalDeductions,
+                      description: `Retenciones y deducciones ${payroll.period}`,
+                    },
+                  ]
+                : []),
+            ],
+          },
+        );
+        this.logger.log(`Comprobante nómina ${payroll.period} generado`);
+      } catch (error) {
+        this.logger.error(`Error contabilización nómina ${payroll.id}: ${error.message}`);
+      }
+    }
 
     return { payroll };
   }
@@ -215,8 +266,41 @@ export class PayrollService {
     payroll.paidAt = new Date().toISOString().split('T')[0];
     await this.payrollRepo.save(payroll);
 
-    // Generate payment voucher (DESHABILITADO — contabilidad manual)
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización de pago de nómina ──
+    const netAmount = Number(payroll.totalNet);
+    if (netAmount > 0) {
+      try {
+        await this.voucherService.createVoucherFromModule(
+          companyId,
+          'payroll',
+          `PAY-${payroll.id}`,
+          {
+            date: payroll.paidAt || new Date().toISOString().split('T')[0],
+            description: `Pago nómina ${payroll.period}`,
+            type: 'payroll',
+            reference: `PAGO-NOM-${payroll.period}-${payroll.id}`,
+            createdBy: 'Sistema',
+            lines: [
+              {
+                accountCode: '455', // Nóminas por Pagar
+                debit: netAmount,
+                credit: 0,
+                description: `Liquidación nómina ${payroll.period}`,
+              },
+              {
+                accountCode: '110', // Efectivo en Banco
+                debit: 0,
+                credit: netAmount,
+                description: `Pago nómina ${payroll.period}`,
+              },
+            ],
+          },
+        );
+        this.logger.log(`Comprobante pago nómina ${payroll.period} generado`);
+      } catch (error) {
+        this.logger.error(`Error contabilización pago nómina: ${error.message}`);
+      }
+    }
 
     return { payroll };
   }

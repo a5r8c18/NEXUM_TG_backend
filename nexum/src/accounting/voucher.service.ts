@@ -9,6 +9,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -22,9 +23,12 @@ import { AuditService } from '../audit/audit.service';
 import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 import { PaginationService } from '../common/pagination/pagination.service';
 import { PaginationResult, SearchPaginationDto } from '../common/pagination/pagination.dto';
+import { CacheService } from '../cache/cache.service';
 
 @Injectable()
 export class VoucherService {
+  private readonly logger = new Logger(VoucherService.name);
+
   constructor(
     @InjectRepository(Voucher)
     private readonly voucherRepo: Repository<Voucher>,
@@ -39,7 +43,12 @@ export class VoucherService {
     private readonly entityManager: EntityManager,
     private readonly auditService: AuditService,
     private readonly paginationService: PaginationService,
+    private readonly cacheService: CacheService,
   ) {}
+
+  private async invalidateReportCache(companyId: number): Promise<void> {
+    await this.cacheService.invalidatePattern(`reports:${companyId}:*`);
+  }
 
   // ══════════════════════════════════════════════════════════
   // ── VOUCHERS CRUD ──
@@ -56,33 +65,39 @@ export class VoucherService {
       search?: string;
     },
   ) {
-    const qb = this.voucherRepo
-      .createQueryBuilder('v')
-      .leftJoinAndSelect('v.lines', 'lines')
-      .leftJoinAndSelect('lines.costCenter', 'costCenter')
-      .where('v.companyId = :companyId', { companyId });
+    try {
+      const qb = this.voucherRepo
+        .createQueryBuilder('v')
+        .leftJoinAndSelect('v.lines', 'lines')
+        .leftJoinAndSelect('lines.costCenter', 'costCenter')
+        .where('v.companyId = :companyId', { companyId });
 
-    if (filters?.status)
-      qb.andWhere('v.status = :status', { status: filters.status });
-    if (filters?.type) qb.andWhere('v.type = :type', { type: filters.type });
-    if (filters?.fromDate)
-      qb.andWhere('v.date >= :fromDate', { fromDate: filters.fromDate });
-    if (filters?.toDate)
-      qb.andWhere('v.date <= :toDate', { toDate: filters.toDate });
-    if (filters?.sourceModule)
-      qb.andWhere('v.source_module = :sourceModule', {
-        sourceModule: filters.sourceModule,
-      });
-    if (filters?.search)
-      qb.andWhere(
-        '(v.description ILIKE :search OR v.voucher_number ILIKE :search OR v.reference ILIKE :search)',
-        { search: `%${filters.search}%` },
-      );
+      if (filters?.status)
+        qb.andWhere('v.status = :status', { status: filters.status });
+      if (filters?.type) qb.andWhere('v.type = :type', { type: filters.type });
+      if (filters?.fromDate)
+        qb.andWhere('v.date >= :fromDate', { fromDate: filters.fromDate });
+      if (filters?.toDate)
+        qb.andWhere('v.date <= :toDate', { toDate: filters.toDate });
+      if (filters?.sourceModule)
+        qb.andWhere('v.source_module = :sourceModule', {
+          sourceModule: filters.sourceModule,
+        });
+      if (filters?.search)
+        qb.andWhere(
+          '(v.description ILIKE :search OR v.voucher_number ILIKE :search OR v.reference ILIKE :search)',
+          { search: `%${filters.search}%` },
+        );
 
-    qb.orderBy('v.created_at', 'DESC')
-      .addOrderBy('v.date', 'DESC')
-      .addOrderBy('v.voucher_number', 'DESC');
-    return qb.getMany();
+      qb.orderBy('v.createdAt', 'DESC')
+        .addOrderBy('v.date', 'DESC')
+        .addOrderBy('v.voucherNumber', 'DESC');
+      const results = await qb.getMany();
+      return results;
+    } catch (error) {
+      this.logger.error(`Error in findAllVouchers: ${error?.message || error}`, error?.stack);
+      throw error;
+    }
   }
 
   async findAllVouchersPaginated(
@@ -143,7 +158,7 @@ export class VoucherService {
   }
 
   async createVoucher(companyId: number, data: any) {
-    return await this.entityManager.transaction(async (manager) => {
+    const result = await this.entityManager.transaction(async (manager) => {
       // Validar período contable abierto y obtener su ID
       const period = await this.findPeriodByDate(companyId, data.date);
       if (!period) {
@@ -262,10 +277,70 @@ export class VoucherService {
 
       return saved;
     });
+    await this.invalidateReportCache(companyId);
+    return result;
+  }
+
+  /**
+   * Crea un comprobante contable desde otro módulo (inventario, compras, facturación, etc.)
+   * Resuelve accountCode → accountId + accountName antes de crear el voucher.
+   */
+  async createVoucherFromModule(
+    companyId: number,
+    source: SourceModule | string,
+    sourceDocumentId: string,
+    data: {
+      date: string;
+      description: string;
+      type: string;
+      reference?: string;
+      createdBy?: string;
+      lines: {
+        accountCode: string;
+        debit: number;
+        credit: number;
+        description?: string;
+        costCenterId?: string;
+      }[];
+    },
+  ) {
+    // Resolver accountId y accountName desde accountCode
+    const resolvedLines: any[] = [];
+    for (const line of data.lines) {
+      const account = await this.accountRepo.findOneBy({
+        code: line.accountCode,
+        companyId,
+      });
+      if (!account) {
+        throw new BadRequestException(
+          `Cuenta contable ${line.accountCode} no encontrada para esta empresa`,
+        );
+      }
+      resolvedLines.push({
+        accountId: account.id,
+        accountCode: account.code,
+        accountName: account.name,
+        debit: line.debit,
+        credit: line.credit,
+        description: line.description,
+        costCenterId: line.costCenterId,
+      });
+    }
+
+    return this.createVoucher(companyId, {
+      date: data.date,
+      description: data.description,
+      type: data.type,
+      reference: data.reference,
+      sourceModule: source,
+      sourceDocumentId,
+      createdBy: data.createdBy || 'Sistema',
+      lines: resolvedLines,
+    });
   }
 
   async updateVoucher(companyId: number, id: string, data: any) {
-    return await this.entityManager.transaction(async (manager) => {
+    const result = await this.entityManager.transaction(async (manager) => {
       const voucher = await manager.getRepository(Voucher).findOne({
         where: { id, companyId },
         relations: ['lines'],
@@ -401,10 +476,12 @@ export class VoucherService {
 
       return this.findOneVoucher(companyId, saved.id);
     });
+    await this.invalidateReportCache(companyId);
+    return result;
   }
 
   async updateVoucherStatus(companyId: number, id: string, status: string) {
-    return await this.entityManager.transaction(async (manager) => {
+    const statusResult = await this.entityManager.transaction(async (manager) => {
       const voucher = await manager.getRepository(Voucher).findOne({
         where: { id, companyId },
       });
@@ -479,10 +556,12 @@ export class VoucherService {
 
       return result;
     });
+    await this.invalidateReportCache(companyId);
+    return statusResult;
   }
 
   async deleteVoucher(companyId: number, id: string) {
-    return await this.entityManager.transaction(async (manager) => {
+    const deleteResult = await this.entityManager.transaction(async (manager) => {
       const voucher = await manager.getRepository(Voucher).findOne({
         where: { id, companyId },
         relations: ['lines'],
@@ -518,6 +597,8 @@ export class VoucherService {
       await manager.getRepository(VoucherLine).remove(voucher.lines);
       return await manager.getRepository(Voucher).remove(voucher);
     });
+    await this.invalidateReportCache(companyId);
+    return deleteResult;
   }
 
   // ══════════════════════════════════════════════════════════

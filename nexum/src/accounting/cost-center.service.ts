@@ -283,7 +283,7 @@ export class CostCenterService {
     if (filters?.accountCode) qb.andWhere('vl.accountCode = :accountCode', { accountCode: filters.accountCode });
 
     qb.orderBy('v.date', 'DESC')
-      .addOrderBy('v.voucher_number', 'DESC')
+      .addOrderBy('v.voucherNumber', 'DESC')
       .addOrderBy('vl.lineOrder', 'ASC');
 
     return qb.getMany();

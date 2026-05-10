@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 9pt;
+      background: #fff;
+    }
+
+    .page {
+      width: 210mm;
+      padding: 8mm 8mm;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    td {
+      border: 1px solid #000;
+      padding: 2px 4px;
+      vertical-align: middle;
+      word-wrap: break-word;
+      line-height: 1.2;
+    }
+
+    td.no-border { border: none; }
+    td.border-no-bottom { border-bottom: none; }
+    td.border-no-top { border-top: none; }
+
+    .bold { font-weight: bold; }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    .left { text-align: left; }
+
+    .section-header {
+      background-color: #CCCCCC;
+      font-weight: bold;
+    }
+
+    .fs-12 { font-size: 12pt; }
+    .fs-10 { font-size: 10pt; }
+    .fs-9  { font-size: 9pt; }
+    .fs-8  { font-size: 8pt; }
+
+    .col-a  { width: 22%; }
+    .col-b  { width: 7%;  }
+    .col-cd { width: 4%;  }
+    .col-e  { width: 4%;  }
+    .col-fgh{ width: 11%; }
+    .col-ij { width: 5%;  }
+    .col-k  { width: 13%; }
+    .col-lm { width: 10%; }
+    .col-no { width: 10%; }
+
+    .data-cell {
+      min-height: 18px;
+      border: 1px solid #000;
+    }
+
+    .firma-section td {
+      font-size: 8pt;
+      font-weight: bold;
+    }
+
+    .obs-cell {
+      border: none;
+      font-size: 9pt;
+      padding-top: 4px;
+    }
+
+    .cert-text {
+      font-size: 8pt;
+      padding: 4px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+<table>
+  <colgroup>
+    <col style="width:22%">
+    <col style="width:7%">
+    <col style="width:2%">
+    <col style="width:2%">
+    <col style="width:4%">
+    <col style="width:4%">
+    <col style="width:3%">
+    <col style="width:4%">
+    <col style="width:2%">
+    <col style="width:3%">
+    <col style="width:13%">
+    <col style="width:9%">
+    <col style="width:9%">
+    <col style="width:8%">
+    <col style="width:8%">
+  </colgroup>
+
+  <tr style="height:60px">
+    <td colspan="4" class="bold fs-10 center" style="vertical-align:middle">
+      Subsistema de Información Estadístico Nacional (SIEN)
+    </td>
+    <td colspan="4" class="bold fs-10 center" style="vertical-align:middle"></td>
+    <td colspan="7" class="bold fs-10 center" style="vertical-align:middle">
+      Proforma EFE 5920 - 04 Estado de Situación
+    </td>
+  </tr>
+
+  <tr style="height:16px">
+    <td colspan="4" class="fs-9 left">FORMULARIO Nro.: &nbsp;&nbsp;&nbsp;5920 - 04</td>
+    <td colspan="4" class="bold fs-9 left">PÁGINA: 1 de 1</td>
+    <td colspan="7" class="fs-9 left">PERIODICIDAD: &nbsp;&nbsp;MENSUAL</td>
+  </tr>
+
+  <tr style="height:16px">
+    <td colspan="6" class="bold fs-8 left">INFORME CORRESPONDIENTE A: &nbsp;<span class="data-value">{{informeCorrespondiente}}</span></td>
+    <td colspan="9" class="bold fs-9 left">CÓDIGO CENTRO INFORMANTE: &nbsp;<span class="data-value">{{codigoCentroInformante}}</span></td>
+  </tr>
+
+  <tr style="height:20px">
+    <td colspan="4" class="bold fs-9 left">CENTRO INFORMANTE: &nbsp;<span class="data-value">{{centroInformante}}</span></td>
+    <td colspan="11" class="bold fs-9 left"></td>
+  </tr>
+
+  <tr style="height:5px">
+    <td colspan="15" class="no-border"></td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="15" class="bold fs-10 center">Página 1</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="bold fs-10 left center" style="vertical-align:middle">INDICADORES</td>
+    <td colspan="2" class="bold fs-10 center">UM</td>
+    <td class="bold fs-10 center">FILA</td>
+    <td colspan="3" class="bold fs-8 center">PLAN ANUAL</td>
+    <td colspan="2" class="bold fs-8 center">APERTURA</td>
+    <td colspan="5" class="bold fs-8 center">REAL HASTA LA FECHA</td>
+  </tr>
+
+  <tr style="height:14px">
+    <td colspan="2" class="bold fs-8 center">A</td>
+    <td colspan="2" class="bold fs-8 center">B</td>
+    <td class="bold fs-8 center">C</td>
+    <td colspan="3" class="bold fs-8 center">1</td>
+    <td colspan="2" class="bold fs-8 center">2</td>
+    <td colspan="5" class="bold fs-8 center">3</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="15" class="section-header bold fs-10 left">ACTIVO</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Activos Circulantes</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">1</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_1}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_1}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_1}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Efectivo en Caja (101-108)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">2</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_2}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_2}}</td>
+    <td colspan="5" class="fs-10 right">{{real_2}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Efectivo en Banco y en Otras Instituciones (109-119)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">3</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_3}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_3}}</td>
+    <td colspan="5" class="fs-10 right">{{real_3}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Cuentas por Cobrar a Corto Plazo (135-139 y 154)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">8</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_8}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_8}}</td>
+    <td colspan="5" class="fs-10 right">{{real_8}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Pagos Anticipados a Suministradores (146-149)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">14</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_14}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_14}}</td>
+    <td colspan="5" class="fs-10 right">{{real_14}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Adeudos del Presupuesto del Estado (164-166)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">18</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_18}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_18}}</td>
+    <td colspan="5" class="fs-10 right">{{real_18}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Total de inventarios</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">23</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_23}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_23}}</td>
+    <td colspan="5" class="fs-10 right">{{real_23}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Materias Primas y Materiales (183)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">24</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_24}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_24}}</td>
+    <td colspan="5" class="fs-10 right">{{real_24}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Útiles, Herramientas y Otros (187)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">28</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_28}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_28}}</td>
+    <td colspan="5" class="fs-10 right">{{real_28}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Alimentos (193)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">38</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_38}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_38}}</td>
+    <td colspan="5" class="fs-10 right">{{real_38}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Activos Fijos</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">56</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_56}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_56}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_56}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Activos Fijos Tangibles (240-251)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">57</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_57}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_57}}</td>
+    <td colspan="5" class="fs-10 right">{{real_57}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Menos: Depreciación de Activos Fijos Tangibles (375-388)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">58</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_58}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_58}}</td>
+    <td colspan="5" class="fs-10 right">{{real_58}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Activos Diferidos</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">69</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_69}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_69}}</td>
+    <td colspan="5" class="fs-10 right">{{real_69}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Gastos por Faltantes y Pérdidas Diferidos (312)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">73</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_73}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_73}}</td>
+    <td colspan="5" class="fs-10 right">{{real_73}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Otros Activos</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">74</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_74}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_74}}</td>
+    <td colspan="5" class="fs-10 right">{{real_74}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Cuentas por Cobrar Diversas - Operaciones Corrientes (334-341)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">77</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_77}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_77}}</td>
+    <td colspan="5" class="fs-10 right">{{real_77}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">TOTAL DEL ACTIVO</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">87</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_87}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_87}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_87}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="15" class="section-header bold fs-10 left">PASIVO</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Pasivos Circulantes</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">88</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_88}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_88}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_88}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Cuentas por Pagar a Corto Plazo (405-415)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">91</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_91}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_91}}</td>
+    <td colspan="5" class="fs-10 right">{{real_91}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Dividendos y Participaciones por Pagar (417)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">93</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_93}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_93}}</td>
+    <td colspan="5" class="fs-10 right">{{real_93}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Obligaciones con el Presupuesto del Estado (440-449)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">100</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_100}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_100}}</td>
+    <td colspan="5" class="fs-10 right">{{real_100}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Nóminas por Pagar (455-459)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">102</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_102}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_102}}</td>
+    <td colspan="5" class="fs-10 right">{{real_102}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Gastos Acumulados por Pagar (480-489)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">105</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_105}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_105}}</td>
+    <td colspan="5" class="fs-10 right">{{real_105}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Provisión para Vacaciones (492)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">106</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_106}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_106}}</td>
+    <td colspan="5" class="fs-10 right">{{real_106}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Provisión para Pagos de los Subsidios de Seguridad Social a Corto Plazo (500)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">108</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_108}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_108}}</td>
+    <td colspan="5" class="fs-10 right">{{real_108}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Otros Pasivos</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">121</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_121}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_121}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_121}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Cuentas por Pagar Diversas (565-569)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">123</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_123}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_123}}</td>
+    <td colspan="5" class="fs-10 right">{{real_123}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">TOTAL DEL PASIVO</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">127</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_127}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_127}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_127}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="15" class="section-header bold fs-10 left">PATRIMONIO NETO O CAPITAL CONTABLE</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Inversión Estatal (600-612) Sector Público</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">128</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_128}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_128}}</td>
+    <td colspan="5" class="fs-10 right">{{real_128}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Reservas para Contingencias (645)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">136</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_136}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_136}}</td>
+    <td colspan="5" class="fs-10 right">{{real_136}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Otras Reservas Patrimoniales (646-654)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">137</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_137}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_137}}</td>
+    <td colspan="5" class="fs-10 right">{{real_137}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Pago a Cuenta de las Utilidades (690)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">142</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_142}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_142}}</td>
+    <td colspan="5" class="fs-10 right">{{real_142}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Pago a Cuenta de los Dividendos (691)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">143</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_143}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_143}}</td>
+    <td colspan="5" class="fs-10 right">{{real_143}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Resultado del Período</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">149</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_149}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_149}}</td>
+    <td colspan="5" class="fs-10 right">{{real_149}}</td>
+  </tr>
+
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">TOTAL DE PATRIMONIO NETO</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">150</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_150}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_150}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_150}}</td>
+  </tr>
+
+  <tr style="height:28px">
+    <td colspan="2" class="bold fs-10 left">TOTAL DEL PASIVO Y PATRIMONIO NETO O CAPITAL CONTABLE</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">151</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_151}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_151}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_151}}</td>
+  </tr>
+
+  <tr style="height:5px"><td colspan="15" class="no-border"></td></tr>
+
+  <tr style="height:30px">
+    <td colspan="15" class="cert-text">
+      CERTIFICAMOS QUE LOS DATOS CONTENIDOS EN ESTE ESTADO FINANCIERO SE CORRESPONDEN CON LAS ANOTACIONES CONTABLES DE ACUERDO CON LAS REGULACIONES VIGENTES.
+    </td>
+  </tr>
+
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">HECHO POR:</td>
+    <td colspan="6" class="bold fs-8 left">APROBADO POR:</td>
+    <td colspan="6" class="bold fs-8 left">
+      FECHA: &nbsp;|&nbsp;{{fechaDia}}&nbsp;|&nbsp;|&nbsp;{{fechaMes}}&nbsp;|&nbsp;|&nbsp;{{fechaAnio}}&nbsp;|&nbsp;&nbsp;&nbsp;Día &nbsp; Mes &nbsp; Año
+    </td>
+  </tr>
+
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">NOMBRE Y APELLIDOS<br><span style="font-weight:normal">{{hechoNombre}}</span></td>
+    <td colspan="6" class="bold fs-8 left">NOMBRE Y APELLIDOS<br><span style="font-weight:normal">{{aprobadoNombre}}</span></td>
+    <td colspan="6" class="fs-8 left"></td>
+  </tr>
+
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">FIRMA</td>
+    <td colspan="6" class="bold fs-8 left">FIRMA</td>
+    <td colspan="6" class="fs-8 left"></td>
+  </tr>
+
+  <tr style="height:50px">
+    <td colspan="15" class="obs-cell no-border">
+      Observaciones &nbsp; {{observaciones}}
+    </td>
+  </tr>
+</table>
+</div>
+</body>
+</html>

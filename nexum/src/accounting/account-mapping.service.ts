@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import {
@@ -9,25 +9,27 @@ import {
 
 @Injectable()
 export class AccountMappingService {
+  private readonly logger = new Logger(AccountMappingService.name);
+
   constructor(
     @InjectRepository(AccountMapping)
     private readonly mappingRepo: Repository<AccountMapping>,
   ) {}
 
-  // Default account mappings (fallback values)
+  // Default account mappings — Nomenclador Cubano Resolución 2016
   private readonly defaultMappings: Record<MappingType, string> = {
-    [MappingType.INVOICE_SALE]: '4100', // Ventas
-    [MappingType.INVOICE_PAYMENT]: '1100', // Caja/Banco
-    [MappingType.INVOICE_CANCELLATION]: '4100', // Ventas (reverso)
-    [MappingType.INVENTORY_ENTRY]: '1830', // Inventario de mercancías
-    [MappingType.INVENTORY_EXIT]: '8100', // Costo de ventas
-    [MappingType.INVENTORY_RETURN]: '1830', // Inventario (reverso)
-    [MappingType.FIXED_ASSET_ACQUISITION]: '1400', // Activos fijos
-    [MappingType.FIXED_ASSET_DEPRECIATION]: '8220', // Gasto de depreciación
-    [MappingType.PAYROLL_PROCESSING]: '5100', // Gastos de personal
-    [MappingType.PAYROLL_PAYMENT]: '2110', // Salarios por pagar
-    [MappingType.PURCHASE_ORDER]: '4010', // Cuentas por pagar
-    [MappingType.PURCHASE_PAYMENT]: '1100', // Caja/Banco
+    [MappingType.INVOICE_SALE]: '900',   // Ventas
+    [MappingType.INVOICE_PAYMENT]: '101', // Efectivo en Caja
+    [MappingType.INVOICE_CANCELLATION]: '900', // Ventas (reverso)
+    [MappingType.INVENTORY_ENTRY]: '189', // Mercancías para la Venta
+    [MappingType.INVENTORY_EXIT]: '810',  // Costo de Ventas de Mercancías
+    [MappingType.INVENTORY_RETURN]: '189', // Mercancías (reverso)
+    [MappingType.FIXED_ASSET_ACQUISITION]: '240', // Activos Fijos Tangibles
+    [MappingType.FIXED_ASSET_DEPRECIATION]: '840', // Gasto de Depreciación
+    [MappingType.PAYROLL_PROCESSING]: '731', // Gastos de Fuerza de Trabajo
+    [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
+    [MappingType.PURCHASE_ORDER]: '410',  // Cuentas por Pagar a Proveedores
+    [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
   };
 
   async findAll(companyId: number) {
@@ -186,9 +188,8 @@ export class AccountMappingService {
         results.push(result);
       } catch (error) {
         // Log error but continue with other mappings
-        console.error(
-          `Error creating mapping for ${mappingData.mappingType}:`,
-          error,
+        this.logger.error(
+          `Error creating mapping for ${mappingData.mappingType}: ${error}`,
         );
       }
     }

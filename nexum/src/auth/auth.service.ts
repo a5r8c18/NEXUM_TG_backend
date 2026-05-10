@@ -39,33 +39,12 @@ export class AuthService {
   }
 
   async login(email: string, password: string, ipAddress?: string, userAgent?: string): Promise<LoginResponseDto> {
-    console.log('AUTH SERVICE - Login attempt for email:', email);
-    console.log('AUTH SERVICE - Password provided:', password ? 'Yes' : 'No');
-    
     const user = await this.userRepo.findOne({
       where: { email },
       relations: ['company'],
     });
 
-    console.log('AUTH SERVICE - User found:', user ? 'Yes' : 'No');
-    if (user) {
-      console.log('AUTH SERVICE - User details:', {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        isActive: user.isActive,
-        hasPassword: !!user.password,
-        companyId: user.companyId,
-        tenantId: user.tenantId
-      });
-    }
-
     if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
-      console.log('AUTH SERVICE - Authentication failed - User exists:', !!user, 'Has password:', !!user?.password);
-      if (user && user.password) {
-        const passwordMatch = await bcrypt.compare(password, user.password);
-        console.log('AUTH SERVICE - Password match:', passwordMatch);
-      }
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
@@ -76,7 +55,7 @@ export class AuthService {
     const accessToken = this.generateToken(user);
     const refreshTokenData = await this.refreshTokenService.createRefreshToken(user, ipAddress, userAgent);
     
-    const response = {
+    return {
       accessToken,
       refreshToken: (refreshTokenData as any).token,
       user: {
@@ -89,14 +68,6 @@ export class AuthService {
         tenantId: user.tenantId,
       },
     };
-    
-    console.log('AUTH SERVICE - Login successful, returning response:', {
-      accessToken: accessToken.substring(0, 20) + '...',
-      refreshToken: response.refreshToken ? 'Present' : 'Missing',
-      user: response.user
-    });
-    
-    return response;
   }
 
   async register(data: {

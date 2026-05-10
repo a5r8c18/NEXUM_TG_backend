@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 9pt;
+      background: #fff;
+    }
+
+    .page {
+      width: 210mm;
+      padding: 8mm 8mm;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    td {
+      border: 1px solid #000;
+      padding: 2px 4px;
+      vertical-align: middle;
+      word-wrap: break-word;
+      line-height: 1.2;
+    }
+
+    td.no-border { border: none; }
+    td.border-no-bottom { border-bottom: none; }
+    td.border-no-top { border-top: none; }
+
+    .bold { font-weight: bold; }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    .left { text-align: left; }
+
+    .section-header {
+      background-color: #CCCCCC;
+      font-weight: bold;
+    }
+
+    .fs-12 { font-size: 12pt; }
+    .fs-10 { font-size: 10pt; }
+    .fs-9  { font-size: 9pt; }
+    .fs-8  { font-size: 8pt; }
+
+    /* Column widths */
+    .col-a  { width: 22%; }
+    .col-b  { width: 7%;  }
+    .col-c  { width: 4%;  }
+    .col-d  { width: 4%;  }
+    .col-ef { width: 11%; }
+    .col-gh { width: 10%; }
+    .col-ij { width: 10%; }
+    .col-kl { width: 10%; }
+    .col-mn { width: 12%; }
+
+    .data-cell {
+      min-height: 18px;
+      border: 1px solid #000;
+    }
+
+    .firma-section td {
+      font-size: 8pt;
+      font-weight: bold;
+    }
+
+    .obs-cell {
+      border: none;
+      font-size: 9pt;
+      padding-top: 4px;
+    }
+
+    .cert-text {
+      font-size: 8pt;
+      padding: 4px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+<table>
+  <colgroup>
+    <col style="width:22%">
+    <col style="width:7%">
+    <col style="width:2%">
+    <col style="width:2%">
+    <col style="width:4%">
+    <col style="width:4%">
+    <col style="width:3%">
+    <col style="width:4%">
+    <col style="width:2%">
+    <col style="width:3%">
+    <col style="width:13%">
+    <col style="width:9%">
+    <col style="width:9%">
+    <col style="width:8%">
+    <col style="width:8%">
+  </colgroup>
+
+  <!-- ROW 1: Header -->
+  <tr style="height:60px">
+    <td colspan="4" class="bold fs-10 center" style="vertical-align:middle">
+      Subsistema de Información Estadístico Nacional (SIEN)
+    </td>
+    <td colspan="4" class="bold fs-10 center" style="vertical-align:middle"></td>
+    <td colspan="7" class="bold fs-10 center" style="vertical-align:middle">
+      Proforma EFE 5921 - 04 Estado de Rendimiento Financiero
+    </td>
+  </tr>
+
+  <!-- ROW 2 -->
+  <tr style="height:16px">
+    <td colspan="4" class="fs-9 left">FORMULARIO Nro.: &nbsp;&nbsp;&nbsp;5921 - 04</td>
+    <td colspan="4" class="bold fs-9 left">PÁGINA: 1 de 1</td>
+    <td colspan="7" class="fs-9 left">PERIODICIDAD: &nbsp;&nbsp;MENSUAL</td>
+  </tr>
+
+  <!-- ROW 3 -->
+  <tr style="height:16px">
+    <td colspan="6" class="bold fs-8 left">INFORME CORRESPONDIENTE A: &nbsp;<span class="data-value">{{informeCorrespondiente}}</span></td>
+    <td colspan="9" class="bold fs-9 left">CÓDIGO CENTRO INFORMANTE: &nbsp;<span class="data-value">{{codigoCentroInformante}}</span></td>
+  </tr>
+
+  <!-- ROW 4 -->
+  <tr style="height:20px">
+    <td colspan="4" class="bold fs-9 left">CENTRO INFORMANTE: &nbsp;<span class="data-value">{{centroInformante}}</span></td>
+    <td colspan="11" class="bold fs-9 left"></td>
+  </tr>
+
+  <!-- ROW 5: Spacer -->
+  <tr style="height:5px">
+    <td colspan="15" class="no-border"></td>
+  </tr>
+
+  <!-- ROW 6: Página 1 -->
+  <tr style="height:18px">
+    <td colspan="15" class="bold fs-10 center">Página 1</td>
+  </tr>
+
+  <!-- ROW 7: Column headers -->
+  <tr style="height:28px">
+    <td colspan="2" class="bold fs-10 left center" style="vertical-align:middle">INDICADORES</td>
+    <td colspan="2" class="bold fs-10 center">UM</td>
+    <td class="bold fs-10 center">FILA</td>
+    <td colspan="3" class="bold fs-8 center">PLAN ANUAL</td>
+    <td colspan="2" class="bold fs-8 center">APERTURA</td>
+    <td colspan="5" class="bold fs-8 center">REAL HASTA LA FECHA</td>
+  </tr>
+
+  <!-- ROW 8: Sub-headers A B C 1 2 3 -->
+  <tr style="height:14px">
+    <td colspan="2" class="bold fs-8 center">A</td>
+    <td colspan="2" class="bold fs-8 center">B</td>
+    <td class="bold fs-8 center">C</td>
+    <td colspan="3" class="bold fs-8 center">1</td>
+    <td colspan="2" class="bold fs-8 center">2</td>
+    <td colspan="5" class="bold fs-8 center">3</td>
+  </tr>
+
+  <!-- ROW 9: INGRESOS section header -->
+  <tr style="height:18px">
+    <td colspan="15" class="section-header bold fs-10 left">INGRESOS</td>
+  </tr>
+
+  <!-- ROW 10: Ingresos Operacionales -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Ingresos Operacionales</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">1</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_1}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_1}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_1}}</td>
+  </tr>
+
+  <!-- ROW 11 -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Ventas de Bienes y Servicios (400-404)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">2</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_2}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_2}}</td>
+    <td colspan="5" class="fs-10 right">{{real_2}}</td>
+  </tr>
+
+  <!-- ROW 12 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Ingresos por Actividades Financieras (405-409)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">3</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_3}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_3}}</td>
+    <td colspan="5" class="fs-10 right">{{real_3}}</td>
+  </tr>
+
+  <!-- ROW 13 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Ingresos por Actividades Financieras del Presupuesto del Estado (410-414)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">4</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_4}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_4}}</td>
+    <td colspan="5" class="fs-10 right">{{real_4}}</td>
+  </tr>
+
+  <!-- ROW 14 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Ingresos por Actividades de Subvenciones (415-419)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">5</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_5}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_5}}</td>
+    <td colspan="5" class="fs-10 right">{{real_5}}</td>
+  </tr>
+
+  <!-- ROW 15 -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Otros Ingresos Operacionales</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">6</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_6}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_6}}</td>
+    <td colspan="5" class="fs-10 right">{{real_6}}</td>
+  </tr>
+
+  <!-- ROW 16: GASTOS section header -->
+  <tr style="height:18px">
+    <td colspan="15" class="section-header bold fs-10 left">GASTOS</td>
+  </tr>
+
+  <!-- ROW 17: Gastos Operacionales -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Gastos Operacionales</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">7</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_7}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_7}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_7}}</td>
+  </tr>
+
+  <!-- ROW 18 -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Costo de Ventas (500-504)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">8</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_8}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_8}}</td>
+    <td colspan="5" class="fs-10 right">{{real_8}}</td>
+  </tr>
+
+  <!-- ROW 19 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Gastos de Personal (505-509)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">9</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_9}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_9}}</td>
+    <td colspan="5" class="fs-10 right">{{real_9}}</td>
+  </tr>
+
+  <!-- ROW 20 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Gastos de Suministros y Servicios (510-514)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">10</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_10}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_10}}</td>
+    <td colspan="5" class="fs-10 right">{{real_10}}</td>
+  </tr>
+
+  <!-- ROW 21 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Gastos de Activos Fijos (515-519)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">11</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_11}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_11}}</td>
+    <td colspan="5" class="fs-10 right">{{real_11}}</td>
+  </tr>
+
+  <!-- ROW 22 -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Otros Gastos Operacionales</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">12</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_12}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_12}}</td>
+    <td colspan="5" class="fs-10 right">{{real_12}}</td>
+  </tr>
+
+  <!-- ROW 23: RESULTADO OPERACIONAL -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">RESULTADO OPERACIONAL</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">13</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_13}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_13}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_13}}</td>
+  </tr>
+
+  <!-- ROW 24: Ingresos No Operacionales -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Ingresos No Operacionales</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">14</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_14}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_14}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_14}}</td>
+  </tr>
+
+  <!-- ROW 25 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Ingresos por Venta de Activos Fijos (520-524)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">15</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_15}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_15}}</td>
+    <td colspan="5" class="fs-10 right">{{real_15}}</td>
+  </tr>
+
+  <!-- ROW 26 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Otros Ingresos No Operacionales (525-529)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">16</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_16}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_16}}</td>
+    <td colspan="5" class="fs-10 right">{{real_16}}</td>
+  </tr>
+
+  <!-- ROW 27: Gastos No Operacionales -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Gastos No Operacionales</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">17</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_17}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_17}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_17}}</td>
+  </tr>
+
+  <!-- ROW 28 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Gastos por Venta de Activos Fijos (530-534)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">18</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_18}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_18}}</td>
+    <td colspan="5" class="fs-10 right">{{real_18}}</td>
+  </tr>
+
+  <!-- ROW 29 -->
+  <tr style="height:28px">
+    <td colspan="2" class="fs-10 left">Otros Gastos No Operacionales (535-539)</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">19</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_19}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_19}}</td>
+    <td colspan="5" class="fs-10 right">{{real_19}}</td>
+  </tr>
+
+  <!-- ROW 30: RESULTADO ANTES DE IMPUESTOS -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">RESULTADO ANTES DE IMPUESTOS</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">20</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_20}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_20}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_20}}</td>
+  </tr>
+
+  <!-- ROW 31: Impuesto sobre la Renta -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">Impuesto sobre la Renta</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">21</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_21}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_21}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_21}}</td>
+  </tr>
+
+  <!-- ROW 32: RESULTADO NETO -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">RESULTADO NETO</td>
+    <td colspan="2" class="fs-10 center">P</td>
+    <td class="fs-10 center">22</td>
+    <td colspan="3" class="fs-10 right">{{planAnual_22}}</td>
+    <td colspan="2" class="fs-10 right">{{apertura_22}}</td>
+    <td colspan="5" class="bold fs-10 right">{{real_22}}</td>
+  </tr>
+
+  <!-- Spacer -->
+  <tr style="height:5px"><td colspan="15" class="no-border"></td></tr>
+
+  <!-- ROW 34: Certificación -->
+  <tr style="height:30px">
+    <td colspan="15" class="cert-text">
+      CERTIFICAMOS QUE LOS DATOS CONTENIDOS EN ESTE ESTADO FINANCIERO SE CORRESPONDEN CON LAS ANOTACIONES CONTABLES DE ACUERDO CON LAS REGULACIONES VIGENTES.
+    </td>
+  </tr>
+
+  <!-- ROW 35: Hecho por / Aprobado por / Fecha -->
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">HECHO POR:</td>
+    <td colspan="6" class="bold fs-8 left">APROBADO POR:</td>
+    <td colspan="6" class="bold fs-8 left">
+      FECHA: &nbsp;|&nbsp;{{fechaDia}}&nbsp;|&nbsp;|&nbsp;{{fechaMes}}&nbsp;|&nbsp;|&nbsp;{{fechaAnio}}&nbsp;|&nbsp;&nbsp;&nbsp;Día &nbsp; Mes &nbsp; Año
+    </td>
+  </tr>
+
+  <!-- ROW 36: Nombres -->
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">NOMBRE Y APELLIDOS<br><span style="font-weight:normal">{{hechoNombre}}</span></td>
+    <td colspan="6" class="bold fs-8 left">NOMBRE Y APELLIDOS<br><span style="font-weight:normal">{{aprobadoNombre}}</span></td>
+    <td colspan="6" class="fs-8 left"></td>
+  </tr>
+
+  <!-- ROW 37: Firmas -->
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">FIRMA</td>
+    <td colspan="6" class="bold fs-8 left">FIRMA</td>
+    <td colspan="6" class="fs-8 left"></td>
+  </tr>
+
+  <!-- ROW 38: Observaciones -->
+  <tr style="height:50px">
+    <td colspan="15" class="obs-cell no-border">
+      Observaciones &nbsp; {{observaciones}}
+    </td>
+  </tr>
+</table>
+</div>
+</body>
+</html>

@@ -1,18 +1,25 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
-import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
-import { AccountService } from '../accounting/account.service';
+import { VoucherService } from '../accounting/voucher.service';
 import { Movement, MovementType } from '../entities/movement.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
+import {
+  getMovementType,
+  getAccountingEntryForMovement,
+  MovementTypeDefinition,
+} from './movement-types.catalog';
 
 @Injectable()
 export class MovementsService {
+  private readonly logger = new Logger(MovementsService.name);
+
   constructor(
     private readonly inventoryWarehouseService: InventoryWarehouseService,
-    @Inject(forwardRef(() => AccountService))
-    private readonly accountService: AccountService,
+    @Inject(forwardRef(() => VoucherService))
+    private readonly voucherService: VoucherService,
     @InjectRepository(Movement)
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(DeliveryReport)
@@ -49,7 +56,7 @@ export class MovementsService {
       qb.andWhere('m.movement_type = :movementType', { movementType: filters.movement_type });
     }
 
-    qb.orderBy('m.created_at', 'DESC');
+    qb.orderBy('m.createdAt', 'DESC');
     const result = await qb.getMany();
 
     if (filters?.product_name) {
@@ -112,19 +119,27 @@ export class MovementsService {
             productUnit: 'und',
           },
       type: m.movementType.toUpperCase(),
+      movementCode: m.movementCode || null,
+      movementDescription: m.movementDescription || null,
+      category: m.category || null,
       quantity: m.quantity,
+      unitPrice: m.unitPrice || 0,
+      totalAmount: m.totalAmount || 0,
       createdAt: m.createdAt,
       reason: m.reason,
       sourceWarehouse: m.sourceWarehouse,
       destinationWarehouse: m.destinationWarehouse,
       purchaseId: m.purchaseId || null,
       purchase: m.purchaseId ? { id: m.purchaseId } : null,
+      voucherId: m.voucherId || null,
     };
   }
 
   async createDirectEntry(
     companyId: number,
     data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
       productCode: string;
       productName: string;
       productDescription?: string;
@@ -141,6 +156,19 @@ export class MovementsService {
     if (data.quantity <= 0) {
       throw new BadRequestException('La cantidad debe ser mayor a 0');
     }
+
+    // Validar código de movimiento
+    const movType = getMovementType(data.movementCode);
+    if (!movType) {
+      throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
+    }
+    if (movType.direction !== 'entry') {
+      throw new BadRequestException(`El código ${data.movementCode} no es de entrada`);
+    }
+
+    const category = data.category || movType.category;
+    const unitPrice = data.unitPrice || 0;
+    const totalAmount = unitPrice * data.quantity;
 
     // Asegurar que exista el producto en el inventario del almacén
     await this.inventoryWarehouseService.ensureProduct(companyId, {
@@ -168,17 +196,22 @@ export class MovementsService {
       this.movementRepo.create({
         companyId,
         movementType: 'entry',
+        movementCode: data.movementCode,
+        movementDescription: movType.description,
+        category,
         productCode: data.productCode,
         quantity: data.quantity,
-        reason: data.label || 'Entrada directa',
+        unitPrice,
+        totalAmount,
+        reason: data.label || movType.description,
         label: data.label || null,
         destinationWarehouse: data.warehouseId,
         userName: userName || 'System',
       }),
     );
 
-    // ── Accounting: Voucher for direct entry (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización automática ──
+    await this.generateAccountingVoucher(companyId, mov, movType, totalAmount, userName);
 
     return this.enrichMovement(companyId, mov);
   }
@@ -186,6 +219,8 @@ export class MovementsService {
   async createExit(
     companyId: number,
     data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
       product_code: string;
       quantity: number;
       reason?: string;
@@ -197,6 +232,28 @@ export class MovementsService {
     if (data.quantity <= 0) {
       throw new BadRequestException('La cantidad debe ser mayor a 0');
     }
+
+    // Validar código de movimiento
+    const movType = getMovementType(data.movementCode);
+    if (!movType) {
+      throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
+    }
+    if (movType.direction !== 'exit') {
+      throw new BadRequestException(`El código ${data.movementCode} no es de salida`);
+    }
+
+    const category = data.category || movType.category;
+
+    // Obtener inventario para precio y reporte de entrega
+    const inventories = await this.inventoryWarehouseService.findByCode(
+      companyId,
+      data.product_code,
+    );
+    const inventory = inventories.find(
+      (inv) => inv.warehouseId === data.warehouseId,
+    );
+    const unitPrice = inventory?.unitPrice || 0;
+    const totalAmount = unitPrice * data.quantity;
 
     // Actualizar stock en el almacén específico
     await this.inventoryWarehouseService.updateStock(
@@ -212,23 +269,20 @@ export class MovementsService {
       this.movementRepo.create({
         companyId,
         movementType: 'exit',
+        movementCode: data.movementCode,
+        movementDescription: movType.description,
+        category,
         productCode: data.product_code,
         quantity: data.quantity,
-        reason: data.reason || 'Salida de inventario',
+        unitPrice,
+        totalAmount,
+        reason: data.reason || movType.description,
         sourceWarehouse: data.warehouseId,
         userName: userName || 'System',
       }),
     );
 
-    // Obtener inventario para el reporte de entrega
-    const inventories = await this.inventoryWarehouseService.findByCode(
-      companyId,
-      data.product_code,
-    );
-    const inventory = inventories.find(
-      (inv) => inv.warehouseId === data.warehouseId,
-    );
-
+    // Reporte de entrega (Vale de Entrega)
     await this.drRepo.save(
       this.drRepo.create({
         companyId,
@@ -242,18 +296,18 @@ export class MovementsService {
             description: inventory?.productName || data.product_code,
             quantity: data.quantity,
             unit: inventory?.productUnit || 'und',
-            unitPrice: inventory?.unitPrice || 0,
-            amount: data.quantity * (inventory?.unitPrice || 0),
+            unitPrice,
+            amount: totalAmount,
           },
         ]),
         reportType: 'Vale de Entrega',
-        reason: data.reason || 'Salida de inventario',
+        reason: data.reason || movType.description,
         createdByName: userName || 'System',
       }),
     );
 
-    // ── Accounting: Voucher for exit (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización automática ──
+    await this.generateAccountingVoucher(companyId, mov, movType, totalAmount, userName);
 
     return this.enrichMovement(companyId, mov);
   }
@@ -261,6 +315,8 @@ export class MovementsService {
   async createTransfer(
     companyId: number,
     data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
       productCode: string;
       quantity: number;
       sourceWarehouseId: string;
@@ -272,6 +328,14 @@ export class MovementsService {
     if (data.quantity <= 0) {
       throw new BadRequestException('La cantidad debe ser mayor a 0');
     }
+
+    // Validar código de movimiento
+    const movType = getMovementType(data.movementCode);
+    if (!movType) {
+      throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
+    }
+
+    const category = data.category || movType.category;
 
     // Validar que exista stock en el almacén origen
     const sourceInventory = await this.inventoryWarehouseService.findByCompanyProductAndWarehouse(
@@ -292,6 +356,9 @@ export class MovementsService {
       );
     }
 
+    const unitPrice = sourceInventory.unitPrice || 0;
+    const totalAmount = unitPrice * data.quantity;
+
     // Realizar la transferencia de stock
     const transferResult = await this.inventoryWarehouseService.transferStock(
       companyId,
@@ -308,9 +375,14 @@ export class MovementsService {
       this.movementRepo.create({
         companyId,
         movementType: 'transfer',
+        movementCode: data.movementCode,
+        movementDescription: movType.description,
+        category,
         productCode: data.productCode,
         quantity: data.quantity,
-        reason: data.reason || 'Transferencia entre almacenes',
+        unitPrice,
+        totalAmount,
+        reason: data.reason || movType.description,
         sourceWarehouse: data.sourceWarehouseId,
         destinationWarehouse: data.destinationWarehouseId,
         userName: userName || 'System',
@@ -318,7 +390,7 @@ export class MovementsService {
     );
 
     const enriched = await this.enrichMovement(companyId, mov);
-    
+
     // Agregar información adicional de la transferencia
     return {
       ...enriched,
@@ -332,6 +404,8 @@ export class MovementsService {
   async createReturn(
     companyId: number,
     data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
       product_code: string;
       quantity: number;
       purchase_id?: string;
@@ -343,6 +417,25 @@ export class MovementsService {
     if (data.quantity <= 0) {
       throw new BadRequestException('La cantidad debe ser mayor a 0');
     }
+
+    // Validar código de movimiento
+    const movType = getMovementType(data.movementCode);
+    if (!movType) {
+      throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
+    }
+
+    const category = data.category || movType.category;
+
+    // Obtener precio unitario
+    const inventories = await this.inventoryWarehouseService.findByCode(
+      companyId,
+      data.product_code,
+    );
+    const inventory = inventories.find(
+      (inv) => inv.warehouseId === data.warehouseId,
+    );
+    const unitPrice = inventory?.unitPrice || 0;
+    const totalAmount = unitPrice * data.quantity;
 
     // Para devoluciones, se considera como entrada al almacén
     await this.inventoryWarehouseService.updateStock(
@@ -357,8 +450,13 @@ export class MovementsService {
       this.movementRepo.create({
         companyId,
         movementType: 'return',
+        movementCode: data.movementCode,
+        movementDescription: movType.description,
+        category,
         productCode: data.product_code,
         quantity: data.quantity,
+        unitPrice,
+        totalAmount,
         reason: data.reason,
         destinationWarehouse: data.warehouseId,
         userName: userName || 'System',
@@ -366,8 +464,8 @@ export class MovementsService {
       }),
     );
 
-    // ── Accounting: Voucher for return (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización automática ──
+    await this.generateAccountingVoucher(companyId, mov, movType, totalAmount, userName);
 
     return this.enrichMovement(companyId, mov);
   }
@@ -403,7 +501,7 @@ export class MovementsService {
       qb.andWhere('m.created_at <= :end', { end: filters.end_date });
     }
 
-    qb.orderBy('m.created_at', 'DESC');
+    qb.orderBy('m.createdAt', 'DESC');
     const result = await qb.getMany();
 
     const enrichedAll: any[] = [];
@@ -411,5 +509,81 @@ export class MovementsService {
       enrichedAll.push(await this.enrichMovement(companyId, m));
     }
     return enrichedAll;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── CONTABILIZACIÓN AUTOMÁTICA ──
+  // ══════════════════════════════════════════════════════════
+
+  private async generateAccountingVoucher(
+    companyId: number,
+    movement: Movement,
+    movType: MovementTypeDefinition,
+    totalAmount: number,
+    userName?: string,
+  ): Promise<void> {
+    if (totalAmount <= 0) {
+      this.logger.warn(
+        `Movimiento ${movement.id} sin monto (${totalAmount}), no se genera comprobante contable`,
+      );
+      return;
+    }
+
+    if (!movement.movementCode) {
+      this.logger.warn(`Movimiento ${movement.id} sin código de movimiento`);
+      return;
+    }
+
+    const accountingEntry = getAccountingEntryForMovement(movement.movementCode);
+    if (!accountingEntry) {
+      this.logger.warn(
+        `No se encontró mapeo contable para código de movimiento: ${movement.movementCode}`,
+      );
+      return;
+    }
+
+    try {
+      const voucher = await this.voucherService.createVoucherFromModule(
+        companyId,
+        'inventory',
+        movement.id,
+        {
+          date: new Date().toISOString().split('T')[0],
+          description: `${movType.description} - ${movement.productCode} x${movement.quantity}`,
+          type: 'inventory',
+          reference: `MOV-${movement.movementCode}-${movement.id.substring(0, 8)}`,
+          createdBy: userName || 'Sistema',
+          lines: [
+            {
+              accountCode: accountingEntry.debitAccountCode,
+              debit: totalAmount,
+              credit: 0,
+              description: `${movType.description} - Débito`,
+            },
+            {
+              accountCode: accountingEntry.creditAccountCode,
+              debit: 0,
+              credit: totalAmount,
+              description: `${movType.description} - Crédito`,
+            },
+          ],
+        },
+      );
+
+      // Vincular comprobante al movimiento
+      movement.voucherId = voucher.id;
+      await this.movementRepo.update(movement.id, { voucherId: voucher.id });
+
+      this.logger.log(
+        `Comprobante ${voucher.voucherNumber} generado para movimiento ${movement.movementCode} (${movement.id})`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error al generar comprobante para movimiento ${movement.id}: ${error.message}`,
+        error.stack,
+      );
+      // No lanzar el error — el movimiento de inventario ya se realizó.
+      // El comprobante se puede generar manualmente después.
+    }
   }
 }

@@ -6,6 +6,7 @@ import { SubelementsController } from './subelements.controller';
 import { SubelementsService } from './subelements.service';
 import { VoucherService } from './voucher.service';
 import { ReportService } from './report.service';
+import { PdfService } from './pdf.service';
 import { AccountService } from './account.service';
 import { CostCenterService } from './cost-center.service';
 import { FiscalYearService } from './fiscal-year.service';
@@ -20,6 +21,7 @@ import { FiscalYear } from '../entities/fiscal-year.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { ExpenseType } from '../entities/expense-type.entity';
 import { Subelement } from '../entities/subelement.entity';
+import { GeneratedReport } from '../entities/generated-report.entity';
 import { AuthModule } from '../auth/auth.module';
 import { AuditModule } from '../audit/audit.module';
 import { PaginationModule } from '../common/pagination/pagination.module';
@@ -36,6 +38,7 @@ import { PaginationModule } from '../common/pagination/pagination.module';
       AccountingPeriod,
       ExpenseType,
       Subelement,
+      GeneratedReport,
     ]),
     forwardRef(() => AuthModule),
     AuditModule,
@@ -45,6 +48,7 @@ import { PaginationModule } from '../common/pagination/pagination.module';
   providers: [
     VoucherService,
     ReportService,
+    PdfService,
     AccountService,
     CostCenterService,
     FiscalYearService,

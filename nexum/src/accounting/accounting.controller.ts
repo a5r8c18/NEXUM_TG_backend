@@ -28,6 +28,7 @@ import { ExpenseTypeService } from './expense-type.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
+import { PdfService } from './pdf.service';
 import { getCompanyId } from '../common/get-company-id';
 import {
   CreateVoucherDto,
@@ -52,6 +53,7 @@ export class AccountingController {
   constructor(
     private readonly voucherService: VoucherService,
     private readonly reportService: ReportService,
+    private readonly pdfService: PdfService,
     private readonly accountService: AccountService,
     private readonly costCenterService: CostCenterService,
     private readonly fiscalYearService: FiscalYearService,
@@ -65,7 +67,7 @@ export class AccountingController {
   // ══════════════════════════════════════════════════════════
 
   @Get('vouchers')
-  findAllVouchers(
+  async findAllVouchers(
     @Req() req: Request,
     @Query() paginationDto: SearchPaginationDto,
     @Query('status') status?: string,
@@ -75,15 +77,12 @@ export class AccountingController {
     @Query('sourceModule') sourceModule?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.voucherService.findAllVouchersPaginated(companyId, {
-      ...paginationDto,
+    return this.voucherService.findAllVouchers(companyId, {
       status,
       type,
       fromDate,
       toDate,
       sourceModule,
-      calculatedOffset: 0,
-      calculatedLimit: 0
     });
   }
 
@@ -288,6 +287,26 @@ export class AccountingController {
   // ── REPORTS (Informes Contables) ──
   // ══════════════════════════════════════════════════════════
 
+  // ── Generated Reports CRUD ──
+
+  @Get('reports/generated')
+  getGeneratedReports(@Req() req: Request) {
+    const companyId = getCompanyId(req);
+    return this.reportService.getGeneratedReports(companyId);
+  }
+
+  @Post('reports/generated')
+  saveGeneratedReport(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.reportService.saveGeneratedReport(companyId, body);
+  }
+
+  @Delete('reports/generated/:id')
+  deleteGeneratedReport(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.reportService.deleteGeneratedReport(companyId, id);
+  }
+
   @Get('reports/trial-balance')
   getTrialBalance(
     @Req() req: Request,
@@ -365,6 +384,85 @@ export class AccountingController {
   }
 
   // Export endpoints
+  @Get('reports/expense-breakdown/export/excel')
+  exportExpenseBreakdownExcel(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.reportService.exportExpenseBreakdownExcel(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+    );
+  }
+
+  // ── PDF MODELO 5920 ──
+
+  @Get('reports/modelo-5920/export/pdf')
+  async exportModelo5920Pdf(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('asOfDate') asOfDate?: string,
+  ) {
+    console.log('🔍 PDF 5920 - Endpoint called!');
+    console.log('🔍 PDF 5920 - asOfDate:', asOfDate);
+    const companyId = getCompanyId(req);
+    console.log('🔍 PDF 5920 - companyId:', companyId);
+    const data = await this.reportService.getEfe5920Data(companyId, asOfDate);
+    console.log('🔍 PDF 5920 - Data retrieved:', !!data);
+    const pdf = await this.pdfService.generateEfe5920Pdf(data);
+    console.log('🔍 PDF 5920 - PDF generated, size:', pdf.length);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="EFE_5920.pdf"',
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  }
+
+  @Get('reports/modelo-5921/export/pdf')
+  async exportModelo5921Pdf(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    const data = await this.reportService.getEfe5921Data(companyId, fromDate, toDate);
+    const pdf = await this.pdfService.generateEfe5921Pdf(data);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="EFE_5921.pdf"',
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  }
+
+  @Get('reports/modelo-5924/export/pdf')
+  async exportModelo5924Pdf(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    const data = await this.reportService.getEfe5924Data(companyId, fromDate, toDate);
+    const pdf = await this.pdfService.generateEfe5924Pdf(data);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="EFE_5924.pdf"',
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  }
+
   @Get('reports/trial-balance/export/excel')
   exportTrialBalanceExcel(
     @Req() req: Request,

@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 9pt;
+      background: #fff;
+    }
+
+    .page {
+      width: 210mm;
+      padding: 8mm 8mm;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    td {
+      border: 1px solid #000;
+      padding: 2px 4px;
+      vertical-align: middle;
+      word-wrap: break-word;
+      line-height: 1.2;
+    }
+
+    td.no-border { border: none; }
+    td.border-no-bottom { border-bottom: none; }
+    td.border-no-top { border-top: none; }
+
+    .bold { font-weight: bold; }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    .left { text-align: left; }
+
+    .section-header {
+      background-color: #CCCCCC;
+      font-weight: bold;
+    }
+
+    .fs-12 { font-size: 12pt; }
+    .fs-10 { font-size: 10pt; }
+    .fs-9  { font-size: 9pt; }
+    .fs-8  { font-size: 8pt; }
+
+    /* Column widths */
+    .col-a  { width: 15%; }
+    .col-b  { width: 25%; }
+    .col-c  { width: 10%; }
+    .col-d  { width: 10%; }
+    .col-e  { width: 10%; }
+    .col-f  { width: 10%; }
+    .col-g  { width: 10%; }
+    .col-h  { width: 10%; }
+
+    .data-cell {
+      min-height: 18px;
+      border: 1px solid #000;
+    }
+
+    .firma-section td {
+      font-size: 8pt;
+      font-weight: bold;
+    }
+
+    .obs-cell {
+      border: none;
+      font-size: 9pt;
+      padding-top: 4px;
+    }
+
+    .cert-text {
+      font-size: 8pt;
+      padding: 4px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+<table>
+  <colgroup>
+    <col style="width:15%">
+    <col style="width:25%">
+    <col style="width:10%">
+    <col style="width:10%">
+    <col style="width:10%">
+    <col style="width:10%">
+    <col style="width:10%">
+    <col style="width:10%">
+    <col style="width:10%">
+  </colgroup>
+
+  <!-- ROW 1: Header -->
+  <tr style="height:60px">
+    <td colspan="3" class="bold fs-10 center" style="vertical-align:middle">
+      Subsistema de Información Estadístico Nacional (SIEN)
+    </td>
+    <td colspan="3" class="bold fs-10 center" style="vertical-align:middle"></td>
+    <td colspan="3" class="bold fs-10 center" style="vertical-align:middle">
+      Proforma EFE 5924 - 04 Gastos por Subelementos
+    </td>
+  </tr>
+
+  <!-- ROW 2 -->
+  <tr style="height:16px">
+    <td colspan="3" class="fs-9 left">FORMULARIO Nro.: &nbsp;&nbsp;&nbsp;5924 - 04</td>
+    <td colspan="3" class="bold fs-9 left">PÁGINA: 1 de 1</td>
+    <td colspan="3" class="fs-9 left">PERIODICIDAD: &nbsp;&nbsp;MENSUAL</td>
+  </tr>
+
+  <!-- ROW 3 -->
+  <tr style="height:16px">
+    <td colspan="6" class="bold fs-8 left">INFORME CORRESPONDIENTE A: &nbsp;<span class="data-value">{{informeCorrespondiente}}</span></td>
+    <td colspan="3" class="bold fs-9 left">CÓDIGO CENTRO INFORMANTE: &nbsp;<span class="data-value">{{codigoCentroInformante}}</span></td>
+  </tr>
+
+  <!-- ROW 4 -->
+  <tr style="height:20px">
+    <td colspan="3" class="bold fs-9 left">CENTRO INFORMANTE: &nbsp;<span class="data-value">{{centroInformante}}</span></td>
+    <td colspan="6" class="bold fs-9 left"></td>
+  </tr>
+
+  <!-- ROW 5: Spacer -->
+  <tr style="height:5px">
+    <td colspan="9" class="no-border"></td>
+  </tr>
+
+  <!-- ROW 6: Página 1 -->
+  <tr style="height:18px">
+    <td colspan="9" class="bold fs-10 center">Página 1</td>
+  </tr>
+
+  <!-- ROW 7: Column headers -->
+  <tr style="height:28px">
+    <td colspan="2" class="bold fs-10 left center" style="vertical-align:middle">SUBELEMENTOS</td>
+    <td class="bold fs-10 center">CÓDIGO</td>
+    <td class="bold fs-10 center">PLAN ANUAL</td>
+    <td class="bold fs-10 center">APERTURA</td>
+    <td class="bold fs-10 center">REAL HASTA LA FECHA</td>
+    <td class="bold fs-10 center">% PLAN</td>
+    <td class="bold fs-10 center">% APERTURA</td>
+    <td class="bold fs-10 center">% REAL</td>
+  </tr>
+
+  <!-- ROW 8: GASTOS DE PERSONAL section header -->
+  <tr style="height:18px">
+    <td colspan="9" class="section-header bold fs-10 left">GASTOS DE PERSONAL</td>
+  </tr>
+
+  <!-- ROW 9: Salarios -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Salarios y Sueldos</td>
+    <td class="fs-10 center">101</td>
+    <td class="fs-10 right">{{planAnual_101}}</td>
+    <td class="fs-10 right">{{apertura_101}}</td>
+    <td class="fs-10 right">{{real_101}}</td>
+    <td class="fs-10 right">{{porcPlan_101}}</td>
+    <td class="fs-10 right">{{porcApertura_101}}</td>
+    <td class="fs-10 right">{{porcReal_101}}</td>
+  </tr>
+
+  <!-- ROW 10: Horas Extra -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Horas Extraordinarias</td>
+    <td class="fs-10 center">102</td>
+    <td class="fs-10 right">{{planAnual_102}}</td>
+    <td class="fs-10 right">{{apertura_102}}</td>
+    <td class="fs-10 right">{{real_102}}</td>
+    <td class="fs-10 right">{{porcPlan_102}}</td>
+    <td class="fs-10 right">{{porcApertura_102}}</td>
+    <td class="fs-10 right">{{porcReal_102}}</td>
+  </tr>
+
+  <!-- ROW 11: Seguridad Social -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Seguridad Social</td>
+    <td class="fs-10 center">103</td>
+    <td class="fs-10 right">{{planAnual_103}}</td>
+    <td class="fs-10 right">{{apertura_103}}</td>
+    <td class="fs-10 right">{{real_103}}</td>
+    <td class="fs-10 right">{{porcPlan_103}}</td>
+    <td class="fs-10 right">{{porcApertura_103}}</td>
+    <td class="fs-10 right">{{porcReal_103}}</td>
+  </tr>
+
+  <!-- ROW 12: GASTOS DE MATERIALES section header -->
+  <tr style="height:18px">
+    <td colspan="9" class="section-header bold fs-10 left">GASTOS DE MATERIALES</td>
+  </tr>
+
+  <!-- ROW 13: Materias Primas -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Materias Primas</td>
+    <td class="fs-10 center">201</td>
+    <td class="fs-10 right">{{planAnual_201}}</td>
+    <td class="fs-10 right">{{apertura_201}}</td>
+    <td class="fs-10 right">{{real_201}}</td>
+    <td class="fs-10 right">{{porcPlan_201}}</td>
+    <td class="fs-10 right">{{porcApertura_201}}</td>
+    <td class="fs-10 right">{{porcReal_201}}</td>
+  </tr>
+
+  <!-- ROW 14: Materiales de Construcción -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Materiales de Construcción</td>
+    <td class="fs-10 center">202</td>
+    <td class="fs-10 right">{{planAnual_202}}</td>
+    <td class="fs-10 right">{{apertura_202}}</td>
+    <td class="fs-10 right">{{real_202}}</td>
+    <td class="fs-10 right">{{porcPlan_202}}</td>
+    <td class="fs-10 right">{{porcApertura_202}}</td>
+    <td class="fs-10 right">{{porcReal_202}}</td>
+  </tr>
+
+  <!-- ROW 15: Suministros de Oficina -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Suministros de Oficina</td>
+    <td class="fs-10 center">203</td>
+    <td class="fs-10 right">{{planAnual_203}}</td>
+    <td class="fs-10 right">{{apertura_203}}</td>
+    <td class="fs-10 right">{{real_203}}</td>
+    <td class="fs-10 right">{{porcPlan_203}}</td>
+    <td class="fs-10 right">{{porcApertura_203}}</td>
+    <td class="fs-10 right">{{porcReal_203}}</td>
+  </tr>
+
+  <!-- ROW 16: GASTOS DE SERVICIOS section header -->
+  <tr style="height:18px">
+    <td colspan="9" class="section-header bold fs-10 left">GASTOS DE SERVICIOS</td>
+  </tr>
+
+  <!-- ROW 17: Servicios Básicos -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Servicios Básicos</td>
+    <td class="fs-10 center">301</td>
+    <td class="fs-10 right">{{planAnual_301}}</td>
+    <td class="fs-10 right">{{apertura_301}}</td>
+    <td class="fs-10 right">{{real_301}}</td>
+    <td class="fs-10 right">{{porcPlan_301}}</td>
+    <td class="fs-10 right">{{porcApertura_301}}</td>
+    <td class="fs-10 right">{{porcReal_301}}</td>
+  </tr>
+
+  <!-- ROW 18: Mantenimiento y Reparaciones -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Mantenimiento y Reparaciones</td>
+    <td class="fs-10 center">302</td>
+    <td class="fs-10 right">{{planAnual_302}}</td>
+    <td class="fs-10 right">{{apertura_302}}</td>
+    <td class="fs-10 right">{{real_302}}</td>
+    <td class="fs-10 right">{{porcPlan_302}}</td>
+    <td class="fs-10 right">{{porcApertura_302}}</td>
+    <td class="fs-10 right">{{porcReal_302}}</td>
+  </tr>
+
+  <!-- ROW 19: Servicios Profesionales -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Servicios Profesionales</td>
+    <td class="fs-10 center">303</td>
+    <td class="fs-10 right">{{planAnual_303}}</td>
+    <td class="fs-10 right">{{apertura_303}}</td>
+    <td class="fs-10 right">{{real_303}}</td>
+    <td class="fs-10 right">{{porcPlan_303}}</td>
+    <td class="fs-10 right">{{porcApertura_303}}</td>
+    <td class="fs-10 right">{{porcReal_303}}</td>
+  </tr>
+
+  <!-- ROW 20: GASTOS DE ACTIVOS FIJOS section header -->
+  <tr style="height:18px">
+    <td colspan="9" class="section-header bold fs-10 left">GASTOS DE ACTIVOS FIJOS</td>
+  </tr>
+
+  <!-- ROW 21: Depreciación -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Depreciación de Activos Fijos</td>
+    <td class="fs-10 center">401</td>
+    <td class="fs-10 right">{{planAnual_401}}</td>
+    <td class="fs-10 right">{{apertura_401}}</td>
+    <td class="fs-10 right">{{real_401}}</td>
+    <td class="fs-10 right">{{porcPlan_401}}</td>
+    <td class="fs-10 right">{{porcApertura_401}}</td>
+    <td class="fs-10 right">{{porcReal_401}}</td>
+  </tr>
+
+  <!-- ROW 22: Amortización -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Amortización de Activos Intangibles</td>
+    <td class="fs-10 center">402</td>
+    <td class="fs-10 right">{{planAnual_402}}</td>
+    <td class="fs-10 right">{{apertura_402}}</td>
+    <td class="fs-10 right">{{real_402}}</td>
+    <td class="fs-10 right">{{porcPlan_402}}</td>
+    <td class="fs-10 right">{{porcApertura_402}}</td>
+    <td class="fs-10 right">{{porcReal_402}}</td>
+  </tr>
+
+  <!-- ROW 23: OTROS GASTOS section header -->
+  <tr style="height:18px">
+    <td colspan="9" class="section-header bold fs-10 left">OTROS GASTOS</td>
+  </tr>
+
+  <!-- ROW 24: Gastos de Representación -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Gastos de Representación</td>
+    <td class="fs-10 center">501</td>
+    <td class="fs-10 right">{{planAnual_501}}</td>
+    <td class="fs-10 right">{{apertura_501}}</td>
+    <td class="fs-10 right">{{real_501}}</td>
+    <td class="fs-10 right">{{porcPlan_501}}</td>
+    <td class="fs-10 right">{{porcApertura_501}}</td>
+    <td class="fs-10 right">{{porcReal_501}}</td>
+  </tr>
+
+  <!-- ROW 25: Gastos de Transporte -->
+  <tr style="height="18px">
+    <td colspan="2" class="fs-10 left">Gastos de Transporte</td>
+    <td class="fs-10 center">502</td>
+    <td class="fs-10 right">{{planAnual_502}}</td>
+    <td class="fs-10 right">{{apertura_502}}</td>
+    <td class="fs-10 right">{{real_502}}</td>
+    <td class="fs-10 right">{{porcPlan_502}}</td>
+    <td class="fs-10 right">{{porcApertura_502}}</td>
+    <td class="fs-10 right">{{porcReal_502}}</td>
+  </tr>
+
+  <!-- ROW 26: Gastos de Comunicación -->
+  <tr style="height:18px">
+    <td colspan="2" class="fs-10 left">Gastos de Comunicación</td>
+    <td class="fs-10 center">503</td>
+    <td class="fs-10 right">{{planAnual_503}}</td>
+    <td class="fs-10 right">{{apertura_503}}</td>
+    <td class="fs-10 right">{{real_503}}</td>
+    <td class="fs-10 right">{{porcPlan_503}}</td>
+    <td class="fs-10 right">{{porcApertura_503}}</td>
+    <td class="fs-10 right">{{porcReal_503}}</td>
+  </tr>
+
+  <!-- ROW 27: TOTAL GENERAL -->
+  <tr style="height:18px">
+    <td colspan="2" class="bold fs-10 left">TOTAL GENERAL</td>
+    <td class="fs-10 center"></td>
+    <td class="fs-10 right bold">{{planAnual_total}}</td>
+    <td class="fs-10 right bold">{{apertura_total}}</td>
+    <td class="fs-10 right bold">{{real_total}}</td>
+    <td class="fs-10 right bold">100.00%</td>
+    <td class="fs-10 right bold">100.00%</td>
+    <td class="fs-10 right bold">100.00%</td>
+  </tr>
+
+  <!-- Spacer -->
+  <tr style="height:5px"><td colspan="9" class="no-border"></td></tr>
+
+  <!-- ROW 29: Certificación -->
+  <tr style="height:30px">
+    <td colspan="9" class="cert-text">
+      CERTIFICAMOS QUE LOS DATOS CONTENIDOS EN ESTE ESTADO FINANCIERO SE CORRESPONDEN CON LAS ANOTACIONES CONTABLES DE ACUERDO CON LAS REGULACIONES VIGENTES.
+    </td>
+  </tr>
+
+  <!-- ROW 30: Hecho por / Aprobado por / Fecha -->
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">HECHO POR:</td>
+    <td colspan="3" class="bold fs-8 left">APROBADO POR:</td>
+    <td colspan="3" class="bold fs-8 left">
+      FECHA: &nbsp;|&nbsp;{{fechaDia}}&nbsp;|&nbsp;|&nbsp;{{fechaMes}}&nbsp;|&nbsp;|&nbsp;{{fechaAnio}}&nbsp;|&nbsp;&nbsp;&nbsp;Día &nbsp; Mes &nbsp; Año
+    </td>
+  </tr>
+
+  <!-- ROW 31: Nombres -->
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">NOMBRE Y APELLIDOS<br><span style="font-weight:normal">{{hechoNombre}}</span></td>
+    <td colspan="3" class="bold fs-8 left">NOMBRE Y APELLIDOS<br><span style="font-weight:normal">{{aprobadoNombre}}</span></td>
+    <td colspan="3" class="fs-8 left"></td>
+  </tr>
+
+  <!-- ROW 32: Firmas -->
+  <tr style="height:26px">
+    <td colspan="3" class="bold fs-8 left">FIRMA</td>
+    <td colspan="3" class="bold fs-8 left">FIRMA</td>
+    <td colspan="3" class="fs-8 left"></td>
+  </tr>
+
+  <!-- ROW 33: Observaciones -->
+  <tr style="height:50px">
+    <td colspan="9" class="obs-cell no-border">
+      Observaciones &nbsp; {{observaciones}}
+    </td>
+  </tr>
+</table>
+</div>
+</body>
+</html>

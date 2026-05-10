@@ -62,7 +62,7 @@ export class InventoryService {
       qb.andWhere('inv.created_at <= :toDate', { toDate: filters.toDate });
     }
 
-    qb.orderBy('inv.product_name', 'ASC');
+    qb.orderBy('inv.productName', 'ASC');
     const result = await qb.getMany();
     return { inventory: result };
   }

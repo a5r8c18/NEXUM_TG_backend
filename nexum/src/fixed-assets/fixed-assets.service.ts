@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
-import { AccountService } from '../accounting/account.service';
+import { VoucherService } from '../accounting/voucher.service';
 import {
   mockDepreciationCatalog,
   getDepreciationRate,
@@ -10,9 +10,11 @@ import {
 
 @Injectable()
 export class FixedAssetsService {
+  private readonly logger = new Logger(FixedAssetsService.name);
+
   constructor(
-    @Inject(forwardRef(() => AccountService))
-    private readonly accountService: AccountService,
+    @Inject(forwardRef(() => VoucherService))
+    private readonly voucherService: VoucherService,
     @InjectRepository(FixedAsset)
     private readonly assetRepo: Repository<FixedAsset>,
   ) {}
@@ -42,7 +44,7 @@ export class FixedAssetsService {
       );
     }
 
-    qb.orderBy('a.created_at', 'DESC');
+    qb.orderBy('a.createdAt', 'DESC');
     const result = await qb.getMany();
     return { assets: result };
   }
@@ -87,11 +89,40 @@ export class FixedAssetsService {
     asset.status = 'active';
     await this.assetRepo.save(asset);
 
-    // ── Automatic Accounting Voucher (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
-    // try {
-    //   await this.accountService.createVoucherFromModule(companyId, 'fixed-assets', String(asset.id), { ... });
-    // } catch (e) { console.warn(...); }
+    // ── Contabilización de adquisición de activo fijo ──
+    const acquisitionValue = Number(asset.acquisitionValue);
+    if (acquisitionValue > 0) {
+      try {
+        await this.voucherService.createVoucherFromModule(
+          companyId,
+          'fixed-assets',
+          String(asset.id),
+          {
+            date: asset.acquisitionDate || new Date().toISOString().split('T')[0],
+            description: `Adquisición AFT: ${asset.name} (${asset.assetCode})`,
+            type: 'fixed-assets',
+            reference: `AFT-${asset.assetCode}`,
+            createdBy: 'Sistema',
+            lines: [
+              {
+                accountCode: '240', // Activos Fijos Tangibles
+                debit: acquisitionValue,
+                credit: 0,
+                description: `Alta AFT ${asset.assetCode}`,
+              },
+              {
+                accountCode: '410', // Cuentas por Pagar
+                debit: 0,
+                credit: acquisitionValue,
+                description: `Obligación por adquisición AFT`,
+              },
+            ],
+          },
+        );
+      } catch (error) {
+        this.logger.error(`Error contabilización AFT ${asset.id}: ${error.message}`);
+      }
+    }
 
     return { asset };
   }
@@ -232,8 +263,40 @@ export class FixedAssetsService {
       0,
     );
 
-    // ── Generate Accounting Voucher for Monthly Depreciation (DESHABILITADO — contabilidad manual) ──
-    // TODO: Reactivar cuando se indique
+    // ── Contabilización de depreciación mensual ──
+    if (totalDepreciation > 0) {
+      try {
+        const voucher = await this.voucherService.createVoucherFromModule(
+          companyId,
+          'fixed-assets',
+          `DEP-${year}-${String(month).padStart(2, '0')}`,
+          {
+            date: `${year}-${String(month).padStart(2, '0')}-28`,
+            description: `Depreciación mensual ${month}/${year} (${records.length} activos)`,
+            type: 'fixed-assets',
+            reference: `DEP-${year}-${String(month).padStart(2, '0')}`,
+            createdBy: 'Sistema',
+            lines: [
+              {
+                accountCode: '840', // Gasto de Depreciación
+                debit: totalDepreciation,
+                credit: 0,
+                description: `Depreciación ${month}/${year}`,
+              },
+              {
+                accountCode: '375', // Depreciación Acumulada AFT
+                debit: 0,
+                credit: totalDepreciation,
+                description: `Dep. acumulada ${month}/${year}`,
+              },
+            ],
+          },
+        );
+        this.logger.log(`Comprobante depreciación ${month}/${year} generado`);
+      } catch (error) {
+        this.logger.error(`Error contabilización depreciación: ${error.message}`);
+      }
+    }
 
     // Update asset current values
     for (const record of records) {
