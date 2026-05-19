@@ -68,6 +68,9 @@ export class InventoryWarehouse {
   @Column({ type: 'varchar', length: 255, nullable: true })
   location: string | null;
 
+  @Column({ name: 'expiration_date', type: 'date', nullable: true })
+  expirationDate: string | null;
+
   @Column({ type: 'boolean', default: true })
   isActive: boolean;
 

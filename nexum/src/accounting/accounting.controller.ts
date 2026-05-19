@@ -408,14 +408,9 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('asOfDate') asOfDate?: string,
   ) {
-    console.log('🔍 PDF 5920 - Endpoint called!');
-    console.log('🔍 PDF 5920 - asOfDate:', asOfDate);
     const companyId = getCompanyId(req);
-    console.log('🔍 PDF 5920 - companyId:', companyId);
     const data = await this.reportService.getEfe5920Data(companyId, asOfDate);
-    console.log('🔍 PDF 5920 - Data retrieved:', !!data);
     const pdf = await this.pdfService.generateEfe5920Pdf(data);
-    console.log('🔍 PDF 5920 - PDF generated, size:', pdf.length);
 
     res.set({
       'Content-Type': 'application/pdf',

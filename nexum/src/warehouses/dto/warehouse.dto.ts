@@ -12,6 +12,14 @@ export class CreateWarehouseDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
+  custodianId?: string;
+
+  @IsOptional()
+  @IsString()
+  custodianName?: string;
 }
 
 export class UpdateWarehouseDto {
@@ -30,4 +38,12 @@ export class UpdateWarehouseDto {
   @IsOptional()
   @IsBoolean({ message: 'isActive debe ser booleano' })
   isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  custodianId?: string;
+
+  @IsOptional()
+  @IsString()
+  custodianName?: string;
 }

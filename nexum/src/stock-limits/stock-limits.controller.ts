@@ -71,6 +71,16 @@ export class StockLimitsController {
     return this.stockLimitsService.bulkCreate(body);
   }
 
+  @Post('sync')
+  async syncStock(
+    @Query('companyId') companyId?: string,
+    @Query('warehouseId') warehouseId?: string,
+  ) {
+    const cid = companyId ? Number(companyId) : 1;
+    const updated = await this.stockLimitsService.syncCurrentStock(cid, warehouseId);
+    return { message: `Stock sincronizado: ${updated} registros actualizados`, updated };
+  }
+
   @Put(':id')
   update(@Param('id') id: string, @Body() body: UpdateStockLimitDto) {
     return this.stockLimitsService.update(id, body);

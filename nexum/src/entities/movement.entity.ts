@@ -4,11 +4,15 @@ import {
   Column,
   CreateDateColumn,
   ManyToOne,
+  OneToMany,
   JoinColumn,
   Index,
 } from 'typeorm';
 import { Company } from './company.entity';
 import { Voucher } from './voucher.entity';
+import { MovementItem } from './movement-item.entity';
+import { CostCenter } from './cost-center.entity';
+import { Subelement } from './subelement.entity';
 
 export type MovementType = 'entry' | 'exit' | 'return' | 'transfer';
 export type InventoryCategory = 'insumo' | 'mercancia' | 'produccion';
@@ -48,10 +52,11 @@ export class Movement {
   @Column({ type: 'varchar', length: 20, nullable: true })
   category: InventoryCategory | null;
 
-  @Column({ name: 'product_code', length: 50 })
-  productCode: string;
+  // Legacy: para movimientos de un solo producto o resumen
+  @Column({ name: 'product_code', length: 50, nullable: true })
+  productCode: string | null;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'int', default: 0 })
   quantity: number;
 
   @Column({
@@ -72,6 +77,12 @@ export class Movement {
   })
   totalAmount: number;
 
+  @Column({ name: 'item_count', type: 'int', default: 1 })
+  itemCount: number;
+
+  @OneToMany(() => MovementItem, (item) => item.movement, { cascade: true, eager: false })
+  items: MovementItem[];
+
   @Column({ type: 'text', nullable: true })
   reason: string | null;
 
@@ -89,6 +100,29 @@ export class Movement {
 
   @Column({ name: 'purchase_id', type: 'varchar', nullable: true })
   purchaseId: string | null;
+
+  @Column({ name: 'related_movement_id', type: 'uuid', nullable: true })
+  relatedMovementId: string | null;
+
+  @Column({ name: 'expense_element', type: 'varchar', length: 100, nullable: true })
+  expenseElement: string | null;
+
+  @Column({ name: 'entity_name', type: 'varchar', length: 255, nullable: true })
+  entityName: string | null;
+
+  @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
+  costCenterId: string | null;
+
+  @ManyToOne(() => CostCenter, { nullable: true })
+  @JoinColumn({ name: 'cost_center_id' })
+  costCenter: CostCenter;
+
+  @Column({ name: 'subelement_id', type: 'uuid', nullable: true })
+  subelementId: string | null;
+
+  @ManyToOne(() => Subelement, { nullable: true })
+  @JoinColumn({ name: 'subelement_id' })
+  subelement: Subelement;
 
   @Column({ name: 'voucher_id', type: 'uuid', nullable: true })
   voucherId: string | null;

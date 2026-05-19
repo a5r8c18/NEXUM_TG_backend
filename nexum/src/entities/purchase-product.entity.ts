@@ -36,4 +36,10 @@ export class PurchaseProduct {
 
   @Column({ name: 'product_unit', length: 20, default: 'und' })
   productUnit: string;
+
+  @Column({ name: 'expiration_date', type: 'date', nullable: true })
+  expirationDate: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  category: string | null;
 }

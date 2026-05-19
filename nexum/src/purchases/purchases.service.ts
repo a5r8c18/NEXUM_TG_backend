@@ -1,7 +1,8 @@
 import { Injectable, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { InventoryService } from '../inventory/inventory.service';
+import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
+import { ProductsService } from '../products/products.service';
 import { VoucherService } from '../accounting/voucher.service';
 import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
@@ -14,7 +15,8 @@ export class PurchasesService {
   private readonly logger = new Logger(PurchasesService.name);
 
   constructor(
-    private readonly inventoryService: InventoryService,
+    private readonly inventoryWarehouseService: InventoryWarehouseService,
+    private readonly productsService: ProductsService,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
     @InjectRepository(Purchase)
@@ -85,14 +87,22 @@ export class PurchasesService {
     const productsJson: any[] = [];
 
     for (const p of data.products) {
-      await this.inventoryService.ensureProduct(companyId, {
+      // Asegurar producto en catálogo central
+      const product = await this.productsService.ensureProduct(companyId, {
         productCode: p.product_code,
         productName: p.product_name,
         productUnit: p.unit,
-        unitPrice: p.unit_price,
-        warehouse: data.warehouse,
-        entity: data.entity,
+        category: (p as any).category || 'mercancia',
+        defaultUnitPrice: p.unit_price,
       });
+
+      // Determinar código de movimiento según categoría del producto
+      let movCode = '202'; // Default: Compra mercancía (EMP)
+      if (product.category === 'insumo') {
+        movCode = '102'; // Compras a proveedores (EMP) - Insumo
+      } else if (product.category === 'produccion') {
+        movCode = '402'; // Compras a proveedores (Presup.) - Producción
+      }
 
       const totalPrice = p.amount ?? p.quantity * p.unit_price;
       const pp = await this.ppRepo.save(
@@ -104,27 +114,44 @@ export class PurchasesService {
           unitPrice: p.unit_price,
           totalPrice,
           productUnit: p.unit || 'und',
+          expirationDate: p.expiration_date || null,
+          category: product.category,
         }),
       );
       products.push(pp);
 
-      await this.inventoryService.updateStock(
+      // Asegurar producto en inventario del almacén y actualizar stock
+      await this.inventoryWarehouseService.ensureProduct(companyId, {
+        productCode: p.product_code,
+        productName: p.product_name,
+        productUnit: p.unit,
+        unitPrice: p.unit_price,
+        warehouseId: data.warehouse,
+        entity: data.entity,
+      });
+
+      await this.inventoryWarehouseService.updateStock(
         companyId,
         p.product_code,
+        data.warehouse,
         p.quantity,
         'entry',
+        p.unit_price, // Nuevo precio para cálculo de costo promedio
       );
 
-      // Código de movimiento: 102 (Insumo) o 202 (Mercancía) según categoría
-      const movCode = '202'; // Default: Compra mercancía (EMP)
+      // Crear movimiento con código dinámico
       const movType = getMovementType(movCode);
+      if (!movType) {
+        throw new BadRequestException(`Código de movimiento inválido: ${movCode}`);
+      }
+
       await this.movementRepo.save(
         this.movementRepo.create({
           companyId,
           movementType: 'entry',
           movementCode: movCode,
-          movementDescription: movType?.description || 'Compras a proveedores (EMP)',
-          category: 'mercancia',
+          movementDescription: movType?.description || 'Compras a proveedores',
+          category: product.category,
           productCode: p.product_code,
           quantity: p.quantity,
           unitPrice: p.unit_price,
@@ -145,20 +172,26 @@ export class PurchasesService {
       });
     }
 
+    const totalAmount = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
+
     await this.rrRepo.save(
       this.rrRepo.create({
+        reportNumber: `RP-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`,
+        reportDate: new Date().toISOString().split('T')[0],
         purchaseId: purchase.id,
-        companyId,
-        details: JSON.stringify({
+        supplierName: data.supplier,
+        warehouseId: data.warehouse,
+        receivedBy: userName || 'System',
+        notes: JSON.stringify({
           entity: data.entity,
           warehouse: data.warehouse,
           supplier: data.supplier,
           document: data.document,
-          documentType: 'Factura',
-          complies: true,
           products: productsJson,
         }),
-        createdByName: userName || 'System',
+        totalItems: products.length,
+        totalAmount,
+        companyId,
       }),
     );
 

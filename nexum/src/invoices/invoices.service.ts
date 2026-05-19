@@ -8,7 +8,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { InventoryService } from '../inventory/inventory.service';
+import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
+import { ProductsService } from '../products/products.service';
 import { VoucherService } from '../accounting/voucher.service';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
@@ -18,13 +19,15 @@ import {
   PaginationDto,
   PaginationResult,
 } from '../common/pagination/pagination.dto';
+import { getMovementType } from '../movements/movement-types.catalog';
 
 @Injectable()
 export class InvoicesService {
   private readonly logger = new Logger(InvoicesService.name);
 
   constructor(
-    private readonly inventoryService: InventoryService,
+    private readonly inventoryWarehouseService: InventoryWarehouseService,
+    private readonly productsService: ProductsService,
     private readonly paginationService: PaginationService,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
@@ -112,10 +115,12 @@ export class InvoicesService {
 
     for (const item of data.items) {
       if (item.productCode) {
-        const inv = await this.inventoryService.findByCode(
+        const inventories = await this.inventoryWarehouseService.findByCode(
           companyId,
           item.productCode,
         );
+        // Usar el primer almacén encontrado (o implementar lógica de selección)
+        const inv = inventories[0];
         if (inv && inv.stock < item.quantity) {
           throw new BadRequestException(
             `Stock insuficiente para ${item.description}. Disponible: ${inv.stock}, Requerido: ${item.quantity}`,
@@ -172,23 +177,48 @@ export class InvoicesService {
 
       if (item.productCode) {
         try {
-          await this.inventoryService.updateStock(
+          // Obtener producto para determinar categoría y código de movimiento
+          const product = await this.productsService.findByCode(companyId, item.productCode);
+          const inventories = await this.inventoryWarehouseService.findByCode(companyId, item.productCode);
+          const inventory = inventories[0]; // Primer almacén
+          
+          // Determinar código de movimiento según categoría
+          let movCode = '2100'; // Default: Ventas a Clientes - Mercancía
+          if (product?.category === 'insumo') {
+            movCode = '1101'; // Venta a trabajadores - Insumo (usar para ventas también)
+          } else if (product?.category === 'produccion') {
+            movCode = '3100'; // Ventas a Clientes - Producción
+          }
+
+          // Actualizar stock
+          await this.inventoryWarehouseService.updateStock(
             companyId,
             item.productCode,
+            inventory.warehouseId,
             item.quantity,
             'exit',
           );
+
+          // Crear movimiento con código cubano
+          const movType = getMovementType(movCode);
           await this.movementRepo.save(
             this.movementRepo.create({
               companyId,
               movementType: 'exit',
+              movementCode: movCode,
+              movementDescription: movType?.description || 'Ventas a Clientes',
+              category: product?.category || 'mercancia',
               productCode: item.productCode,
               quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              totalAmount: item.quantity * item.unitPrice,
               reason: `Factura ${invoice.invoiceNumber}`,
+              sourceWarehouse: inventory.warehouseId,
               userName: data.createdByName || 'System',
             }),
           );
-        } catch {
+        } catch (error) {
+          this.logger.error(`Error creando movimiento para factura ${invoice.invoiceNumber}: ${error.message}`);
           // stock already validated above
         }
       }
@@ -196,10 +226,11 @@ export class InvoicesService {
 
     invoice.items = items;
 
-    // ── Contabilización automática de factura (venta) ──
+    // ── Contabilización automática de factura (venta + costo de ventas) ──
     const invoiceTotal = Number(invoice.total || 0);
     if (invoiceTotal > 0) {
       try {
+        // 1. Contabilizar venta (ingreso)
         await this.voucherService.createVoucherFromModule(
           companyId,
           'invoices',
@@ -226,6 +257,52 @@ export class InvoicesService {
             ],
           },
         );
+
+        // 2. Contabilizar costo de ventas (solo para productos con inventario)
+        let costOfSales = 0;
+        const costLines: any[] = [];
+
+        for (const item of invoice.items) {
+          if (item.productCode) {
+            const inventories = await this.inventoryWarehouseService.findByCode(companyId, item.productCode);
+            const inventory = inventories[0];
+            if (inventory) {
+              const itemCost = item.quantity * inventory.unitPrice;
+              costOfSales += itemCost;
+              
+              costLines.push({
+                accountCode: '810', // Costo de Ventas
+                debit: itemCost,
+                credit: 0,
+                description: `Costo venta ${item.productCode}`,
+              });
+              
+              costLines.push({
+                accountCode: '189', // Mercancías para la Venta (o 183/188 según categoría)
+                debit: 0,
+                credit: itemCost,
+                description: `Salida inventario ${item.productCode}`,
+              });
+            }
+          }
+        }
+
+        // Generar comprobante de costo de ventas si hay productos de inventario
+        if (costOfSales > 0) {
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'invoices',
+            `${invoice.id}-cost`,
+            {
+              date: invoice.date || new Date().toISOString().split('T')[0],
+              description: `Costo de ventas - Factura ${invoice.invoiceNumber}`,
+              type: 'cost_of_sales',
+              reference: `COST-FAC-${invoice.invoiceNumber}`,
+              createdBy: data.createdByName || 'Sistema',
+              lines: costLines,
+            },
+          );
+        }
       } catch (error) {
         this.logger.error(`Error contabilización factura ${invoice.id}: ${error.message}`);
       }
@@ -267,12 +344,18 @@ export class InvoicesService {
       for (const item of invoice.items) {
         if (item.productCode) {
           try {
-            await this.inventoryService.updateStock(
-              companyId,
-              item.productCode,
-              item.quantity,
-              'entry',
-            );
+            // Need to get warehouseId for stock reversal - using first available warehouse
+            const inventories = await this.inventoryWarehouseService.findByCode(companyId, item.productCode);
+            const warehouseId = inventories[0]?.warehouseId;
+            if (warehouseId) {
+              await this.inventoryWarehouseService.updateStock(
+                companyId,
+                item.productCode,
+                warehouseId,
+                item.quantity,
+                'entry',
+              );
+            }
             await this.movementRepo.save(
               this.movementRepo.create({
                 companyId,

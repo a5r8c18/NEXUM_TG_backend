@@ -1,14 +1,7 @@
-import { IsNotEmpty, IsString, IsNumber, IsOptional, IsPositive } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsOptional, IsPositive, ValidateNested, IsArray, ArrayMinSize } from 'class-validator';
+import { Type } from 'class-transformer';
 
-export class CreateDirectEntryDto {
-  @IsString({ message: 'El código de movimiento debe ser texto' })
-  @IsNotEmpty({ message: 'El código de movimiento es obligatorio' })
-  movementCode: string;
-
-  @IsOptional()
-  @IsString()
-  category?: 'insumo' | 'mercancia' | 'produccion';
-
+export class EntryItemDto {
   @IsString({ message: 'El código de producto debe ser texto' })
   @IsNotEmpty({ message: 'El código de producto es obligatorio' })
   productCode: string;
@@ -26,6 +19,32 @@ export class CreateDirectEntryDto {
   quantity: number;
 
   @IsOptional()
+  @IsNumber({}, { message: 'El precio unitario debe ser un número' })
+  unitPrice?: number;
+
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
+  @IsString()
+  expenseElement?: string;
+}
+
+export class CreateDirectEntryDto {
+  @IsString({ message: 'El código de movimiento debe ser texto' })
+  @IsNotEmpty({ message: 'El código de movimiento es obligatorio' })
+  movementCode: string;
+
+  @IsOptional()
+  @IsString()
+  category?: 'insumo' | 'mercancia' | 'produccion';
+
+  @IsOptional()
   @IsString()
   label?: string;
 
@@ -37,9 +56,31 @@ export class CreateDirectEntryDto {
   @IsNotEmpty({ message: 'El almacén es obligatorio' })
   warehouseId: string;
 
+  @IsArray({ message: 'Los productos deben ser un arreglo' })
+  @ArrayMinSize(1, { message: 'Debe incluir al menos un producto' })
+  @ValidateNested({ each: true })
+  @Type(() => EntryItemDto)
+  items: EntryItemDto[];
+
+  // ── Backward compatibility (single product) ──
   @IsOptional()
-  @IsNumber({}, { message: 'El precio unitario debe ser un número' })
-  @IsPositive({ message: 'El precio unitario debe ser mayor que 0' })
+  @IsString()
+  productCode?: string;
+
+  @IsOptional()
+  @IsString()
+  productName?: string;
+
+  @IsOptional()
+  @IsString()
+  productDescription?: string;
+
+  @IsOptional()
+  @IsNumber()
+  quantity?: number;
+
+  @IsOptional()
+  @IsNumber()
   unitPrice?: number;
 
   @IsOptional()
@@ -49,4 +90,8 @@ export class CreateDirectEntryDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @IsString()
+  expenseElement?: string;
 }

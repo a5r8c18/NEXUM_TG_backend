@@ -23,9 +23,14 @@ import { AccountingModule } from './accounting/accounting.module';
 import { HrModule } from './hr/hr.module';
 import { MessagesModule } from './messages/messages.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { ProductsModule } from './products/products.module';
+import { PhysicalCountModule } from './physical-count/physical-count.module';
 import { LoggerModule } from './logger/logger.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { RedisCacheModule } from './cache';
+import { FinanceModule } from './finance/finance.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -59,6 +64,23 @@ import { Subscription } from './entities/subscription.entity';
 import { Subelement } from './entities/subelement.entity';
 import { GeneratedReport } from './entities/generated-report.entity';
 import { RefreshToken } from './auth/refresh-token.entity';
+import { Product } from './entities/product.entity';
+import { PhysicalCount } from './entities/physical-count.entity';
+import { PhysicalCountItem } from './entities/physical-count-item.entity';
+import { AccountReceivable } from './entities/account-receivable.entity';
+import { AccountPayable } from './entities/account-payable.entity';
+import { BankAccount } from './entities/bank-account.entity';
+import { BankTransaction } from './entities/bank-transaction.entity';
+import { Payment } from './entities/payment.entity';
+import { Supplier } from './entities/supplier.entity';
+import { PurchaseOrder } from './entities/purchase-order.entity';
+import { PurchaseOrderItem } from './entities/purchase-order-item.entity';
+import { BinCard } from './entities/bin-card.entity';
+import { BinCardMovement } from './entities/bin-card-movement.entity';
+import { MaterialRequest } from './entities/material-request.entity';
+import { MaterialRequestItem } from './entities/material-request-item.entity';
+import { WarehouseReturn } from './entities/warehouse-return.entity';
+import { WarehouseReturnItem } from './entities/warehouse-return-item.entity';
 
 @Module({
   imports: [
@@ -106,6 +128,23 @@ import { RefreshToken } from './auth/refresh-token.entity';
           Subelement,
           GeneratedReport,
           RefreshToken,
+          Product,
+          PhysicalCount,
+          PhysicalCountItem,
+          AccountReceivable,
+          AccountPayable,
+          BankAccount,
+          BankTransaction,
+          Payment,
+          Supplier,
+          PurchaseOrder,
+          PurchaseOrderItem,
+          BinCard,
+          BinCardMovement,
+          MaterialRequest,
+          MaterialRequestItem,
+          WarehouseReturn,
+          WarehouseReturnItem,
         ],
         synchronize:
           configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
@@ -137,6 +176,11 @@ import { RefreshToken } from './auth/refresh-token.entity';
     HrModule,
     MessagesModule,
     SubscriptionsModule,
+    ProductsModule,
+    PhysicalCountModule,
+    FinanceModule,
+    SuppliersModule,
+    PurchaseOrdersModule,
     LoggerModule,
     RedisCacheModule,
     ThrottlerModule.forRoot([

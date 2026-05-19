@@ -132,16 +132,18 @@ export class ReportService {
 
     const results = await trialBalanceQuery.getRawMany();
 
-    return results.map((row: any) => ({
-      accountCode: row.accountCode,
-      accountName: row.accountName,
-      nature: row.nature || 'deudora',
-      accountType: row.accountType || '',
-      openingBalance: Number(row.openingBalance || 0),
-      periodDebit: Number(row.periodDebit || 0),
-      periodCredit: Number(row.periodCredit || 0),
-      closingBalance: Number(row.closingBalance || 0),
-    }));
+    return results
+      .map((row: any) => ({
+        accountCode: row.accountCode,
+        accountName: row.accountName,
+        nature: row.nature || 'deudora',
+        accountType: row.accountType || '',
+        openingBalance: Number(row.openingBalance || 0),
+        periodDebit: Number(row.periodDebit || 0),
+        periodCredit: Number(row.periodCredit || 0),
+        closingBalance: Number(row.closingBalance || 0),
+      }))
+      .filter((row) => row.closingBalance !== 0 || row.periodDebit !== 0 || row.periodCredit !== 0);
   }
 
   async exportTrialBalanceExcel(
@@ -262,9 +264,10 @@ export class ReportService {
 
     const results = await qb.getRawMany();
 
-    const assets = results.filter((r) => r.accountType === 'asset');
-    const liabilities = results.filter((r) => r.accountType === 'liability');
-    const equity = results.filter((r) => r.accountType === 'equity');
+    const nonZero = results.filter((r) => Number(r.balance || 0) !== 0);
+    const assets = nonZero.filter((r) => r.accountType === 'asset');
+    const liabilities = nonZero.filter((r) => r.accountType === 'liability');
+    const equity = nonZero.filter((r) => r.accountType === 'equity');
 
     const totalAssets = assets.reduce(
       (sum, a) => sum + Number(a.balance || 0),
@@ -426,8 +429,8 @@ export class ReportService {
 
     const results = await qb.getRawMany();
 
-    const income = results.filter((r) => r.accountType === 'income');
-    const expenses = results.filter((r) => r.accountType === 'expense');
+    const income = results.filter((r) => r.accountType === 'income' && Number(r.totalCredit || 0) !== 0);
+    const expenses = results.filter((r) => r.accountType === 'expense' && Number(r.totalDebit || 0) !== 0);
 
     const totalIncome = income.reduce(
       (sum, i) => sum + Number(i.totalCredit || 0),
@@ -1639,7 +1642,7 @@ export class ReportService {
   private formatCurrency(value: number): string {
     return new Intl.NumberFormat('es-ES', {
       style: 'currency',
-      currency: 'USD',
+      currency: 'CUP',
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(value);

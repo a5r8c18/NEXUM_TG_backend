@@ -7,10 +7,10 @@ export { InventoryWarehouse } from './inventory-warehouse.entity';
 export { Purchase } from './purchase.entity';
 export { PurchaseProduct } from './purchase-product.entity';
 export { Movement } from './movement.entity';
+export { MovementItem } from './movement-item.entity';
 export { Invoice } from './invoice.entity';
 export { InvoiceItem } from './invoice-item.entity';
 export { FixedAsset } from './fixed-asset.entity';
-export { ReceptionReport } from './reception-report.entity';
 export { DeliveryReport } from './delivery-report.entity';
 export { StockLimit } from './stock-limit.entity';
 export { RegistrationRequest } from './registration-request.entity';
@@ -35,3 +35,28 @@ export {
 } from './subscription.entity';
 export { Subelement, SubelementCategory } from './subelement.entity';
 export { Subaccount } from './subaccount.entity';
+export { Product, ProductCategory } from './product.entity';
+export { PhysicalCount, PhysicalCountStatus } from './physical-count.entity';
+export { PhysicalCountItem } from './physical-count-item.entity';
+
+// Modelos Oficiales Cubanos
+export { BinCard } from './bin-card.entity';
+export { BinCardMovement } from './bin-card-movement.entity';
+export { ReceptionReport } from './reception-report.entity';
+export { ReceptionReportItem } from './reception-report-item.entity';
+export { MaterialRequest } from './material-request.entity';
+export { MaterialRequestItem } from './material-request-item.entity';
+export { WarehouseReturn } from './warehouse-return.entity';
+export { WarehouseReturnItem } from './warehouse-return-item.entity';
+
+// Entidades de Compras y Proveedores
+export { Supplier } from './supplier.entity';
+export { PurchaseOrder } from './purchase-order.entity';
+export { PurchaseOrderItem } from './purchase-order-item.entity';
+
+// Entidades de Finanzas
+export { AccountReceivable } from './account-receivable.entity';
+export { AccountPayable } from './account-payable.entity';
+export { Payment } from './payment.entity';
+export { BankAccount } from './bank-account.entity';
+export { BankTransaction } from './bank-transaction.entity';

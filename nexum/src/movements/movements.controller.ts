@@ -25,6 +25,8 @@ export class MovementsController {
     @Query('relations') relations?: string,
     @Query('warehouse') warehouse?: string,
     @Query('movement_type') movement_type?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.movementsService.findAll(companyId, {
@@ -34,6 +36,8 @@ export class MovementsController {
       relations,
       warehouse,
       movement_type: movement_type as any,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
     });
   }
 

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { InventoryWarehouse } from '../entities/inventory-warehouse.entity';
 import { WarehousesService } from '../warehouses/warehouses.service';
 
@@ -51,6 +51,29 @@ export class InventoryWarehouseService {
       where: { companyId, productCode, isActive: true },
       order: { warehouseName: 'ASC' },
     });
+  }
+
+  // Batch: obtener inventario para múltiples códigos de producto en una sola query
+  async findByCodes(
+    companyId: number,
+    productCodes: string[],
+  ): Promise<Map<string, InventoryWarehouse[]>> {
+    if (!productCodes.length) return new Map();
+
+    const unique = [...new Set(productCodes)];
+    const rows = await this.inventoryWarehouseRepo.find({
+      where: { companyId, productCode: In(unique), isActive: true },
+      order: { warehouseName: 'ASC' },
+    });
+
+    const map = new Map<string, InventoryWarehouse[]>();
+    for (const code of unique) {
+      map.set(code, []);
+    }
+    for (const row of rows) {
+      map.get(row.productCode)!.push(row);
+    }
+    return map;
   }
 
   // Asegurar que exista un registro de inventario
@@ -106,13 +129,14 @@ export class InventoryWarehouseService {
     return inventory;
   }
 
-  // Actualizar stock en un almacén específico
+  // Actualizar stock en un almacén específico con Costo Promedio Ponderado
   async updateStock(
     companyId: number,
     productCode: string,
     warehouseId: string,
     quantityChange: number,
     type: 'entry' | 'exit',
+    newUnitPrice?: number, // Para entradas con nuevo precio
   ): Promise<InventoryWarehouse> {
     const inventory = await this.findByCompanyProductAndWarehouse(
       companyId,
@@ -127,6 +151,22 @@ export class InventoryWarehouseService {
     }
 
     if (type === 'entry') {
+      // Costo Promedio Ponderado (NCC Res. 235-2005 MFP)
+      // IMPORTANTE: calcular ANTES de modificar el stock
+      if (newUnitPrice && newUnitPrice > 0) {
+        const previousStock = inventory.stock;
+        const previousTotalValue = previousStock * inventory.unitPrice;
+        const newTotalValue = quantityChange * newUnitPrice;
+        const newStock = previousStock + quantityChange;
+        
+        // Fórmula: (stockAnterior × precioAnterior + cantidadNueva × precioNuevo) / stockNuevo
+        if (newStock > 0) {
+          inventory.unitPrice = (previousTotalValue + newTotalValue) / newStock;
+          // Redondear a 2 decimales para precisión monetaria
+          inventory.unitPrice = Math.round(inventory.unitPrice * 100) / 100;
+        }
+      }
+
       inventory.entries += quantityChange;
       inventory.stock += quantityChange;
     } else {
@@ -138,6 +178,7 @@ export class InventoryWarehouseService {
       }
       inventory.exits += quantityChange;
       inventory.stock -= quantityChange;
+      // En salidas, el unitPrice no cambia (método PEPS implícito)
     }
 
     return this.inventoryWarehouseRepo.save(inventory);
@@ -173,7 +214,7 @@ export class InventoryWarehouseService {
       'exit',
     );
 
-    // Aumentar stock en almacén destino
+    // Aumentar stock en almacén destino (sin cambiar precio en transferencias)
     const destinationInventory = await this.updateStock(
       companyId,
       data.productCode,

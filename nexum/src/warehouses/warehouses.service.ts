@@ -25,13 +25,15 @@ export class WarehousesService {
 
   async create(
     companyId: number,
-    data: { name: string; code: string; address?: string },
+    data: { name: string; code: string; address?: string; custodianId?: string; custodianName?: string },
   ) {
     const warehouse = this.warehouseRepo.create({
       companyId,
       name: data.name,
       code: data.code,
       address: data.address || '',
+      custodianId: data.custodianId || null,
+      custodianName: data.custodianName || null,
       isActive: true,
     });
     return this.warehouseRepo.save(warehouse);
@@ -45,6 +47,8 @@ export class WarehousesService {
       code?: string;
       address?: string;
       isActive?: boolean;
+      custodianId?: string;
+      custodianName?: string;
     },
   ) {
     const wh = await this.findOne(companyId, id);
@@ -52,6 +56,8 @@ export class WarehousesService {
     if (data.code !== undefined) wh.code = data.code;
     if (data.address !== undefined) wh.address = data.address;
     if (data.isActive !== undefined) wh.isActive = data.isActive;
+    if (data.custodianId !== undefined) wh.custodianId = data.custodianId;
+    if (data.custodianName !== undefined) wh.custodianName = data.custodianName;
     return this.warehouseRepo.save(wh);
   }
 

@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
 import { VoucherService } from '../accounting/voucher.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 import {
   mockDepreciationCatalog,
   getDepreciationRate,
@@ -17,6 +19,7 @@ export class FixedAssetsService {
     private readonly voucherService: VoucherService,
     @InjectRepository(FixedAsset)
     private readonly assetRepo: Repository<FixedAsset>,
+    private readonly auditService: AuditService,
   ) {}
 
   private catalog = mockDepreciationCatalog;
@@ -157,6 +160,133 @@ export class FixedAssetsService {
     if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
     await this.assetRepo.softRemove(asset);
     return { message: 'Activo fijo eliminado correctamente' };
+  }
+
+  // ── Baja de Activo Fijo (NCC Cuba - Res. 235-2005 MFP) ──
+  // Genera comprobante contable:
+  //   Débito  375 (Depreciación Acumulada AFT)     → por depreciación acumulada
+  //   Débito  845 (Faltantes y Pérdidas de AFT)    → por valor residual (pérdida)
+  //   Crédito 240 (Activos Fijos Tangibles)         → por valor de adquisición
+  async disposeAsset(
+    companyId: number,
+    id: number,
+    data: {
+      reason: string;
+      disposal_type: 'deterioro' | 'obsolescencia' | 'rotura' | 'faltante' | 'venta' | 'donacion';
+      disposal_date?: string;
+    },
+    userName?: string,
+  ) {
+    const asset = await this.assetRepo.findOneBy({ id, companyId });
+    if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
+    if (asset.status === 'disposed') {
+      throw new BadRequestException(`El activo ${asset.assetCode} ya fue dado de baja`);
+    }
+
+    const disposalDate = data.disposal_date || new Date().toISOString().split('T')[0];
+    const acquisitionValue = Number(asset.acquisitionValue);
+    const currentValue = Number(asset.currentValue);
+    const accumulatedDepreciation = acquisitionValue - currentValue;
+    const residualLoss = currentValue; // Valor no depreciado = pérdida
+
+    const oldStatus = asset.status;
+    asset.status = 'disposed';
+    asset.currentValue = 0;
+    await this.assetRepo.save(asset);
+
+    // ── Comprobante contable de baja ──
+    if (acquisitionValue > 0) {
+      try {
+        const lines: Array<{
+          accountCode: string;
+          debit: number;
+          credit: number;
+          description: string;
+        }> = [];
+
+        // Débito: Depreciación Acumulada (375) por lo ya depreciado
+        if (accumulatedDepreciation > 0) {
+          lines.push({
+            accountCode: '375',
+            debit: accumulatedDepreciation,
+            credit: 0,
+            description: `Dep. acumulada baja AFT ${asset.assetCode}`,
+          });
+        }
+
+        // Débito: Faltantes y Pérdidas (845) por valor residual
+        if (residualLoss > 0) {
+          const lossAccount = data.disposal_type === 'venta' ? '350' : '845';
+          lines.push({
+            accountCode: lossAccount,
+            debit: residualLoss,
+            credit: 0,
+            description: `${data.disposal_type === 'venta' ? 'Venta' : 'Pérdida'} AFT ${asset.assetCode} - ${data.reason}`,
+          });
+        }
+
+        // Crédito: Activos Fijos Tangibles (240) por valor total de adquisición
+        lines.push({
+          accountCode: '240',
+          debit: 0,
+          credit: acquisitionValue,
+          description: `Baja AFT ${asset.assetCode}: ${asset.name}`,
+        });
+
+        await this.voucherService.createVoucherFromModule(
+          companyId,
+          'fixed-assets',
+          String(asset.id),
+          {
+            date: disposalDate,
+            description: `Baja de AFT: ${asset.name} (${asset.assetCode}) - ${data.disposal_type}: ${data.reason}`,
+            type: 'fixed-assets',
+            reference: `BAJA-${asset.assetCode}`,
+            createdBy: userName || 'Sistema',
+            lines,
+          },
+        );
+        this.logger.log(`Comprobante de baja AFT ${asset.assetCode} generado`);
+      } catch (error) {
+        this.logger.error(`Error contabilización baja AFT ${asset.id}: ${error.message}`);
+      }
+    }
+
+    // ── Auditoría de la baja ──
+    await this.auditService.log({
+      companyId,
+      userName: userName || 'System',
+      action: AuditAction.DELETE,
+      resource: AuditResource.FIXED_ASSET,
+      resourceId: String(asset.id),
+      resourceName: `Baja AFT: ${asset.assetCode} - ${asset.name}`,
+      oldValues: {
+        status: oldStatus,
+        currentValue: currentValue,
+        acquisitionValue: acquisitionValue,
+      },
+      newValues: {
+        status: 'disposed',
+        currentValue: 0,
+        disposalType: data.disposal_type,
+        disposalDate,
+        reason: data.reason,
+        accumulatedDepreciation,
+        residualLoss,
+      },
+      success: true,
+    });
+
+    return {
+      asset,
+      accounting: {
+        accumulatedDepreciation,
+        residualLoss,
+        acquisitionValue,
+        disposalType: data.disposal_type,
+        disposalDate,
+      },
+    };
   }
 
   getDepreciationCatalog() {

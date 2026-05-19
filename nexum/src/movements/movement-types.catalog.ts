@@ -334,6 +334,32 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
 }
 
 /**
+ * Mapeo de códigos de transferencia: salida → entrada correspondiente.
+ * Cada transferencia entre almacenes genera 2 movimientos:
+ *   - Salida del almacén origen (código de salida)
+ *   - Entrada al almacén destino (código de entrada)
+ */
+const TRANSFER_EXIT_TO_ENTRY: Record<string, string> = {
+  '1102': '103',   // Insumo: Transferencia enviada → Transferencia recibida
+  '2102': '203',   // Mercancía: Transferencia enviada → Transferencia recibida
+  '3102': '308',   // Producción: Transferencia enviada → Entrada de centro de costo (no hay código de transferencia recibida para producción)
+};
+
+/**
+ * Dado un código de salida de transferencia, retorna el código de entrada correspondiente.
+ */
+export function getTransferEntryCode(exitCode: string): string | null {
+  return TRANSFER_EXIT_TO_ENTRY[exitCode] || null;
+}
+
+/**
+ * Verifica si un código corresponde a una transferencia enviada.
+ */
+export function isTransferExitCode(code: string): boolean {
+  return ['1102', '2102', '3102'].includes(code);
+}
+
+/**
  * Devuelve la cuenta contable de inventario según la categoría.
  * Nomenclador cubano 2016:
  *   183 = Materias Primas y Materiales (Insumo)

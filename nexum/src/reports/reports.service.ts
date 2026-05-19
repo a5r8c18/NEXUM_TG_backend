@@ -39,22 +39,29 @@ export class ReportsService {
     });
 
     let result = reports.map((r) => {
-      const details = JSON.parse(r.details);
+      const details = JSON.parse(r.notes || '{}');
       const createdAtStr =
         r.createdAt instanceof Date
           ? r.createdAt.toISOString()
           : String(r.createdAt);
       return {
         id: r.id,
+        reportNumber: r.reportNumber,
+        reportDate: r.reportDate,
         purchaseId: r.purchaseId,
+        supplierName: r.supplierName,
+        warehouseId: r.warehouseId,
+        receivedBy: r.receivedBy,
         entity: details.entity,
         warehouse: details.warehouse,
         supplier: details.supplier,
         document: details.document,
         products: details.products,
+        totalItems: r.totalItems,
+        totalAmount: r.totalAmount,
+        status: r.status,
         date: createdAtStr.split('T')[0],
         createdAt: createdAtStr,
-        createdByName: r.createdByName,
       };
     });
 

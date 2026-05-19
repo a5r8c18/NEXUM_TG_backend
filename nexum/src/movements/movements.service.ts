@@ -1,16 +1,23 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { VoucherService } from '../accounting/voucher.service';
 import { Movement, MovementType } from '../entities/movement.entity';
+import { MovementItem } from '../entities/movement-item.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import {
   getMovementType,
   getAccountingEntryForMovement,
+  getTransferEntryCode,
+  isTransferExitCode,
   MovementTypeDefinition,
 } from './movement-types.catalog';
+import { StockLimitsService, StockWarning } from '../stock-limits/stock-limits.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction, AuditResource } from '../entities/audit-log.entity';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 @Injectable()
 export class MovementsService {
@@ -24,7 +31,79 @@ export class MovementsService {
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(DeliveryReport)
     private readonly drRepo: Repository<DeliveryReport>,
+    private readonly dataSource: DataSource,
+    private readonly stockLimitsService: StockLimitsService,
+    private readonly auditService: AuditService,
+    private readonly notificationsGateway: NotificationsGateway,
   ) {}
+
+  // ── Post-movimiento: verificar stock limits + notificar + auditar ──
+  private async postMovementHook(
+    companyId: number,
+    movementId: string,
+    productCode: string,
+    warehouseId: string,
+    movementType: string,
+    quantity: number,
+    userName?: string,
+  ): Promise<void> {
+    try {
+      // 1. Verificar stock limits y sincronizar
+      const warning = await this.stockLimitsService.checkAfterMovement(
+        companyId,
+        productCode,
+        warehouseId,
+      );
+
+      // 2. Emitir notificación WebSocket si hay alerta
+      if (warning && (warning.urgency === 'critical' || warning.urgency === 'high')) {
+        this.notificationsGateway.emitStockAlert({
+          productName: warning.productName,
+          currentStock: warning.currentStock,
+          minStock: warning.minStock,
+          companyId,
+          tenantId: String(companyId),
+        });
+
+        this.notificationsGateway.broadcastNotification({
+          id: movementId,
+          title: warning.status === 'out_of_stock' ? 'Producto Agotado' : 'Stock Bajo',
+          message: warning.message,
+          type: warning.urgency === 'critical' ? 'error' : 'warning',
+          timestamp: new Date().toISOString(),
+          targetTenantId: String(companyId),
+        });
+
+        this.logger.warn(`Alerta stock: ${warning.message}`);
+      }
+
+      // 3. Registrar auditoría del movimiento
+      const actionMap: Record<string, AuditAction> = {
+        entry: AuditAction.ENTRY,
+        exit: AuditAction.EXIT,
+        transfer: AuditAction.TRANSFER,
+        return: AuditAction.RETURN,
+      };
+      await this.auditService.log({
+        companyId,
+        userName: userName || 'System',
+        action: actionMap[movementType] || AuditAction.CREATE,
+        resource: AuditResource.MOVEMENT,
+        resourceId: movementId,
+        resourceName: `${movementType.toUpperCase()} - ${productCode} x${quantity}`,
+        newValues: {
+          movementType,
+          productCode,
+          warehouseId,
+          quantity,
+          stockWarning: warning?.status || 'no_limit_configured',
+        },
+        success: true,
+      });
+    } catch (error) {
+      this.logger.error(`Error en post-movement hook: ${error.message}`);
+    }
+  }
 
   async findAll(
     companyId: number,
@@ -35,6 +114,8 @@ export class MovementsService {
       relations?: string;
       warehouse?: string;
       movement_type?: MovementType;
+      page?: number;
+      limit?: number;
     },
   ) {
     const qb = this.movementRepo
@@ -57,42 +138,73 @@ export class MovementsService {
     }
 
     qb.orderBy('m.createdAt', 'DESC');
-    const result = await qb.getMany();
 
+    // ── Server-side pagination ──
+    const isPaginated = filters?.page && filters?.limit;
+    const page = Math.max(filters?.page || 1, 1);
+    const limit = Math.min(Math.max(filters?.limit || 50, 1), 200);
+
+    if (isPaginated) {
+      qb.skip((page - 1) * limit).take(limit);
+    }
+
+    const [movements, totalItems] = isPaginated
+      ? await qb.getManyAndCount()
+      : [await qb.getMany(), 0];
+
+    // ── Batch: single query for all product codes ──
+    const productCodes = movements.map(m => m.productCode).filter((c): c is string => c !== null);
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
+
+    let enriched = movements.map(m => this.enrichMovementFromMap(m, inventoryMap));
+
+    // Filtrar por nombre de producto en memoria
     if (filters?.product_name) {
       const search = filters.product_name.toLowerCase();
-      const enriched: any[] = [];
-      for (const m of result) {
-        const inventories = await this.inventoryWarehouseService.findByCode(
-          companyId,
-          m.productCode,
-        );
-        if (inventories.some(inv => inv.productName.toLowerCase().includes(search))) {
-          enriched.push(await this.enrichMovement(companyId, m));
-        }
-      }
-      return enriched;
+      enriched = enriched.filter(e =>
+        e.product.productName.toLowerCase().includes(search) ||
+        e.product.productCode.toLowerCase().includes(search),
+      );
     }
 
-    const enrichedAll: any[] = [];
-    for (const m of result) {
-      enrichedAll.push(await this.enrichMovement(companyId, m));
+    // Retorno paginado o plano (backward compatible)
+    if (isPaginated) {
+      return {
+        data: enriched,
+        meta: {
+          currentPage: page,
+          itemsPerPage: limit,
+          totalItems,
+          totalPages: Math.ceil(totalItems / limit),
+        },
+      };
     }
-    return enrichedAll;
+
+    return enriched;
   }
 
-  private async enrichMovement(companyId: number, m: Movement) {
-    const inventories = await this.inventoryWarehouseService.findByCode(
-      companyId,
-      m.productCode,
-    );
-    
-    // Obtener el inventario del almacén relevante según el tipo de movimiento
+  // Enrich usando mapa pre-cargado (sin query adicional)
+  private enrichMovementFromMap(
+    m: Movement,
+    inventoryMap: Map<string, any[]>,
+  ) {
+    const inventories = (m.productCode ? inventoryMap.get(m.productCode) : undefined) || [];
+
     let relevantInventory = inventories[0];
-    if (m.movementType === 'transfer' && m.destinationWarehouse) {
+    
+    // Enhanced warehouse matching logic with fallback
+    if ((m.movementType === 'transfer' || m.movementType === 'entry' || m.movementType === 'return') && m.destinationWarehouse) {
       relevantInventory = inventories.find(inv => inv.warehouseId === m.destinationWarehouse) || inventories[0];
     } else if (m.sourceWarehouse) {
       relevantInventory = inventories.find(inv => inv.warehouseId === m.sourceWarehouse) || inventories[0];
+    }
+    
+    // Fallback: if no stock found, use inventory with highest stock
+    if (relevantInventory && relevantInventory.stock === 0 && inventories.length > 1) {
+      const bestStock = inventories.find(inv => inv.stock > 0);
+      if (bestStock) {
+        relevantInventory = bestStock;
+      }
     }
 
     return {
@@ -131,8 +243,17 @@ export class MovementsService {
       destinationWarehouse: m.destinationWarehouse,
       purchaseId: m.purchaseId || null,
       purchase: m.purchaseId ? { id: m.purchaseId } : null,
+      relatedMovementId: m.relatedMovementId || null,
+      expenseElement: m.expenseElement || null,
       voucherId: m.voucherId || null,
     };
+  }
+
+  // Enrich individual (para operaciones de escritura que retornan un solo movimiento)
+  private async enrichMovement(companyId: number, m: Movement) {
+    const codes = m.productCode ? [m.productCode] : [];
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, codes);
+    return this.enrichMovementFromMap(m, inventoryMap);
   }
 
   async createDirectEntry(
@@ -140,21 +261,48 @@ export class MovementsService {
     data: {
       movementCode: string;
       category?: 'insumo' | 'mercancia' | 'produccion';
-      productCode: string;
-      productName: string;
-      productDescription?: string;
-      quantity: number;
       label?: string;
       entity?: string;
       warehouseId: string;
+      items?: {
+        productCode: string;
+        productName: string;
+        productDescription?: string;
+        quantity: number;
+        unitPrice?: number;
+        unit?: string;
+        location?: string;
+        expenseElement?: string;
+      }[];
+      // Backward compatibility (single product)
+      productCode?: string;
+      productName?: string;
+      productDescription?: string;
+      quantity?: number;
       unitPrice?: number;
       unit?: string;
       location?: string;
+      expenseElement?: string;
     },
     userName?: string,
   ) {
-    if (data.quantity <= 0) {
-      throw new BadRequestException('La cantidad debe ser mayor a 0');
+    // Normalizar: convertir single-product a items[]
+    let items = data.items || [];
+    if (!items.length && data.productCode && data.productName && data.quantity) {
+      items = [{
+        productCode: data.productCode,
+        productName: data.productName,
+        productDescription: data.productDescription,
+        quantity: data.quantity,
+        unitPrice: data.unitPrice,
+        unit: data.unit,
+        location: data.location,
+        expenseElement: data.expenseElement,
+      }];
+    }
+
+    if (!items.length) {
+      throw new BadRequestException('Debe incluir al menos un producto');
     }
 
     // Validar código de movimiento
@@ -166,54 +314,96 @@ export class MovementsService {
       throw new BadRequestException(`El código ${data.movementCode} no es de entrada`);
     }
 
+    for (const item of items) {
+      if (item.quantity <= 0) {
+        throw new BadRequestException(`Cantidad inválida para producto ${item.productCode}`);
+      }
+    }
+
     const category = data.category || movType.category;
-    const unitPrice = data.unitPrice || 0;
-    const totalAmount = unitPrice * data.quantity;
 
-    // Asegurar que exista el producto en el inventario del almacén
-    await this.inventoryWarehouseService.ensureProduct(companyId, {
-      productCode: data.productCode,
-      productName: data.productName,
-      productDescription: data.productDescription,
-      productUnit: data.unit,
-      unitPrice: data.unitPrice,
-      warehouseId: data.warehouseId,
-      entity: data.entity,
-      location: data.location,
-    });
+    // Calcular totales
+    let grandTotal = 0;
+    const movementItems: Partial<MovementItem>[] = [];
 
-    // Actualizar stock en el almacén específico
-    await this.inventoryWarehouseService.updateStock(
-      companyId,
-      data.productCode,
-      data.warehouseId,
-      data.quantity,
-      'entry',
-    );
+    for (const item of items) {
+      const unitPrice = item.unitPrice || 0;
+      const totalAmount = unitPrice * item.quantity;
+      grandTotal += totalAmount;
 
-    // Registrar movimiento
-    const mov = await this.movementRepo.save(
-      this.movementRepo.create({
+      // Asegurar que exista el producto en inventario
+      await this.inventoryWarehouseService.ensureProduct(companyId, {
+        productCode: item.productCode,
+        productName: item.productName,
+        productDescription: item.productDescription,
+        productUnit: item.unit,
+        unitPrice: item.unitPrice,
+        warehouseId: data.warehouseId,
+        entity: data.entity,
+        location: item.location,
+      });
+
+      // Actualizar stock
+      await this.inventoryWarehouseService.updateStock(
         companyId,
-        movementType: 'entry',
-        movementCode: data.movementCode,
-        movementDescription: movType.description,
-        category,
-        productCode: data.productCode,
-        quantity: data.quantity,
+        item.productCode,
+        data.warehouseId,
+        item.quantity,
+        'entry',
+      );
+
+      movementItems.push({
+        productCode: item.productCode,
+        productName: item.productName,
+        quantity: item.quantity,
         unitPrice,
         totalAmount,
-        reason: data.label || movType.description,
-        label: data.label || null,
-        destinationWarehouse: data.warehouseId,
-        userName: userName || 'System',
-      }),
-    );
+        productUnit: item.unit || 'und',
+        productDescription: item.productDescription || null,
+        expenseElement: item.expenseElement || null,
+      });
+    }
 
-    // ── Contabilización automática ──
-    await this.generateAccountingVoucher(companyId, mov, movType, totalAmount, userName);
+    // Registrar movimiento (documento único)
+    const mov = this.movementRepo.create({
+      companyId,
+      movementType: 'entry',
+      movementCode: data.movementCode,
+      movementDescription: movType.description,
+      category,
+      productCode: items.length === 1 ? items[0].productCode : null,
+      quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+      unitPrice: items.length === 1 ? (items[0].unitPrice || 0) : 0,
+      totalAmount: grandTotal,
+      itemCount: items.length,
+      reason: data.label || movType.description,
+      label: data.label || null,
+      expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
+      destinationWarehouse: data.warehouseId,
+      userName: userName || 'System',
+    });
 
-    return this.enrichMovement(companyId, mov);
+    const savedMov = await this.movementRepo.save(mov);
+
+    // Guardar items detallados
+    if (items.length > 0) {
+      const itemEntities = movementItems.map(mi => {
+        const entity = new MovementItem();
+        Object.assign(entity, { ...mi, movementId: savedMov.id });
+        return entity;
+      });
+      await this.dataSource.getRepository(MovementItem).save(itemEntities);
+    }
+
+    // ── Contabilización automática (un solo comprobante para toda la operación) ──
+    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName);
+
+    // ── Post-movimiento: stock limits + notificaciones + auditoría ──
+    for (const item of items) {
+      await this.postMovementHook(companyId, savedMov.id, item.productCode, data.warehouseId, 'entry', item.quantity, userName);
+    }
+
+    return this.enrichMovement(companyId, savedMov);
   }
 
   async createExit(
@@ -221,16 +411,29 @@ export class MovementsService {
     data: {
       movementCode: string;
       category?: 'insumo' | 'mercancia' | 'produccion';
-      product_code: string;
-      quantity: number;
       reason?: string;
       entity?: string;
       warehouseId: string;
+      expenseElement?: string;
+      items?: { productCode: string; quantity: number; expenseElement?: string }[];
+      // Backward compatibility (single product)
+      product_code?: string;
+      quantity?: number;
     },
     userName?: string,
   ) {
-    if (data.quantity <= 0) {
-      throw new BadRequestException('La cantidad debe ser mayor a 0');
+    // Normalizar: convertir single-product a items[]
+    let items = data.items || [];
+    if (!items.length && data.product_code && data.quantity) {
+      items = [{
+        productCode: data.product_code,
+        quantity: data.quantity,
+        expenseElement: data.expenseElement,
+      }];
+    }
+
+    if (!items.length) {
+      throw new BadRequestException('Debe incluir al menos un producto');
     }
 
     // Validar código de movimiento
@@ -242,74 +445,115 @@ export class MovementsService {
       throw new BadRequestException(`El código ${data.movementCode} no es de salida`);
     }
 
+    for (const item of items) {
+      if (item.quantity <= 0) {
+        throw new BadRequestException(`Cantidad inválida para producto ${item.productCode}`);
+      }
+    }
+
     const category = data.category || movType.category;
 
-    // Obtener inventario para precio y reporte de entrega
-    const inventories = await this.inventoryWarehouseService.findByCode(
-      companyId,
-      data.product_code,
-    );
-    const inventory = inventories.find(
-      (inv) => inv.warehouseId === data.warehouseId,
-    );
-    const unitPrice = inventory?.unitPrice || 0;
-    const totalAmount = unitPrice * data.quantity;
+    // Obtener inventario de todos los productos en batch
+    const productCodes = items.map((i) => i.productCode);
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
-    // Actualizar stock en el almacén específico
-    await this.inventoryWarehouseService.updateStock(
-      companyId,
-      data.product_code,
-      data.warehouseId,
-      data.quantity,
-      'exit',
-    );
+    let grandTotal = 0;
+    const movementItems: Partial<MovementItem>[] = [];
+    const valeProducts: any[] = [];
 
-    // Registrar movimiento
-    const mov = await this.movementRepo.save(
+    for (const item of items) {
+      const inventories = inventoryMap.get(item.productCode) || [];
+      const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
+      const unitPrice = inventory?.unitPrice || 0;
+      const totalAmount = unitPrice * item.quantity;
+      grandTotal += totalAmount;
+
+      // Actualizar stock
+      await this.inventoryWarehouseService.updateStock(
+        companyId,
+        item.productCode,
+        data.warehouseId,
+        item.quantity,
+        'exit',
+      );
+
+      movementItems.push({
+        productCode: item.productCode,
+        productName: inventory?.productName || item.productCode,
+        quantity: item.quantity,
+        unitPrice,
+        totalAmount,
+        productUnit: inventory?.productUnit || 'und',
+        productDescription: inventory?.productDescription || null,
+        expenseElement: item.expenseElement || data.expenseElement || null,
+      });
+
+      valeProducts.push({
+        code: item.productCode,
+        description: inventory?.productName || item.productCode,
+        quantity: item.quantity,
+        unit: inventory?.productUnit || 'und',
+        unitPrice,
+        amount: totalAmount,
+      });
+    }
+
+    // Registrar movimiento (documento único)
+    const savedMov = await this.movementRepo.save(
       this.movementRepo.create({
         companyId,
         movementType: 'exit',
         movementCode: data.movementCode,
         movementDescription: movType.description,
         category,
-        productCode: data.product_code,
-        quantity: data.quantity,
-        unitPrice,
-        totalAmount,
+        productCode: items.length === 1 ? items[0].productCode : null,
+        quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+        unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
+        totalAmount: grandTotal,
+        itemCount: items.length,
         reason: data.reason || movType.description,
         sourceWarehouse: data.warehouseId,
+        expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
         userName: userName || 'System',
       }),
     );
 
-    // Reporte de entrega (Vale de Entrega)
+    // Guardar items detallados
+    if (items.length > 0) {
+      const itemEntities = movementItems.map((mi) => {
+        const entity = new MovementItem();
+        Object.assign(entity, { ...mi, movementId: savedMov.id });
+        return entity;
+      });
+      await this.dataSource.getRepository(MovementItem).save(itemEntities);
+    }
+
+    // Vale de Entrega (UN solo documento con todos los productos)
+    const firstInventory = (inventoryMap.get(items[0].productCode) || [])
+      .find((inv) => inv.warehouseId === data.warehouseId);
     await this.drRepo.save(
       this.drRepo.create({
         companyId,
-        code: `VE-${data.product_code}`,
+        code: `VE-${savedMov.id.substring(0, 8)}`,
         entity: data.entity || 'Entrega Directa',
-        warehouse: inventory?.warehouseName || data.warehouseId,
-        document: `SALIDA-${mov.id}`,
-        products: JSON.stringify([
-          {
-            code: data.product_code,
-            description: inventory?.productName || data.product_code,
-            quantity: data.quantity,
-            unit: inventory?.productUnit || 'und',
-            unitPrice,
-            amount: totalAmount,
-          },
-        ]),
+        warehouse: firstInventory?.warehouseName || data.warehouseId,
+        document: `SALIDA-${savedMov.id.substring(0, 8)}`,
+        products: JSON.stringify(valeProducts),
         reportType: 'Vale de Entrega',
         reason: data.reason || movType.description,
         createdByName: userName || 'System',
       }),
     );
 
-    // ── Contabilización automática ──
-    await this.generateAccountingVoucher(companyId, mov, movType, totalAmount, userName);
+    // ── Contabilización automática (un solo comprobante) ──
+    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName);
 
-    return this.enrichMovement(companyId, mov);
+    // ── Post-movimiento: stock limits + notificaciones + auditoría ──
+    for (const item of items) {
+      await this.postMovementHook(companyId, savedMov.id, item.productCode, data.warehouseId, 'exit', item.quantity, userName);
+    }
+
+    return this.enrichMovement(companyId, savedMov);
   }
 
   async createTransfer(
@@ -317,88 +561,215 @@ export class MovementsService {
     data: {
       movementCode: string;
       category?: 'insumo' | 'mercancia' | 'produccion';
-      productCode: string;
-      quantity: number;
       sourceWarehouseId: string;
       destinationWarehouseId: string;
       reason?: string;
+      items?: { productCode: string; quantity: number }[];
+      // Backward compatibility (single product)
+      productCode?: string;
+      quantity?: number;
     },
     userName?: string,
   ) {
-    if (data.quantity <= 0) {
-      throw new BadRequestException('La cantidad debe ser mayor a 0');
+    // Normalizar: convertir single-product a items[]
+    let items = data.items || [];
+    if (!items.length && data.productCode && data.quantity) {
+      items = [{ productCode: data.productCode, quantity: data.quantity }];
     }
 
-    // Validar código de movimiento
-    const movType = getMovementType(data.movementCode);
-    if (!movType) {
+    if (!items.length) {
+      throw new BadRequestException('Debe incluir al menos un producto');
+    }
+
+    if (data.sourceWarehouseId === data.destinationWarehouseId) {
+      throw new BadRequestException('El almacén origen y destino no pueden ser el mismo');
+    }
+
+    // Validar código de movimiento (debe ser código de salida de transferencia)
+    const exitMovType = getMovementType(data.movementCode);
+    if (!exitMovType) {
       throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
     }
 
-    const category = data.category || movType.category;
-
-    // Validar que exista stock en el almacén origen
-    const sourceInventory = await this.inventoryWarehouseService.findByCompanyProductAndWarehouse(
-      companyId,
-      data.productCode,
-      data.sourceWarehouseId,
-    );
-
-    if (!sourceInventory) {
-      throw new NotFoundException(
-        `Producto ${data.productCode} no encontrado en almacén origen ${data.sourceWarehouseId}`,
-      );
-    }
-
-    if (sourceInventory.stock < data.quantity) {
+    if (!isTransferExitCode(data.movementCode)) {
       throw new BadRequestException(
-        `Stock insuficiente en almacén origen. Disponible: ${sourceInventory.stock}, Requerido: ${data.quantity}`,
+        `Código ${data.movementCode} no es un código de transferencia válido. Use 1102 (insumo), 2102 (mercancía) o 3102 (producción).`,
       );
     }
 
-    const unitPrice = sourceInventory.unitPrice || 0;
-    const totalAmount = unitPrice * data.quantity;
+    // Obtener código de entrada correspondiente
+    const entryCode = getTransferEntryCode(data.movementCode);
+    const entryMovType = entryCode ? getMovementType(entryCode) : null;
+    if (!entryCode || !entryMovType) {
+      throw new BadRequestException(
+        `No se encontró código de entrada correspondiente para transferencia ${data.movementCode}`,
+      );
+    }
 
-    // Realizar la transferencia de stock
-    const transferResult = await this.inventoryWarehouseService.transferStock(
-      companyId,
-      {
-        productCode: data.productCode,
-        quantity: data.quantity,
-        sourceWarehouseId: data.sourceWarehouseId,
-        destinationWarehouseId: data.destinationWarehouseId,
-      },
-    );
+    const category = data.category || exitMovType.category;
 
-    // Registrar movimiento de transferencia
-    const mov = await this.movementRepo.save(
-      this.movementRepo.create({
+    // Validar stock para todos los items antes de empezar
+    for (const item of items) {
+      if (item.quantity <= 0) {
+        throw new BadRequestException(`Cantidad inválida para producto ${item.productCode}`);
+      }
+      const sourceInv = await this.inventoryWarehouseService.findByCompanyProductAndWarehouse(
         companyId,
-        movementType: 'transfer',
-        movementCode: data.movementCode,
-        movementDescription: movType.description,
-        category,
-        productCode: data.productCode,
-        quantity: data.quantity,
-        unitPrice,
-        totalAmount,
-        reason: data.reason || movType.description,
-        sourceWarehouse: data.sourceWarehouseId,
-        destinationWarehouse: data.destinationWarehouseId,
-        userName: userName || 'System',
-      }),
-    );
+        item.productCode,
+        data.sourceWarehouseId,
+      );
+      if (!sourceInv) {
+        throw new NotFoundException(
+          `Producto ${item.productCode} no encontrado en almacén origen ${data.sourceWarehouseId}`,
+        );
+      }
+      if (sourceInv.stock < item.quantity) {
+        throw new BadRequestException(
+          `Stock insuficiente para ${item.productCode}. Disponible: ${sourceInv.stock}, Requerido: ${item.quantity}`,
+        );
+      }
+    }
 
-    const enriched = await this.enrichMovement(companyId, mov);
+    // Obtener precios de inventario
+    const productCodes = items.map((i) => i.productCode);
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
-    // Agregar información adicional de la transferencia
-    return {
-      ...enriched,
-      transferDetails: {
-        sourceInventory: transferResult.sourceInventory,
-        destinationInventory: transferResult.destinationInventory,
-      },
-    };
+    let grandTotal = 0;
+    const exitItems: Partial<MovementItem>[] = [];
+    const entryItems: Partial<MovementItem>[] = [];
+
+    // ── TRANSACCIÓN: todas las operaciones de transferencia son atómicas ──
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      for (const item of items) {
+        const inventories = inventoryMap.get(item.productCode) || [];
+        const sourceInv = inventories.find((inv) => inv.warehouseId === data.sourceWarehouseId);
+        const unitPrice = sourceInv?.unitPrice || 0;
+        const totalAmount = unitPrice * item.quantity;
+        grandTotal += totalAmount;
+
+        // Transferir stock
+        await this.inventoryWarehouseService.transferStock(companyId, {
+          productCode: item.productCode,
+          quantity: item.quantity,
+          sourceWarehouseId: data.sourceWarehouseId,
+          destinationWarehouseId: data.destinationWarehouseId,
+        });
+
+        const itemData: Partial<MovementItem> = {
+          productCode: item.productCode,
+          productName: sourceInv?.productName || item.productCode,
+          quantity: item.quantity,
+          unitPrice,
+          totalAmount,
+          productUnit: sourceInv?.productUnit || 'und',
+          productDescription: sourceInv?.productDescription || null,
+        };
+        exitItems.push(itemData);
+        entryItems.push(itemData);
+      }
+
+      const transferReason = data.reason || 'Transferencia entre almacenes';
+
+      // ── Movimiento SALIDA (documento único para todos los productos) ──
+      const exitMov = await queryRunner.manager.save(
+        this.movementRepo.create({
+          companyId,
+          movementType: 'transfer' as MovementType,
+          movementCode: data.movementCode,
+          movementDescription: exitMovType.description,
+          category,
+          productCode: items.length === 1 ? items[0].productCode : null,
+          quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+          unitPrice: items.length === 1 ? (exitItems[0].unitPrice || 0) : 0,
+          totalAmount: grandTotal,
+          itemCount: items.length,
+          reason: transferReason,
+          sourceWarehouse: data.sourceWarehouseId,
+          destinationWarehouse: data.destinationWarehouseId,
+          userName: userName || 'System',
+        }),
+      );
+
+      // ── Movimiento ENTRADA (documento único para todos los productos) ──
+      const entryMov = await queryRunner.manager.save(
+        this.movementRepo.create({
+          companyId,
+          movementType: 'transfer' as MovementType,
+          movementCode: entryCode,
+          movementDescription: entryMovType.description,
+          category,
+          productCode: items.length === 1 ? items[0].productCode : null,
+          quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+          unitPrice: items.length === 1 ? (entryItems[0].unitPrice || 0) : 0,
+          totalAmount: grandTotal,
+          itemCount: items.length,
+          reason: transferReason,
+          sourceWarehouse: data.sourceWarehouseId,
+          destinationWarehouse: data.destinationWarehouseId,
+          userName: userName || 'System',
+        }),
+      );
+
+      // Guardar items detallados para ambos movimientos
+      const miRepo = this.dataSource.getRepository(MovementItem);
+      if (items.length > 0) {
+        const exitItemEntities = exitItems.map((mi) => {
+          const entity = new MovementItem();
+          Object.assign(entity, { ...mi, movementId: exitMov.id });
+          return entity;
+        });
+        const entryItemEntities = entryItems.map((mi) => {
+          const entity = new MovementItem();
+          Object.assign(entity, { ...mi, movementId: entryMov.id });
+          return entity;
+        });
+        await miRepo.save([...exitItemEntities, ...entryItemEntities]);
+      }
+
+      // Vincular ambos movimientos entre sí
+      const linkNote = `(Salida: ${exitMov.id.substring(0, 8)}, Entrada: ${entryMov.id.substring(0, 8)})`;
+      await queryRunner.manager.update(Movement, exitMov.id, {
+        relatedMovementId: entryMov.id,
+        reason: `${transferReason} ${linkNote}`,
+      });
+      await queryRunner.manager.update(Movement, entryMov.id, {
+        relatedMovementId: exitMov.id,
+        reason: `${transferReason} ${linkNote}`,
+      });
+
+      await queryRunner.commitTransaction();
+
+      // ── Las transferencias intra-empresa NO generan comprobante contable ──
+      // Son movimientos internos que no afectan el resultado económico
+      this.logger.log(
+        `Transferencia intra-empresa procesada: ${exitMov.id} → ${entryMov.id} (sin contabilización)`,
+      );
+
+      // ── Post-movimiento: verificar ambos almacenes para cada producto ──
+      for (const item of items) {
+        await this.postMovementHook(companyId, exitMov.id, item.productCode, data.sourceWarehouseId, 'transfer', item.quantity, userName);
+        await this.postMovementHook(companyId, entryMov.id, item.productCode, data.destinationWarehouseId, 'transfer', item.quantity, userName);
+      }
+
+      const enrichedExit = await this.enrichMovement(companyId, exitMov);
+      const enrichedEntry = await this.enrichMovement(companyId, entryMov);
+
+      return {
+        exitMovement: enrichedExit,
+        entryMovement: enrichedEntry,
+        itemCount: items.length,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`Error en transferencia: ${error.message}`, error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async createReturn(
@@ -406,16 +777,25 @@ export class MovementsService {
     data: {
       movementCode: string;
       category?: 'insumo' | 'mercancia' | 'produccion';
-      product_code: string;
-      quantity: number;
-      purchase_id?: string;
       reason: string;
       warehouseId: string;
+      purchase_id?: string;
+      entity?: string;
+      items?: { productCode: string; quantity: number }[];
+      // Backward compatibility (single product)
+      product_code?: string;
+      quantity?: number;
     },
     userName?: string,
   ) {
-    if (data.quantity <= 0) {
-      throw new BadRequestException('La cantidad debe ser mayor a 0');
+    // Normalizar: convertir single-product a items[]
+    let items = data.items || [];
+    if (!items.length && data.product_code && data.quantity) {
+      items = [{ productCode: data.product_code, quantity: data.quantity }];
+    }
+
+    if (!items.length) {
+      throw new BadRequestException('Debe incluir al menos un producto');
     }
 
     // Validar código de movimiento
@@ -424,39 +804,71 @@ export class MovementsService {
       throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
     }
 
+    for (const item of items) {
+      if (item.quantity <= 0) {
+        throw new BadRequestException(`Cantidad inválida para producto ${item.productCode}`);
+      }
+    }
+
     const category = data.category || movType.category;
 
-    // Obtener precio unitario
-    const inventories = await this.inventoryWarehouseService.findByCode(
-      companyId,
-      data.product_code,
-    );
-    const inventory = inventories.find(
-      (inv) => inv.warehouseId === data.warehouseId,
-    );
-    const unitPrice = inventory?.unitPrice || 0;
-    const totalAmount = unitPrice * data.quantity;
+    // Obtener inventario de todos los productos en batch
+    const productCodes = items.map((i) => i.productCode);
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
-    // Para devoluciones, se considera como entrada al almacén
-    await this.inventoryWarehouseService.updateStock(
-      companyId,
-      data.product_code,
-      data.warehouseId,
-      data.quantity,
-      'entry',
-    );
+    let grandTotal = 0;
+    const movementItems: Partial<MovementItem>[] = [];
+    const valeProducts: any[] = [];
 
-    const mov = await this.movementRepo.save(
+    for (const item of items) {
+      const inventories = inventoryMap.get(item.productCode) || [];
+      const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
+      const unitPrice = inventory?.unitPrice || 0;
+      const totalAmount = unitPrice * item.quantity;
+      grandTotal += totalAmount;
+
+      // Para devoluciones, se considera como entrada al almacén
+      await this.inventoryWarehouseService.updateStock(
+        companyId,
+        item.productCode,
+        data.warehouseId,
+        item.quantity,
+        'entry',
+      );
+
+      movementItems.push({
+        productCode: item.productCode,
+        productName: inventory?.productName || item.productCode,
+        quantity: item.quantity,
+        unitPrice,
+        totalAmount,
+        productUnit: inventory?.productUnit || 'und',
+        productDescription: inventory?.productDescription || null,
+      });
+
+      valeProducts.push({
+        code: item.productCode,
+        description: inventory?.productName || item.productCode,
+        quantity: item.quantity,
+        unit: inventory?.productUnit || 'und',
+        unitPrice,
+        amount: totalAmount,
+      });
+    }
+
+    // Registrar movimiento (documento único)
+    const savedMov = await this.movementRepo.save(
       this.movementRepo.create({
         companyId,
         movementType: 'return',
         movementCode: data.movementCode,
         movementDescription: movType.description,
         category,
-        productCode: data.product_code,
-        quantity: data.quantity,
-        unitPrice,
-        totalAmount,
+        productCode: items.length === 1 ? items[0].productCode : null,
+        quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+        unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
+        totalAmount: grandTotal,
+        itemCount: items.length,
         reason: data.reason,
         destinationWarehouse: data.warehouseId,
         userName: userName || 'System',
@@ -464,10 +876,42 @@ export class MovementsService {
       }),
     );
 
-    // ── Contabilización automática ──
-    await this.generateAccountingVoucher(companyId, mov, movType, totalAmount, userName);
+    // Guardar items detallados
+    if (items.length > 0) {
+      const itemEntities = movementItems.map((mi) => {
+        const entity = new MovementItem();
+        Object.assign(entity, { ...mi, movementId: savedMov.id });
+        return entity;
+      });
+      await this.dataSource.getRepository(MovementItem).save(itemEntities);
+    }
 
-    return this.enrichMovement(companyId, mov);
+    // Vale de Devolución (UN solo documento con todos los productos)
+    const firstInventory = (inventoryMap.get(items[0].productCode) || [])
+      .find((inv) => inv.warehouseId === data.warehouseId);
+    await this.drRepo.save(
+      this.drRepo.create({
+        companyId,
+        code: `VD-${savedMov.id.substring(0, 8)}`,
+        entity: data.entity || 'Devolución',
+        warehouse: firstInventory?.warehouseName || data.warehouseId,
+        document: `DEVOL-${savedMov.id.substring(0, 8)}`,
+        products: JSON.stringify(valeProducts),
+        reportType: 'Vale de Devolución',
+        reason: data.reason,
+        createdByName: userName || 'System',
+      }),
+    );
+
+    // ── Contabilización automática (un solo comprobante) ──
+    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName);
+
+    // ── Post-movimiento: stock limits + notificaciones + auditoría ──
+    for (const item of items) {
+      await this.postMovementHook(companyId, savedMov.id, item.productCode, data.warehouseId, 'return', item.quantity, userName);
+    }
+
+    return this.enrichMovement(companyId, savedMov);
   }
 
   async getTransfersByWarehouse(
@@ -502,13 +946,11 @@ export class MovementsService {
     }
 
     qb.orderBy('m.createdAt', 'DESC');
-    const result = await qb.getMany();
+    const movements = await qb.getMany();
 
-    const enrichedAll: any[] = [];
-    for (const m of result) {
-      enrichedAll.push(await this.enrichMovement(companyId, m));
-    }
-    return enrichedAll;
+    const productCodes = movements.map(m => m.productCode).filter((c): c is string => c !== null);
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
+    return movements.map(m => this.enrichMovementFromMap(m, inventoryMap));
   }
 
   // ══════════════════════════════════════════════════════════
@@ -543,6 +985,35 @@ export class MovementsService {
     }
 
     try {
+      // Códigos de centro de costo donde el elemento de gasto es relevante
+      const costCenterCodes = ['108', '208', '308', '1105', '2105', '3105'];
+      const isCostCenterMovement = costCenterCodes.includes(movement.movementCode!);
+      
+      // Preparar líneas del comprobante con centro de costo y subelemento si aplica
+      const voucherLines = [
+        {
+          accountCode: accountingEntry.debitAccountCode,
+          debit: totalAmount,
+          credit: 0,
+          description: `${movType.description} - Débito`,
+          costCenterId: movement.costCenterId || undefined,
+        },
+        {
+          accountCode: accountingEntry.creditAccountCode,
+          debit: 0,
+          credit: totalAmount,
+          description: `${movType.description} - Crédito`,
+          costCenterId: movement.costCenterId || undefined,
+        },
+      ];
+
+      // Agregar elemento de gasto a la descripción si aplica
+      if (movement.expenseElement && isCostCenterMovement) {
+        voucherLines.forEach(line => {
+          line.description += ` [Elem. Gasto: ${movement.expenseElement}]`;
+        });
+      }
+
       const voucher = await this.voucherService.createVoucherFromModule(
         companyId,
         'inventory',
@@ -553,20 +1024,7 @@ export class MovementsService {
           type: 'inventory',
           reference: `MOV-${movement.movementCode}-${movement.id.substring(0, 8)}`,
           createdBy: userName || 'Sistema',
-          lines: [
-            {
-              accountCode: accountingEntry.debitAccountCode,
-              debit: totalAmount,
-              credit: 0,
-              description: `${movType.description} - Débito`,
-            },
-            {
-              accountCode: accountingEntry.creditAccountCode,
-              debit: 0,
-              credit: totalAmount,
-              description: `${movType.description} - Crédito`,
-            },
-          ],
+          lines: voucherLines,
         },
       );
 

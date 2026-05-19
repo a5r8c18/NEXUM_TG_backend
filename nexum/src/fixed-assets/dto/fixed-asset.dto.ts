@@ -100,6 +100,22 @@ export class UpdateFixedAssetDto {
   status?: string;
 }
 
+export class DisposeAssetDto {
+  @IsString({ message: 'El motivo de baja debe ser texto' })
+  @IsNotEmpty({ message: 'El motivo de baja es obligatorio' })
+  reason: string;
+
+  @IsIn(
+    ['deterioro', 'obsolescencia', 'rotura', 'faltante', 'venta', 'donacion'],
+    { message: 'Tipo de baja inválido' },
+  )
+  disposal_type: 'deterioro' | 'obsolescencia' | 'rotura' | 'faltante' | 'venta' | 'donacion';
+
+  @IsOptional()
+  @IsDateString()
+  disposal_date?: string;
+}
+
 export class ProcessDepreciationDto {
   @IsInt({ message: 'El año debe ser un entero' })
   @Min(2000, { message: 'El año debe ser mayor o igual a 2000' })

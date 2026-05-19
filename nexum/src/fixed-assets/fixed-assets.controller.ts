@@ -17,7 +17,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
-import { CreateFixedAssetDto, UpdateFixedAssetDto, ProcessDepreciationDto } from './dto/fixed-asset.dto';
+import { CreateFixedAssetDto, UpdateFixedAssetDto, ProcessDepreciationDto, DisposeAssetDto } from './dto/fixed-asset.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -97,6 +97,13 @@ export class FixedAssetsController {
   create(@Req() req: Request, @Body() body: CreateFixedAssetDto) {
     const companyId = getCompanyId(req);
     return this.fixedAssetsService.create(companyId, body);
+  }
+
+  @Post(':id/dispose')
+  dispose(@Req() req: Request, @Param('id') id: string, @Body() body: DisposeAssetDto) {
+    const companyId = getCompanyId(req);
+    const userName = (req as any).user?.name || 'System';
+    return this.fixedAssetsService.disposeAsset(companyId, parseInt(id), body, userName);
   }
 
   @Put(':id')

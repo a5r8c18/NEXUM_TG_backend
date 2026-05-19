@@ -36,6 +36,13 @@ export class Warehouse {
   @Column({ length: 50, nullable: true })
   phone: string;
 
+  // ── Custodio responsable del almacén (Res. 11-2007 MAC) ──
+  @Column({ name: 'custodian_id', type: 'uuid', nullable: true })
+  custodianId: string | null;
+
+  @Column({ name: 'custodian_name', type: 'varchar', length: 255, nullable: true })
+  custodianName: string | null;
+
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
