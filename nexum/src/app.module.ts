@@ -39,10 +39,12 @@ import { Inventory } from './entities/inventory.entity';
 import { Purchase } from './entities/purchase.entity';
 import { PurchaseProduct } from './entities/purchase-product.entity';
 import { Movement } from './entities/movement.entity';
+import { MovementItem } from './entities/movement-item.entity';
 import { Invoice } from './entities/invoice.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
 import { FixedAsset } from './entities/fixed-asset.entity';
 import { ReceptionReport } from './entities/reception-report.entity';
+import { ReceptionReportItem } from './entities/reception-report-item.entity';
 import { DeliveryReport } from './entities/delivery-report.entity';
 import { StockLimit } from './entities/stock-limit.entity';
 import { RegistrationRequest } from './entities/registration-request.entity';
@@ -103,10 +105,12 @@ import { WarehouseReturnItem } from './entities/warehouse-return-item.entity';
           Purchase,
           PurchaseProduct,
           Movement,
+          MovementItem,
           Invoice,
           InvoiceItem,
           FixedAsset,
           ReceptionReport,
+          ReceptionReportItem,
           DeliveryReport,
           StockLimit,
           RegistrationRequest,

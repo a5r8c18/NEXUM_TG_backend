@@ -17,7 +17,7 @@ import { WarehousesService } from '../warehouses/warehouses.service';
     forwardRef(() => AuthModule),
   ],
   controllers: [InventoryWarehouseController, InventoryAnalyticsController],
-  providers: [InventoryWarehouseService, InventoryAnalyticsService, WarehousesService],
+  providers: [InventoryWarehouseService, InventoryAnalyticsService],
   exports: [InventoryWarehouseService, InventoryAnalyticsService],
 })
 export class InventoryWarehouseModule {}

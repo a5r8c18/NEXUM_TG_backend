@@ -4,6 +4,7 @@ import { MovementsController } from './movements.controller';
 import { MovementsService } from './movements.service';
 import { InventoryWarehouseModule } from '../inventory-warehouse/inventory-warehouse.module';
 import { Movement } from '../entities/movement.entity';
+import { MovementItem } from '../entities/movement-item.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import { AuthModule } from '../auth/auth.module';
 import { AccountingModule } from '../accounting/accounting.module';
@@ -12,7 +13,7 @@ import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Movement, DeliveryReport]),
+    TypeOrmModule.forFeature([Movement, MovementItem, DeliveryReport]),
     InventoryWarehouseModule,
     StockLimitsModule,
     AuditModule,

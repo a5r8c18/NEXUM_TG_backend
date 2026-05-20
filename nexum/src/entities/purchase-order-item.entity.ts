@@ -16,7 +16,7 @@ export class PurchaseOrderItem {
   @Column({ name: 'line_number', type: 'integer' })
   lineNumber: number;
 
-  @Column({ name: 'product_code', type: 'varchar', length: 50 })
+  @Column({ name: 'product_code', type: 'varchar' })
   productCode: string;
 
   @Column({ name: 'product_name', type: 'varchar', length: 200 })

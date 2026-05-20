@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JwtModule } from '@nestjs/jwt';
 import { FinanceService } from './finance.service';
 import { FinanceController } from './finance.controller';
 import { AccountReceivable } from '../entities/account-receivable.entity';
@@ -17,6 +18,7 @@ import { Payment } from '../entities/payment.entity';
       BankTransaction,
       Payment,
     ]),
+    JwtModule.register({}),
   ],
   controllers: [FinanceController],
   providers: [FinanceService],

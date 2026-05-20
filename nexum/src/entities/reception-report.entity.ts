@@ -16,17 +16,22 @@ export class ReceptionReport {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'report_number', type: 'varchar', length: 20, unique: true })
-  reportNumber: string;
+  @Column({ name: 'report_number', type: 'varchar', length: 20, unique: true, nullable: true })
+  reportNumber: string | null;
 
-  @Column({ name: 'report_date', type: 'date' })
-  reportDate: string;
+  @Column({ name: 'report_date', type: 'date', nullable: true })
+  reportDate: string | null;
 
   @Column({ name: 'purchase_id', type: 'uuid', nullable: true })
   purchaseId: string | null;
 
-  @Column({ name: 'supplier_name', type: 'varchar', length: 200 })
-  supplierName: string;
+  @Column({
+    name: 'supplier_name',
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+  })
+  supplierName: string | null;
 
   @Column({ name: 'supplier_nit', type: 'varchar', length: 20, nullable: true })
   supplierNit: string | null;
@@ -37,11 +42,8 @@ export class ReceptionReport {
   @Column({ name: 'invoice_date', type: 'date', nullable: true })
   invoiceDate: string | null;
 
-  @Column({ name: 'warehouse_id', type: 'uuid' })
-  warehouseId: string;
-
-  @Column({ name: 'received_by', type: 'varchar', length: 100 })
-  receivedBy: string;
+  @Column({ name: 'received_by', type: 'varchar', length: 100, nullable: true })
+  receivedBy: string | null;
 
   @Column({ name: 'verified_by', type: 'varchar', length: 100, nullable: true })
   verifiedBy: string | null;
@@ -61,12 +63,15 @@ export class ReceptionReport {
   @Column({ name: 'total_amount', type: 'decimal', precision: 12, scale: 2, default: 0 })
   totalAmount: number;
 
-  @Column({ name: 'company_id', type: 'integer' })
-  companyId: number;
+  @Column({ name: 'company_id', type: 'integer', nullable: true })
+  companyId: number | null;
 
   @ManyToOne(() => Company)
   @JoinColumn({ name: 'company_id' })
   company: Company;
+
+  @Column({ name: 'warehouse_id', type: 'uuid', nullable: true })
+  warehouseId: string | null;
 
   @ManyToOne(() => Warehouse)
   @JoinColumn({ name: 'warehouse_id' })

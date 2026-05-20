@@ -53,7 +53,7 @@ export class Movement {
   category: InventoryCategory | null;
 
   // Legacy: para movimientos de un solo producto o resumen
-  @Column({ name: 'product_code', length: 50, nullable: true })
+  @Column({ name: 'product_code', type: 'varchar', length: 50, nullable: true })
   productCode: string | null;
 
   @Column({ type: 'int', default: 0 })

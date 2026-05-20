@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JwtModule } from '@nestjs/jwt';
 import { PhysicalCountController } from './physical-count.controller';
 import { PhysicalCountService } from './physical-count.service';
 import { PhysicalCount, PhysicalCountStatus } from '../entities/physical-count.entity';
@@ -12,6 +13,7 @@ import { MovementsModule } from '../movements/movements.module';
     TypeOrmModule.forFeature([PhysicalCount, PhysicalCountItem]),
     InventoryWarehouseModule,
     MovementsModule,
+    JwtModule.register({}),
   ],
   controllers: [PhysicalCountController],
   providers: [PhysicalCountService],
