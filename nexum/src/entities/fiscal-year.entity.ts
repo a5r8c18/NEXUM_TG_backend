@@ -49,6 +49,12 @@ export class FiscalYear {
   })
   openingVoucherId: string | null;
 
+  @Column({ name: 'closed_at', type: 'timestamp', nullable: true })
+  closedAt: Date | null;
+
+  @Column({ name: 'closed_by', type: 'varchar', length: 255, nullable: true })
+  closedBy: string | null;
+
   @Column({
     name: 'created_at',
     type: 'timestamp',

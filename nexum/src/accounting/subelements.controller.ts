@@ -7,12 +7,15 @@ import {
   Body,
   Param,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { SubelementsService } from './subelements.service';
 import { Subelement, SubelementCategory } from '../entities/subelement.entity';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 
 @Controller('accounting/subelements')
+@UseGuards(JwtAuthGuard)
 export class SubelementsController {
   constructor(private readonly subelementsService: SubelementsService) {}
 

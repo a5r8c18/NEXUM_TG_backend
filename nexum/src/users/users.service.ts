@@ -5,7 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
-import { LoggerService } from '../logger/logger.service';
+import { LoggerService, LogCategory } from '../common/logger.service';
 
 @Injectable()
 export class UsersService {
@@ -16,7 +16,9 @@ export class UsersService {
     private readonly companyRepo: Repository<Company>,
     private readonly jwtService: JwtService,
     private readonly logger: LoggerService,
-  ) {}
+  ) {
+    this.logger.setContext('UsersService');
+  }
 
   // Obtener usuarios de una empresa específica
   async findByCompany(companyId: number) {
@@ -68,6 +70,18 @@ export class UsersService {
     newUser.isActive = true;
 
     const savedUser = await this.userRepo.save(newUser);
+
+    this.logger.logAudit(
+      'USER_CREATED',
+      'User',
+      {
+        userId: savedUser.id,
+        userEmail: savedUser.email,
+        role: savedUser.role,
+        companyId: savedUser.companyId?.toString(),
+        details: { firstName: savedUser.firstName, lastName: savedUser.lastName }
+      }
+    );
 
     // Generar token de configuración de contraseña
     const setupToken = this.jwtService.sign({
@@ -121,8 +135,49 @@ export class UsersService {
       }
     }
 
+    // Log role changes
+    if (data.role && data.role !== user.role) {
+      this.logger.logAudit(
+        'USER_ROLE_CHANGED',
+        'User',
+        {
+          userId: user.id,
+          userEmail: user.email,
+          oldRole: user.role,
+          newRole: data.role,
+          companyId: user.companyId?.toString()
+        }
+      );
+    }
+
+    // Log activation/deactivation
+    if (data.isActive !== undefined && data.isActive !== user.isActive) {
+      this.logger.logAudit(
+        data.isActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED',
+        'User',
+        {
+          userId: user.id,
+          userEmail: user.email,
+          companyId: user.companyId?.toString()
+        }
+      );
+    }
+
     Object.assign(user, data);
-    return this.userRepo.save(user);
+    const updatedUser = await this.userRepo.save(user);
+
+    this.logger.logAudit(
+      'USER_UPDATED',
+      'User',
+      {
+        userId: user.id,
+        userEmail: user.email,
+        companyId: user.companyId?.toString(),
+        details: { changedFields: Object.keys(data) }
+      }
+    );
+
+    return updatedUser;
   }
 
   // Eliminar usuario (desactivar)
@@ -133,7 +188,19 @@ export class UsersService {
     }
 
     user.isActive = false;
-    return this.userRepo.save(user);
+    const deactivatedUser = await this.userRepo.save(user);
+
+    this.logger.logAudit(
+      'USER_DEACTIVATED',
+      'User',
+      {
+        userId: user.id,
+        userEmail: user.email,
+        companyId: user.companyId?.toString()
+      }
+    );
+
+    return deactivatedUser;
   }
 
   // Reactivar usuario
@@ -144,7 +211,19 @@ export class UsersService {
     }
 
     user.isActive = true;
-    return this.userRepo.save(user);
+    const reactivatedUser = await this.userRepo.save(user);
+
+    this.logger.logAudit(
+      'USER_REACTIVATED',
+      'User',
+      {
+        userId: user.id,
+        userEmail: user.email,
+        companyId: user.companyId?.toString()
+      }
+    );
+
+    return reactivatedUser;
   }
 
   // Cambiar contraseña
@@ -155,6 +234,18 @@ export class UsersService {
     }
 
     user.password = await bcrypt.hash(newPassword, 10);
-    return this.userRepo.save(user);
+    const updatedUser = await this.userRepo.save(user);
+
+    this.logger.logAudit(
+      'USER_PASSWORD_CHANGED',
+      'User',
+      {
+        userId: user.id,
+        userEmail: user.email,
+        companyId: user.companyId?.toString()
+      }
+    );
+
+    return updatedUser;
   }
 }

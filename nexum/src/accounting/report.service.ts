@@ -1,11 +1,4 @@
-/* eslint-disable prettier/prettier */
-/* eslint-disable @typescript-eslint/require-await */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Injectable, NotFoundException, Res } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -18,8 +11,9 @@ import { VoucherLine } from '../entities/voucher-line.entity';
 import { Voucher } from '../entities/voucher.entity';
 import { Account } from '../entities/account.entity';
 import { GeneratedReport } from '../entities/generated-report.entity';
+import { FiscalYear } from '../entities/fiscal-year.entity';
 import { CacheService } from '../cache/cache.service';
-import { Efe5920Data, Efe5921Data, Efe5924Data } from './pdf.service';
+import { Efe5920Data, Efe5921Data, Efe5922Data, Efe5923Data, Efe5924Data, FlujoEfectivoData } from './pdf.service';
 
 @Injectable()
 export class ReportService {
@@ -34,6 +28,8 @@ export class ReportService {
     private readonly accountRepo: Repository<Account>,
     @InjectRepository(GeneratedReport)
     private readonly generatedReportRepo: Repository<GeneratedReport>,
+    @InjectRepository(FiscalYear)
+    private readonly fiscalYearRepo: Repository<FiscalYear>,
     private readonly cacheService: CacheService,
   ) {}
 
@@ -2150,6 +2146,399 @@ export class ReportService {
       fechaMes: (d.getMonth() + 1).toString(),
       fechaAnio: d.getFullYear().toString(),
       observaciones: '',
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── MODELO SIEN 5922 - BALANCE GENERAL ──
+  // ══════════════════════════════════════════════════════════
+
+  async getEfe5922Data(companyId: number, asOfDate?: string): Promise<Efe5922Data> {
+    const today = new Date().toISOString().split('T')[0];
+    const date = asOfDate || today;
+
+    // ACTIVOS CORRIENTES
+    const efectivo = await this.getAccountRangeBalance(companyId, ['101-119'], date);
+    const cuentasXCobrar = await this.getAccountRangeBalance(companyId, ['135-139', '154', '334-341'], date);
+    const inventarios = await this.getAccountRangeBalance(companyId, ['183', '187', '193'], date);
+    const pagosAnticipados = await this.getAccountRangeBalance(companyId, ['146-149', '164-166'], date);
+    const totalActivosCorrientes = efectivo + cuentasXCobrar + inventarios + pagosAnticipados;
+
+    // ACTIVOS NO CORRIENTES
+    const activosFijos = await this.getAccountRangeBalance(companyId, ['240-251'], date);
+    const depreciacionAcumulada = await this.getAccountRangeBalanceCredit(companyId, ['375-388'], date);
+    const activosIntangibles = await this.getAccountRangeBalance(companyId, ['260-270'], date);
+    const otrosActivos = await this.getAccountRangeBalance(companyId, ['312'], date);
+    const totalActivosNoCorrientes = activosFijos - depreciacionAcumulada + activosIntangibles + otrosActivos;
+
+    // PASIVOS CORRIENTES
+    const cuentasXPagar = await this.getAccountRangeBalanceCredit(companyId, ['405-415', '565-569'], date);
+    const prestamosCP = await this.getAccountRangeBalanceCredit(companyId, ['420-430'], date);
+    const acumulaciones = await this.getAccountRangeBalanceCredit(companyId, ['480-489', '492', '500'], date);
+    const totalPasivosCorrientes = cuentasXPagar + prestamosCP + acumulaciones;
+
+    // PASIVOS NO CORRIENTES
+    const prestamosLP = await this.getAccountRangeBalanceCredit(companyId, ['431-440'], date);
+    const provisionesLP = await this.getAccountRangeBalanceCredit(companyId, ['440-449'], date);
+    const totalPasivosNoCorrientes = prestamosLP + provisionesLP;
+
+    // PATRIMONIO
+    const capitalSocial = await this.getAccountRangeBalanceCredit(companyId, ['600-612'], date);
+    const reservas = await this.getAccountRangeBalanceCredit(companyId, ['645-654'], date);
+    const resultadosAcumulados = await this.getAccountRangeBalanceCredit(companyId, ['680-689'], date);
+    const resultadoPeriodo = (totalActivosCorrientes + totalActivosNoCorrientes) - (totalPasivosCorrientes + totalPasivosNoCorrientes + capitalSocial + reservas + resultadosAcumulados);
+    const totalPatrimonio = capitalSocial + reservas + resultadosAcumulados + resultadoPeriodo;
+
+    const totalPasivoPatrimonio = totalPasivosCorrientes + totalPasivosNoCorrientes + totalPatrimonio;
+
+    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const d = new Date(date);
+
+    return {
+      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      codigoCentroInformante: '0001',
+      centroInformante: 'Empresa Demo',
+
+      activosCorrientes: {
+        efectivo: { planAnual: 0, apertura: 0, real: efectivo },
+        cuentasXCobrar: { planAnual: 0, apertura: 0, real: cuentasXCobrar },
+        inventarios: { planAnual: 0, apertura: 0, real: inventarios },
+        pagosAnticipados: { planAnual: 0, apertura: 0, real: pagosAnticipados },
+        total: { planAnual: 0, apertura: 0, real: totalActivosCorrientes },
+      },
+
+      activosNoCorrientes: {
+        activosFijos: { planAnual: 0, apertura: 0, real: activosFijos },
+        depreciacionAcumulada: { planAnual: 0, apertura: 0, real: depreciacionAcumulada },
+        activosIntangibles: { planAnual: 0, apertura: 0, real: activosIntangibles },
+        otrosActivos: { planAnual: 0, apertura: 0, real: otrosActivos },
+        total: { planAnual: 0, apertura: 0, real: totalActivosNoCorrientes },
+      },
+
+      pasivosCorrientes: {
+        cuentasXPagar: { planAnual: 0, apertura: 0, real: cuentasXPagar },
+        prestamosCP: { planAnual: 0, apertura: 0, real: prestamosCP },
+        acumulaciones: { planAnual: 0, apertura: 0, real: acumulaciones },
+        total: { planAnual: 0, apertura: 0, real: totalPasivosCorrientes },
+      },
+
+      pasivosNoCorrientes: {
+        prestamosLP: { planAnual: 0, apertura: 0, real: prestamosLP },
+        provisionesLP: { planAnual: 0, apertura: 0, real: provisionesLP },
+        total: { planAnual: 0, apertura: 0, real: totalPasivosNoCorrientes },
+      },
+
+      patrimonio: {
+        capitalSocial: { planAnual: 0, apertura: 0, real: capitalSocial },
+        reservas: { planAnual: 0, apertura: 0, real: reservas },
+        resultadosAcumulados: { planAnual: 0, apertura: 0, real: resultadosAcumulados },
+        resultadoPeriodo: { planAnual: 0, apertura: 0, real: resultadoPeriodo },
+        total: { planAnual: 0, apertura: 0, real: totalPatrimonio },
+      },
+
+      totalPasivoPatrimonio: { planAnual: 0, apertura: 0, real: totalPasivoPatrimonio },
+
+      hechoNombre: '',
+      aprobadoNombre: '',
+      fechaDia: d.getDate().toString(),
+      fechaMes: (d.getMonth() + 1).toString(),
+      fechaAnio: d.getFullYear().toString(),
+      observaciones: '',
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── MODELO SIEN 5923 - ESTADO DE RESULTADOS ──
+  // ══════════════════════════════════════════════════════════
+
+  async getEfe5923Data(companyId: number, fromDate?: string, toDate?: string): Promise<Efe5923Data> {
+    const today = new Date().toISOString().split('T')[0];
+    const fd = fromDate || today;
+    const td = toDate || today;
+
+    // INGRESOS
+    const ventasNetas = await this.getAccountRangePeriodAmount(companyId, ['700-705'], fd, td);
+    const otrosIngresos = await this.getAccountRangePeriodAmount(companyId, ['710-720'], fd, td);
+    const totalIngresos = ventasNetas.credit + otrosIngresos.credit;
+
+    // COSTO DE VENTAS
+    const costoMercancias = await this.getAccountRangePeriodAmount(companyId, ['800-805'], fd, td);
+    const costoServicios = await this.getAccountRangePeriodAmount(companyId, ['810-815'], fd, td);
+    const totalCostoVentas = costoMercancias.debit + costoServicios.debit;
+
+    const utilidadBruta = totalIngresos - totalCostoVentas;
+
+    // GASTOS OPERATIVOS
+    const gastosVentas = await this.getAccountRangePeriodAmount(companyId, ['505-508'], fd, td);
+    const gastosAdministrativos = await this.getAccountRangePeriodAmount(companyId, ['510-520'], fd, td);
+    const gastosFinancieros = await this.getAccountRangePeriodAmount(companyId, ['530-540'], fd, td);
+    const totalGastosOperativos = gastosVentas.debit + gastosAdministrativos.debit + gastosFinancieros.debit;
+
+    const utilidadOperativa = utilidadBruta - totalGastosOperativos;
+
+    // OTROS INGRESOS/GASTOS
+    const ingresosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['730-740'], fd, td);
+    const gastosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['550-560'], fd, td);
+    const totalOtros = ingresosExtraordinarios.credit - gastosExtraordinarios.debit;
+
+    const utilidadAntesImpuestos = utilidadOperativa + totalOtros;
+
+    // IMPUESTO RENTA (35%)
+    const impuestoRenta = utilidadAntesImpuestos > 0 ? utilidadAntesImpuestos * 0.35 : 0;
+    const utilidadNeta = utilidadAntesImpuestos - impuestoRenta;
+
+    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const d = new Date(fd);
+
+    return {
+      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      codigoCentroInformante: '0001',
+      centroInformante: 'Empresa Demo',
+
+      ingresos: {
+        ventasNetas: { planAnual: 0, apertura: 0, real: ventasNetas.credit },
+        otrosIngresos: { planAnual: 0, apertura: 0, real: otrosIngresos.credit },
+        totalIngresos: { planAnual: 0, apertura: 0, real: totalIngresos },
+      },
+
+      costoVentas: {
+        costoMercanciasVendidas: { planAnual: 0, apertura: 0, real: costoMercancias.debit },
+        costoServicios: { planAnual: 0, apertura: 0, real: costoServicios.debit },
+        totalCostoVentas: { planAnual: 0, apertura: 0, real: totalCostoVentas },
+      },
+
+      utilidadBruta: { planAnual: 0, apertura: 0, real: utilidadBruta },
+
+      gastosOperativos: {
+        gastosVentas: { planAnual: 0, apertura: 0, real: gastosVentas.debit },
+        gastosAdministrativos: { planAnual: 0, apertura: 0, real: gastosAdministrativos.debit },
+        gastosFinancieros: { planAnual: 0, apertura: 0, real: gastosFinancieros.debit },
+        totalGastosOperativos: { planAnual: 0, apertura: 0, real: totalGastosOperativos },
+      },
+
+      utilidadOperativa: { planAnual: 0, apertura: 0, real: utilidadOperativa },
+
+      otrosIngresosGastos: {
+        ingresosExtraordinarios: { planAnual: 0, apertura: 0, real: ingresosExtraordinarios.credit },
+        gastosExtraordinarios: { planAnual: 0, apertura: 0, real: gastosExtraordinarios.debit },
+        totalOtros: { planAnual: 0, apertura: 0, real: totalOtros },
+      },
+
+      utilidadAntesImpuestos: { planAnual: 0, apertura: 0, real: utilidadAntesImpuestos },
+
+      impuestoRenta: { planAnual: 0, apertura: 0, real: impuestoRenta },
+
+      utilidadNeta: { planAnual: 0, apertura: 0, real: utilidadNeta },
+
+      hechoNombre: '',
+      aprobadoNombre: '',
+      fechaDia: d.getDate().toString(),
+      fechaMes: (d.getMonth() + 1).toString(),
+      fechaAnio: d.getFullYear().toString(),
+      observaciones: '',
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── FLUJO DE EFECTIVO ──
+  // ══════════════════════════════════════════════════════════
+
+  async getFlujoEfectivoData(companyId: number, fromDate?: string, toDate?: string): Promise<FlujoEfectivoData> {
+    const today = new Date().toISOString().split('T')[0];
+    const fd = fromDate || today;
+    const td = toDate || today;
+
+    // ACTIVIDADES OPERATIVAS
+    const cobroVentas = await this.getAccountRangePeriodAmount(companyId, ['101-108'], fd, td);
+    const pagoProveedores = await this.getAccountRangePeriodAmount(companyId, ['405-415'], fd, td);
+    const pagoPersonal = await this.getAccountRangePeriodAmount(companyId, ['505-508'], fd, td);
+    const pagoImpuestos = await this.getAccountRangePeriodAmount(companyId, ['440-449'], fd, td);
+    const otrosPagosOperativos = await this.getAccountRangePeriodAmount(companyId, ['510-520'], fd, td);
+    const flujoNetoOperativo = cobroVentas.debit - pagoProveedores.debit - pagoPersonal.debit - pagoImpuestos.debit - otrosPagosOperativos.debit;
+
+    // ACTIVIDADES DE INVERSIÓN
+    const compraActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['240-251'], fd, td);
+    const ventaActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['730-740'], fd, td);
+    const inversionesFinancieras = await this.getAccountRangePeriodAmount(companyId, ['109-119'], fd, td);
+    const flujoNetoInversion = ventaActivosFijos.credit - compraActivosFijos.debit - inversionesFinancieras.debit;
+
+    // ACTIVIDADES DE FINANCIAMIENTO
+    const prestamosRecibidos = await this.getAccountRangePeriodAmount(companyId, ['420-430'], fd, td);
+    const pagoPrestamos = await this.getAccountRangePeriodAmount(companyId, ['420-430'], fd, td);
+    const pagoDividendos = await this.getAccountRangePeriodAmount(companyId, ['691'], fd, td);
+    const aporteCapital = await this.getAccountRangePeriodAmount(companyId, ['600-612'], fd, td);
+    const flujoNetoFinanciamiento = prestamosRecibidos.credit - pagoPrestamos.debit - pagoDividendos.debit + aporteCapital.credit;
+
+    const variacionEfectivo = flujoNetoOperativo + flujoNetoInversion + flujoNetoFinanciamiento;
+    const efectivoInicial = await this.getAccountRangeBalance(companyId, ['101-119'], fd);
+    const efectivoFinal = efectivoInicial + variacionEfectivo;
+
+    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const d = new Date(fd);
+
+    return {
+      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      codigoCentroInformante: '0001',
+      centroInformante: 'Empresa Demo',
+
+      actividadesOperativas: {
+        cobroVentas: { planAnual: 0, apertura: 0, real: cobroVentas.debit },
+        pagoProveedores: { planAnual: 0, apertura: 0, real: pagoProveedores.debit },
+        pagoPersonal: { planAnual: 0, apertura: 0, real: pagoPersonal.debit },
+        pagoImpuestos: { planAnual: 0, apertura: 0, real: pagoImpuestos.debit },
+        otrosPagosOperativos: { planAnual: 0, apertura: 0, real: otrosPagosOperativos.debit },
+        flujoNetoOperativo: { planAnual: 0, apertura: 0, real: flujoNetoOperativo },
+      },
+
+      actividadesInversion: {
+        compraActivosFijos: { planAnual: 0, apertura: 0, real: compraActivosFijos.debit },
+        ventaActivosFijos: { planAnual: 0, apertura: 0, real: ventaActivosFijos.credit },
+        inversionesFinancieras: { planAnual: 0, apertura: 0, real: inversionesFinancieras.debit },
+        flujoNetoInversion: { planAnual: 0, apertura: 0, real: flujoNetoInversion },
+      },
+
+      actividadesFinanciamiento: {
+        prestamosRecibidos: { planAnual: 0, apertura: 0, real: prestamosRecibidos.credit },
+        pagoPrestamos: { planAnual: 0, apertura: 0, real: pagoPrestamos.debit },
+        pagoDividendos: { planAnual: 0, apertura: 0, real: pagoDividendos.debit },
+        aporteCapital: { planAnual: 0, apertura: 0, real: aporteCapital.credit },
+        flujoNetoFinanciamiento: { planAnual: 0, apertura: 0, real: flujoNetoFinanciamiento },
+      },
+
+      variacionEfectivo: { planAnual: 0, apertura: 0, real: variacionEfectivo },
+      efectivoInicial: { planAnual: 0, apertura: 0, real: efectivoInicial },
+      efectivoFinal: { planAnual: 0, apertura: 0, real: efectivoFinal },
+
+      hechoNombre: '',
+      aprobadoNombre: '',
+      fechaDia: d.getDate().toString(),
+      fechaMes: (d.getMonth() + 1).toString(),
+      fechaAnio: d.getFullYear().toString(),
+      observaciones: '',
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── EXPORTACIÓN POR EJERCICIO FISCAL ──
+  // ══════════════════════════════════════════════════════════
+
+  async exportGeneralJournalByFiscalYear(companyId: number, fiscalYearId: string) {
+    const fy = await this.fiscalYearRepo.findOne({ where: { id: fiscalYearId, companyId } });
+    if (!fy) throw new NotFoundException(`Año fiscal #${fiscalYearId} no encontrado`);
+
+    const vouchers = await this.voucherRepo
+      .createQueryBuilder('v')
+      .leftJoinAndSelect('v.lines', 'lines')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere('v.status = :status', { status: 'posted' })
+      .andWhere('v.date >= :startDate', { startDate: fy.startDate })
+      .andWhere('v.date <= :endDate', { endDate: fy.endDate })
+      .orderBy('v.date', 'ASC')
+      .addOrderBy('v.voucherNumber', 'ASC')
+      .getMany();
+
+    let totalDebit = 0;
+    let totalCredit = 0;
+    for (const v of vouchers) {
+      for (const l of v.lines) {
+        totalDebit += Number(l.debit);
+        totalCredit += Number(l.credit);
+      }
+    }
+
+    return {
+      vouchers,
+      fiscalYear: { name: fy.name, startDate: fy.startDate, endDate: fy.endDate },
+      totalVouchers: vouchers.length,
+      totalDebit,
+      totalCredit,
+    };
+  }
+
+  async exportGeneralLedgerByFiscalYear(companyId: number, fiscalYearId: string) {
+    const fy = await this.fiscalYearRepo.findOne({ where: { id: fiscalYearId, companyId } });
+    if (!fy) throw new NotFoundException(`Año fiscal #${fiscalYearId} no encontrado`);
+
+    const accounts = await this.accountRepo.find({
+      where: { companyId, isActive: true },
+      order: { code: 'ASC' },
+    });
+
+    const result: Array<{
+      code: string;
+      name: string;
+      nature: string;
+      openingBalance: number;
+      movements: Array<{ date: string; voucherNumber: string; description: string; debit: number; credit: number; balance: number }>;
+      closingBalance: number;
+    }> = [];
+
+    for (const account of accounts) {
+      // Saldo inicial: movimientos posted antes del inicio del ejercicio
+      const openingRaw = await this.voucherLineRepo
+        .createQueryBuilder('vl')
+        .select('COALESCE(SUM(vl.debit), 0)', 'debit')
+        .addSelect('COALESCE(SUM(vl.credit), 0)', 'credit')
+        .innerJoin('vl.voucher', 'v')
+        .where('v.companyId = :companyId', { companyId })
+        .andWhere('v.status = :status', { status: 'posted' })
+        .andWhere('v.date < :startDate', { startDate: fy.startDate })
+        .andWhere('vl.account_code = :code', { code: account.code })
+        .getRawOne();
+
+      const openingDebit = Number(openingRaw?.debit || 0);
+      const openingCredit = Number(openingRaw?.credit || 0);
+      const openingBalance = account.nature === 'deudora'
+        ? openingDebit - openingCredit
+        : openingCredit - openingDebit;
+
+      // Movimientos del período
+      const lines = await this.voucherLineRepo
+        .createQueryBuilder('vl')
+        .select(['vl.debit', 'vl.credit', 'vl.description'])
+        .addSelect('v.date', 'date')
+        .addSelect('v.voucherNumber', 'voucherNumber')
+        .addSelect('v.description', 'vDescription')
+        .innerJoin('vl.voucher', 'v')
+        .where('v.companyId = :companyId', { companyId })
+        .andWhere('v.status = :status', { status: 'posted' })
+        .andWhere('v.date >= :startDate', { startDate: fy.startDate })
+        .andWhere('v.date <= :endDate', { endDate: fy.endDate })
+        .andWhere('vl.account_code = :code', { code: account.code })
+        .orderBy('v.date', 'ASC')
+        .addOrderBy('v.voucherNumber', 'ASC')
+        .getRawMany();
+
+      if (lines.length === 0 && openingBalance === 0) continue;
+
+      let running = openingBalance;
+      const movements = lines.map((l: any) => {
+        const d = Number(l.vl_debit || 0);
+        const c = Number(l.vl_credit || 0);
+        running += account.nature === 'deudora' ? d - c : c - d;
+        return {
+          date: l.date,
+          voucherNumber: l.voucherNumber,
+          description: l.vl_description || l.vDescription || '',
+          debit: d,
+          credit: c,
+          balance: running,
+        };
+      });
+
+      result.push({
+        code: account.code,
+        name: account.name,
+        nature: account.nature,
+        openingBalance,
+        movements,
+        closingBalance: running,
+      });
+    }
+
+    return {
+      accounts: result,
+      fiscalYear: { name: fy.name, startDate: fy.startDate, endDate: fy.endDate },
     };
   }
 }

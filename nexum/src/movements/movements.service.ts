@@ -1019,7 +1019,9 @@ export class MovementsService {
         'inventory',
         movement.id,
         {
-          date: new Date().toISOString().split('T')[0],
+          date: movement.createdAt
+            ? new Date(movement.createdAt).toISOString().split('T')[0]
+            : new Date().toISOString().split('T')[0],
           description: `${movType.description} - ${movement.productCode} x${movement.quantity}`,
           type: 'inventory',
           reference: `MOV-${movement.movementCode}-${movement.id.substring(0, 8)}`,

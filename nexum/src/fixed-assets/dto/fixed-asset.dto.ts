@@ -9,12 +9,16 @@ import {
   Min,
   Max,
   IsInt,
+  ValidationArguments,
+  registerDecorator,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
 } from 'class-validator';
 
 export class CreateFixedAssetDto {
   @IsString({ message: 'El código del activo debe ser texto' })
   @IsNotEmpty({ message: 'El código del activo es obligatorio' })
-  asset_code: string;
+  assetCode: string;
 
   @IsString({ message: 'El nombre del activo debe ser texto' })
   @IsNotEmpty({ message: 'El nombre del activo es obligatorio' })
@@ -26,7 +30,7 @@ export class CreateFixedAssetDto {
 
   @IsInt({ message: 'El número de grupo debe ser un entero' })
   @IsPositive({ message: 'El número de grupo debe ser mayor que 0' })
-  group_number: number;
+  groupNumber: number;
 
   @IsString({ message: 'El subgrupo debe ser texto' })
   @IsNotEmpty({ message: 'El subgrupo es obligatorio' })
@@ -34,14 +38,16 @@ export class CreateFixedAssetDto {
 
   @IsOptional()
   @IsString()
-  subgroup_detail?: string;
+  subgroupDetail?: string;
 
   @IsNumber({}, { message: 'El valor de adquisición debe ser un número' })
   @IsPositive({ message: 'El valor de adquisición debe ser mayor que 0' })
-  acquisition_value: number;
+  @Max(999999999.99, { message: 'El valor de adquisición no puede exceder 999,999,999.99' })
+  acquisitionValue: number;
 
   @IsDateString({}, { message: 'La fecha de adquisición debe tener formato de fecha válido' })
-  acquisition_date: string;
+  @IsNotFutureDate({ message: 'La fecha de adquisición no puede ser futura' })
+  acquisitionDate: string;
 
   @IsOptional()
   @IsString()
@@ -49,13 +55,13 @@ export class CreateFixedAssetDto {
 
   @IsOptional()
   @IsString()
-  responsible_person?: string;
+  responsiblePerson?: string;
 }
 
 export class UpdateFixedAssetDto {
   @IsOptional()
   @IsString()
-  asset_code?: string;
+  assetCode?: string;
 
   @IsOptional()
   @IsString()
@@ -68,7 +74,7 @@ export class UpdateFixedAssetDto {
   @IsOptional()
   @IsInt()
   @IsPositive()
-  group_number?: number;
+  groupNumber?: number;
 
   @IsOptional()
   @IsString()
@@ -76,16 +82,17 @@ export class UpdateFixedAssetDto {
 
   @IsOptional()
   @IsString()
-  subgroup_detail?: string;
+  subgroupDetail?: string;
 
   @IsOptional()
   @IsNumber()
   @IsPositive()
-  acquisition_value?: number;
+  @Max(999999999.99, { message: 'El valor de adquisición no puede exceder 999,999,999.99' })
+  acquisitionValue?: number;
 
   @IsOptional()
   @IsDateString()
-  acquisition_date?: string;
+  acquisitionDate?: string;
 
   @IsOptional()
   @IsString()
@@ -93,7 +100,7 @@ export class UpdateFixedAssetDto {
 
   @IsOptional()
   @IsString()
-  responsible_person?: string;
+  responsiblePerson?: string;
 
   @IsOptional()
   @IsIn(['active', 'disposed', 'fully_depreciated'])
@@ -109,11 +116,11 @@ export class DisposeAssetDto {
     ['deterioro', 'obsolescencia', 'rotura', 'faltante', 'venta', 'donacion'],
     { message: 'Tipo de baja inválido' },
   )
-  disposal_type: 'deterioro' | 'obsolescencia' | 'rotura' | 'faltante' | 'venta' | 'donacion';
+  disposalType: 'deterioro' | 'obsolescencia' | 'rotura' | 'faltante' | 'venta' | 'donacion';
 
   @IsOptional()
   @IsDateString()
-  disposal_date?: string;
+  disposalDate?: string;
 }
 
 export class ProcessDepreciationDto {
@@ -126,4 +133,71 @@ export class ProcessDepreciationDto {
   @Min(1, { message: 'El mes debe estar entre 1 y 12' })
   @Max(12, { message: 'El mes debe estar entre 1 y 12' })
   month: number;
+}
+
+export class RevalueAssetDto {
+  @IsNumber({}, { message: 'El nuevo valor debe ser un número' })
+  @IsPositive({ message: 'El nuevo valor debe ser mayor que 0' })
+  @Max(999999999.99, { message: 'El nuevo valor no puede exceder 999,999,999.99' })
+  newValue: number;
+
+  @IsString({ message: 'El motivo de revalorización debe ser texto' })
+  @IsNotEmpty({ message: 'El motivo de revalorización es obligatorio' })
+  reason: string;
+
+  @IsDateString({}, { message: 'La fecha de revalorización debe tener formato de fecha válido' })
+  revaluationDate: string;
+
+  @IsOptional()
+  @IsString()
+  appraisalReference?: string;
+}
+
+export class TransferAssetDto {
+  @IsInt({ message: 'El ID de la entidad destino debe ser un entero' })
+  @IsPositive({ message: 'El ID de la entidad destino debe ser mayor que 0' })
+  targetCompanyId: number;
+
+  @IsString({ message: 'El motivo de transferencia debe ser texto' })
+  @IsNotEmpty({ message: 'El motivo de transferencia es obligatorio' })
+  reason: string;
+
+  @IsDateString({}, { message: 'La fecha de transferencia debe tener formato de fecha válido' })
+  transferDate: string;
+
+  @IsOptional()
+  @IsString()
+  newLocation?: string;
+
+  @IsOptional()
+  @IsString()
+  newResponsiblePerson?: string;
+}
+
+// Custom validator for future dates (Resolución 340 - Validación de datos)
+@ValidatorConstraint({ name: 'isNotFutureDate', async: false })
+export class IsNotFutureDateConstraint implements ValidatorConstraintInterface {
+  validate(date: string, args: ValidationArguments) {
+    if (!date) return true;
+    const inputDate = new Date(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return inputDate <= today;
+  }
+
+  defaultMessage(args: ValidationArguments) {
+    return 'La fecha no puede ser futura';
+  }
+}
+
+export function IsNotFutureDate(validationOptions?: any) {
+  return function (object: Object, propertyName: string) {
+    registerDecorator({
+      target: object.constructor,
+      propertyName: propertyName,
+      options: validationOptions,
+      constraints: [],
+      validator: IsNotFutureDateConstraint,
+    });
+  };
 }

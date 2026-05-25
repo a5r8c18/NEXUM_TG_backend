@@ -11,6 +11,9 @@ export { MovementItem } from './movement-item.entity';
 export { Invoice } from './invoice.entity';
 export { InvoiceItem } from './invoice-item.entity';
 export { FixedAsset } from './fixed-asset.entity';
+export { DepreciationHistory } from './depreciation-history.entity';
+export { DepreciationCatalog } from './depreciation-catalog.entity';
+export { FixedAssetInventory } from './fixed-asset-inventory.entity';
 export { DeliveryReport } from './delivery-report.entity';
 export { StockLimit } from './stock-limit.entity';
 export { RegistrationRequest } from './registration-request.entity';
@@ -38,6 +41,8 @@ export { Subaccount } from './subaccount.entity';
 export { Product, ProductCategory } from './product.entity';
 export { PhysicalCount, PhysicalCountStatus } from './physical-count.entity';
 export { PhysicalCountItem } from './physical-count-item.entity';
+export { LoginAttempt } from './login-attempt.entity';
+export { UserMFA } from './user-mfa.entity';
 
 // Modelos Oficiales Cubanos
 export { BinCard } from './bin-card.entity';
@@ -60,3 +65,8 @@ export { AccountPayable } from './account-payable.entity';
 export { Payment } from './payment.entity';
 export { BankAccount } from './bank-account.entity';
 export { BankTransaction } from './bank-transaction.entity';
+export { CashRegister } from './cash-register.entity';
+export { CashMovement } from './cash-movement.entity';
+export { BankReconciliation } from './bank-reconciliation.entity';
+export { Budget } from './budget.entity';
+export { BudgetLine } from './budget-line.entity';

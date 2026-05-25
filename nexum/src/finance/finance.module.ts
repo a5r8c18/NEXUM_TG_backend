@@ -8,6 +8,10 @@ import { AccountPayable } from '../entities/account-payable.entity';
 import { BankAccount } from '../entities/bank-account.entity';
 import { BankTransaction } from '../entities/bank-transaction.entity';
 import { Payment } from '../entities/payment.entity';
+import { CashRegister } from '../entities/cash-register.entity';
+import { CashMovement } from '../entities/cash-movement.entity';
+import { BankReconciliation } from '../entities/bank-reconciliation.entity';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
   imports: [
@@ -17,8 +21,12 @@ import { Payment } from '../entities/payment.entity';
       BankAccount,
       BankTransaction,
       Payment,
+      CashRegister,
+      CashMovement,
+      BankReconciliation,
     ]),
     JwtModule.register({}),
+    AccountingModule,
   ],
   controllers: [FinanceController],
   providers: [FinanceService],

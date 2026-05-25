@@ -1,10 +1,4 @@
-/* eslint-disable prettier/prettier */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import {
   Injectable,
   NotFoundException,
@@ -210,11 +204,19 @@ export class VoucherService {
         data.lines,
       );
 
-      // Generar número de comprobante
-      const count = await manager
+      // Generar número de comprobante con bloqueo pesimista para evitar colisiones
+      const maxVoucher = await manager
         .getRepository(Voucher)
-        .count({ where: { companyId } });
-      const voucherNumber = `COP-${String(count + 1).padStart(5, '0')}`;
+        .createQueryBuilder('v')
+        .where('v.company_id = :companyId', { companyId })
+        .setLock('pessimistic_write')
+        .orderBy('v.voucher_number', 'DESC')
+        .getOne();
+
+      const nextNumber = maxVoucher
+        ? parseInt(maxVoucher.voucherNumber.replace('COP-', ''), 10) + 1
+        : 1;
+      const voucherNumber = `COP-${String(nextNumber).padStart(5, '0')}`;
 
       // Crear voucher
       const voucher = manager.getRepository(Voucher).create({

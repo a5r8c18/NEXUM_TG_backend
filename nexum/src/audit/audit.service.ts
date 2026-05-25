@@ -184,16 +184,7 @@ export class AuditService {
     };
   }
 
-  async cleanupOldLogs(daysToKeep: number = 90): Promise<number> {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
-
-    const result = await this.auditLogRepo
-      .createQueryBuilder('audit')
-      .delete()
-      .where('audit.createdAt < :cutoffDate', { cutoffDate })
-      .execute();
-
-    return result.affected || 0;
-  }
+  // cleanupOldLogs() ELIMINADO para cumplir con Resolución Conjunta 2004
+  // Los logs de auditoría contable NUNCA deben borrarse según normativa cubana
+  // La evidencia contable debe conservarse indefinidamente
 }

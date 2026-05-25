@@ -26,11 +26,14 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { ProductsModule } from './products/products.module';
 import { PhysicalCountModule } from './physical-count/physical-count.module';
 import { LoggerModule } from './logger/logger.module';
+import { CommonModule } from './common/common.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { RedisCacheModule } from './cache';
 import { FinanceModule } from './finance/finance.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
+import { BackupModule } from './backup/backup.module';
+import { BudgetModule } from './budget/budget.module';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -83,10 +86,12 @@ import { MaterialRequest } from './entities/material-request.entity';
 import { MaterialRequestItem } from './entities/material-request-item.entity';
 import { WarehouseReturn } from './entities/warehouse-return.entity';
 import { WarehouseReturnItem } from './entities/warehouse-return-item.entity';
+import { ImmutableAuditLog } from './entities/immutable-audit-log.entity';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    CommonModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -149,6 +154,7 @@ import { WarehouseReturnItem } from './entities/warehouse-return-item.entity';
           MaterialRequestItem,
           WarehouseReturn,
           WarehouseReturnItem,
+          ImmutableAuditLog,
         ],
         synchronize:
           configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
@@ -185,6 +191,8 @@ import { WarehouseReturnItem } from './entities/warehouse-return-item.entity';
     FinanceModule,
     SuppliersModule,
     PurchaseOrdersModule,
+    BackupModule,
+    BudgetModule,
     LoggerModule,
     RedisCacheModule,
     ThrottlerModule.forRoot([

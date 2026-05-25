@@ -11,6 +11,8 @@ import { Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { ProductsService } from '../products/products.service';
 import { VoucherService } from '../accounting/voucher.service';
+import { AccountMappingService } from '../accounting/account-mapping.service';
+import { MappingType } from '../entities/account-mapping.entity';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
@@ -31,6 +33,7 @@ export class InvoicesService {
     private readonly paginationService: PaginationService,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
+    private readonly accountMappingService: AccountMappingService,
     @InjectRepository(Invoice)
     private readonly invoiceRepo: Repository<Invoice>,
     @InjectRepository(InvoiceItem)
@@ -243,13 +246,13 @@ export class InvoicesService {
             createdBy: data.createdByName || 'Sistema',
             lines: [
               {
-                accountCode: '135', // Cuentas por Cobrar a Clientes
+                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE) || '135',
                 debit: invoiceTotal,
                 credit: 0,
                 description: `Cobro pendiente ${invoice.invoiceNumber}`,
               },
               {
-                accountCode: '900', // Ventas
+                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE) === '135' ? '900' : '900',
                 debit: 0,
                 credit: invoiceTotal,
                 description: `Venta ${invoice.invoiceNumber}`,
@@ -271,14 +274,14 @@ export class InvoicesService {
               costOfSales += itemCost;
               
               costLines.push({
-                accountCode: '810', // Costo de Ventas
+                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_EXIT) || '810',
                 debit: itemCost,
                 credit: 0,
                 description: `Costo venta ${item.productCode}`,
               });
               
               costLines.push({
-                accountCode: '189', // Mercancías para la Venta (o 183/188 según categoría)
+                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189',
                 debit: 0,
                 credit: itemCost,
                 description: `Salida inventario ${item.productCode}`,

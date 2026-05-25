@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Body,
   Param,
   Query,
@@ -151,5 +152,86 @@ export class FinanceController {
   @Post('payments')
   createPayment(@Req() req: Request, @Body() body: any) {
     return this.financeService.createPayment(getCompanyId(req), body);
+  }
+
+  // ── Caja (Efectivo - Cuenta 101) ──
+  @Get('cash-registers')
+  findAllCashRegisters(@Req() req: Request) {
+    return this.financeService.findAllCashRegisters(getCompanyId(req));
+  }
+
+  @Get('cash-registers/statistics')
+  getCashStats(@Req() req: Request) {
+    return this.financeService.getCashStatistics(getCompanyId(req));
+  }
+
+  @Get('cash-registers/:id')
+  findOneCashRegister(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.findOneCashRegister(getCompanyId(req), id);
+  }
+
+  @Post('cash-registers')
+  createCashRegister(@Req() req: Request, @Body() body: any) {
+    return this.financeService.createCashRegister(getCompanyId(req), body);
+  }
+
+  @Put('cash-registers/:id')
+  updateCashRegister(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.updateCashRegister(getCompanyId(req), id, body);
+  }
+
+  @Post('cash-registers/:id/open')
+  openCashRegister(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.openCashRegister(getCompanyId(req), id, body?.openingBalance);
+  }
+
+  @Post('cash-registers/:id/close')
+  closeCashRegister(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.closeCashRegister(getCompanyId(req), id);
+  }
+
+  @Post('cash-registers/:id/audit')
+  performCashAudit(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.performCashAudit(getCompanyId(req), id, body.physicalBalance);
+  }
+
+  @Post('cash-registers/:id/deposit-to-bank')
+  depositToBank(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.depositToBank(
+      getCompanyId(req), id, body.bankAccountId, body.amount, body.description,
+    );
+  }
+
+  @Get('cash-registers/:cashRegisterId/movements')
+  findCashMovements(
+    @Req() req: Request,
+    @Param('cashRegisterId') cashRegisterId: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('movementType') movementType?: string,
+  ) {
+    return this.financeService.findCashMovements(getCompanyId(req), cashRegisterId, { fromDate, toDate, movementType });
+  }
+
+  // ── Conciliación Bancaria ──
+
+  @Get('reconciliations')
+  getReconciliations(@Req() req: Request, @Query('bankAccountId') bankAccountId?: string) {
+    return this.financeService.getReconciliations(getCompanyId(req), bankAccountId);
+  }
+
+  @Get('reconciliations/:id')
+  getReconciliation(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.getReconciliation(getCompanyId(req), id);
+  }
+
+  @Post('reconciliations')
+  createReconciliation(@Req() req: Request, @Body() body: any) {
+    return this.financeService.createReconciliation(getCompanyId(req), body);
+  }
+
+  @Patch('reconciliations/:id/complete')
+  completeReconciliation(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.completeReconciliation(getCompanyId(req), id);
   }
 }

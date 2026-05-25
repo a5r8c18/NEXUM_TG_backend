@@ -5,9 +5,14 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
+import { UserMFA } from '../entities/user-mfa.entity';
 import { RegistrationRequestsService } from './registration-requests.service';
 import { RefreshTokenService } from './refresh-token.service';
+import { LoginAttemptService } from './login-attempt.service';
+import { MfaService } from './mfa.service';
 import { LoginResponseDto } from './dto/refresh-token.dto';
+import { PasswordPolicyService } from './password-policy.service';
+import { LoggerService, LogCategory } from '../common/logger.service';
 
 @Injectable()
 export class AuthService {
@@ -16,10 +21,18 @@ export class AuthService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
+    @InjectRepository(UserMFA)
+    private readonly userMfaRepo: Repository<UserMFA>,
     private registrationRequestsService: RegistrationRequestsService,
     private jwtService: JwtService,
     private refreshTokenService: RefreshTokenService,
-  ) {}
+    private passwordPolicyService: PasswordPolicyService,
+    private loginAttemptService: LoginAttemptService,
+    private mfaService: MfaService,
+    private logger: LoggerService,
+  ) {
+    this.logger.setContext('AuthService');
+  }
 
   private generateToken(user: User): string {
     const payload = {
@@ -39,22 +52,141 @@ export class AuthService {
   }
 
   async login(email: string, password: string, ipAddress?: string, userAgent?: string): Promise<LoginResponseDto> {
+    // Check if account is locked out
+    const isLocked = await this.loginAttemptService.isLockedOut(email, ipAddress);
+    if (isLocked) {
+      this.logger.logSecurity(
+        LogCategory.SECURITY,
+        'Login attempt blocked - account locked out',
+        { userId: email, ipAddress, userAgent, action: 'LOGIN_BLOCKED' }
+      );
+      throw new UnauthorizedException('Cuenta temporalmente bloqueada por múltiples intentos fallidos. Intente nuevamente en 15 minutos.');
+    }
+
     const user = await this.userRepo.findOne({
       where: { email },
       relations: ['company'],
     });
 
     if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
-      throw new UnauthorizedException('Credenciales inválidas');
+      // Record failed attempt
+      await this.loginAttemptService.recordAttempt({
+        email,
+        ipAddress,
+        userAgent,
+        success: false,
+        failureReason: 'Credenciales inválidas',
+      });
+
+      this.logger.logSecurity(
+        LogCategory.SECURITY,
+        'Login attempt failed - invalid credentials',
+        { userId: email, ipAddress, userAgent, action: 'LOGIN_FAILED', details: { reason: 'invalid_credentials' } }
+      );
+
+      const remaining = await this.loginAttemptService.getRemainingAttempts(email, ipAddress);
+      throw new UnauthorizedException(`Credenciales inválidas. Intentos restantes: ${remaining}`);
     }
 
     if (!user.isActive) {
+      await this.loginAttemptService.recordAttempt({
+        userId: user.id,
+        email,
+        ipAddress,
+        userAgent,
+        success: false,
+        failureReason: 'Usuario inactivo',
+      });
+
+      this.logger.logSecurity(
+        LogCategory.SECURITY,
+        'Login attempt failed - user inactive',
+        { userId: user.id, userEmail: email, ipAddress, userAgent, action: 'LOGIN_FAILED', details: { reason: 'user_inactive' } }
+      );
+
       throw new UnauthorizedException('Usuario inactivo');
+    }
+
+    // Record successful attempt
+    await this.loginAttemptService.recordAttempt({
+      userId: user.id,
+      email,
+      ipAddress,
+      userAgent,
+      success: true,
+    });
+
+    // Check if MFA is enabled for this user
+    const userMFA = await this.userMfaRepo.findOneBy({ userId: user.id });
+    const mfaEnabled = userMFA?.isEnabled || false;
+
+    if (mfaEnabled) {
+      this.logger.logAudit(
+        'LOGIN_MFA_REQUIRED',
+        'User',
+        { userId: user.id, userEmail: email, ipAddress, userAgent, companyId: user.companyId?.toString() }
+      );
+
+      // Return user info without tokens, requiring MFA verification
+      return {
+        requiresMFA: true,
+        userId: user.id,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          companyId: user.companyId,
+          tenantId: user.tenantId,
+        },
+      };
     }
 
     const accessToken = this.generateToken(user);
     const refreshTokenData = await this.refreshTokenService.createRefreshToken(user, ipAddress, userAgent);
-    
+
+    this.logger.logAudit(
+      'LOGIN_SUCCESS',
+      'User',
+      { userId: user.id, userEmail: email, ipAddress, userAgent, companyId: user.companyId?.toString() }
+    );
+
+    return {
+      requiresMFA: false,
+      accessToken,
+      refreshToken: (refreshTokenData as any).token,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        companyId: user.companyId,
+        tenantId: user.tenantId,
+      },
+    };
+  }
+
+  async completeLoginWithMFA(userId: string, token: string, ipAddress?: string, userAgent?: string): Promise<LoginResponseDto> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      relations: ['company'],
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    // Verify MFA token
+    const verified = await this.mfaService.verifyToken(userId, token);
+    if (!verified) {
+      throw new UnauthorizedException('Código MFA inválido');
+    }
+
+    const accessToken = this.generateToken(user);
+    const refreshTokenData = await this.refreshTokenService.createRefreshToken(user, ipAddress, userAgent);
+
     return {
       accessToken,
       refreshToken: (refreshTokenData as any).token,
@@ -118,6 +250,9 @@ export class AuthService {
       }
     }
 
+    // Validar política de contraseñas
+    this.passwordPolicyService.validateOrThrow(data.password);
+
     // Hash de la contraseña
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
@@ -165,6 +300,9 @@ export class AuthService {
     if (user.password !== null) {
       throw new BadRequestException('Este usuario ya tiene una contraseña establecida. Use la opción de recuperación de contraseña.');
     }
+
+    // Validar política de contraseñas
+    this.passwordPolicyService.validateOrThrow(data.password);
 
     // Hash de la contraseña
     user.password = await bcrypt.hash(data.password, 10);

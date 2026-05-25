@@ -29,6 +29,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { PdfService } from './pdf.service';
+import { PdfReportService } from './pdf-report.service';
 import { getCompanyId } from '../common/get-company-id';
 import {
   CreateVoucherDto,
@@ -54,6 +55,7 @@ export class AccountingController {
     private readonly voucherService: VoucherService,
     private readonly reportService: ReportService,
     private readonly pdfService: PdfService,
+    private readonly pdfReportService: PdfReportService,
     private readonly accountService: AccountService,
     private readonly costCenterService: CostCenterService,
     private readonly fiscalYearService: FiscalYearService,
@@ -240,7 +242,48 @@ export class AccountingController {
   @Patch('fiscal-years/:id/close')
   closeFiscalYear(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.fiscalYearService.closeFiscalYear(companyId, id);
+    const user = (req as any).user;
+    return this.fiscalYearService.closeFiscalYear(companyId, id, user?.email || 'admin');
+  }
+
+  @Get('reports/libro-diario/:fiscalYearId/export/pdf')
+  async exportLibroDiarioPdf(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Param('fiscalYearId') fiscalYearId: string,
+  ) {
+    const companyId = getCompanyId(req);
+    const data = await this.reportService.exportGeneralJournalByFiscalYear(companyId, fiscalYearId);
+    const pdf = await this.pdfReportService.generateLibroDiario(
+      companyId,
+      new Date(data.fiscalYear.startDate),
+      new Date(data.fiscalYear.endDate),
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Libro_Diario_${data.fiscalYear.name}.pdf"`,
+    });
+    res.send(pdf);
+  }
+
+  @Get('reports/libro-mayor/:fiscalYearId/export/pdf')
+  async exportLibroMayorPdf(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Param('fiscalYearId') fiscalYearId: string,
+  ) {
+    const companyId = getCompanyId(req);
+    const data = await this.reportService.exportGeneralLedgerByFiscalYear(companyId, fiscalYearId);
+    const pdf = await this.pdfReportService.generateLibroMayor(
+      companyId,
+      new Date(data.fiscalYear.startDate),
+      new Date(data.fiscalYear.endDate),
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Libro_Mayor_${data.fiscalYear.name}.pdf"`,
+    });
+    res.send(pdf);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -453,6 +496,62 @@ export class AccountingController {
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': 'attachment; filename="EFE_5924.pdf"',
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  }
+
+  @Get('reports/modelo-5922/export/pdf')
+  async exportModelo5922Pdf(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('asOfDate') asOfDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    const data = await this.reportService.getEfe5922Data(companyId, asOfDate);
+    const pdf = await this.pdfService.generateEfe5922Pdf(data);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="EFE_5922.pdf"',
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  }
+
+  @Get('reports/modelo-5923/export/pdf')
+  async exportModelo5923Pdf(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    const data = await this.reportService.getEfe5923Data(companyId, fromDate, toDate);
+    const pdf = await this.pdfService.generateEfe5923Pdf(data);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="EFE_5923.pdf"',
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  }
+
+  @Get('reports/flujo-efectivo/export/pdf')
+  async exportFlujoEfectivoPdf(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    const data = await this.reportService.getFlujoEfectivoData(companyId, fromDate, toDate);
+    const pdf = await this.pdfService.generateFlujoEfectivoPdf(data);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="Flujo_Efectivo.pdf"',
       'Content-Length': pdf.length,
     });
     res.send(pdf);

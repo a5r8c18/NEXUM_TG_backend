@@ -22,6 +22,9 @@ export class FixedAsset {
   @Column({ name: 'company_id' })
   companyId: number;
 
+  @Column({ type: 'int', default: 0 })
+  version: number;
+
   @ManyToOne(() => Company)
   @JoinColumn({ name: 'company_id' })
   company: Company;

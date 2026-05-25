@@ -1,19 +1,23 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Between, Repository } from 'typeorm';
 import { FiscalYear } from '../entities/fiscal-year.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { Voucher } from '../entities/voucher.entity';
+import { GeneratedReport } from '../entities/generated-report.entity';
+import { ReportService } from './report.service';
+import { PdfReportService } from './pdf-report.service';
 
 @Injectable()
 export class FiscalYearService {
+  private readonly logger = new Logger(FiscalYearService.name);
+
   constructor(
     @InjectRepository(FiscalYear)
     private readonly fiscalYearRepo: Repository<FiscalYear>,
@@ -21,6 +25,10 @@ export class FiscalYearService {
     private readonly periodRepo: Repository<AccountingPeriod>,
     @InjectRepository(Voucher)
     private readonly voucherRepo: Repository<Voucher>,
+    @InjectRepository(GeneratedReport)
+    private readonly generatedReportRepo: Repository<GeneratedReport>,
+    private readonly reportService: ReportService,
+    private readonly pdfReportService: PdfReportService,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -176,17 +184,94 @@ export class FiscalYearService {
     return this.fiscalYearRepo.remove(fiscalYear);
   }
 
-  async closeFiscalYear(companyId: number, id: string) {
+  async closeFiscalYear(companyId: number, id: string, closedBy?: string) {
     const fy = await this.findOneFiscalYear(companyId, id);
 
-    // Cerrar todos los períodos abiertos
+    if (fy.status === 'closed') {
+      throw new BadRequestException('Este año fiscal ya está cerrado');
+    }
+
+    // 1. Validar que NO haya comprobantes en draft
+    const draftVouchers = await this.voucherRepo.count({
+      where: {
+        companyId,
+        status: 'draft' as any,
+        date: Between(fy.startDate, fy.endDate),
+      },
+    });
+    if (draftVouchers > 0) {
+      throw new BadRequestException(
+        `No se puede cerrar el ejercicio: hay ${draftVouchers} comprobante(s) en borrador. Publíquelos o elimínelos primero.`,
+      );
+    }
+
+    // 2. Cerrar todos los períodos abiertos
     await this.periodRepo.update(
       { fiscalYearId: id, status: 'open' },
-      { status: 'closed' },
+      { status: 'closed', closedAt: new Date(), closedBy: closedBy || 'Sistema' },
     );
 
-    // Actualizar estado del año fiscal
+    // 3. Generar datos del Libro Diario y Libro Mayor
+    try {
+      const journalData = await this.reportService.exportGeneralJournalByFiscalYear(companyId, id);
+      const ledgerData = await this.reportService.exportGeneralLedgerByFiscalYear(companyId, id);
+
+      // 4. Generar PDFs
+      const journalPdf = await this.pdfReportService.generateLibroDiario(
+        companyId,
+        new Date(fy.startDate),
+        new Date(fy.endDate),
+      );
+      const ledgerPdf = await this.pdfReportService.generateLibroMayor(
+        companyId,
+        new Date(fy.startDate),
+        new Date(fy.endDate),
+      );
+
+      // 5. Almacenar reportes generados
+      await this.generatedReportRepo.save([
+        {
+          companyId,
+          type: 'libro_diario',
+          title: `Libro Diario - ${fy.name}`,
+          description: `Libro Diario generado al cierre del ejercicio fiscal ${fy.name}`,
+          generatedBy: closedBy || 'Sistema',
+          data: {
+            fiscalYearId: id,
+            fiscalYearName: fy.name,
+            totalVouchers: journalData.totalVouchers,
+            totalDebit: journalData.totalDebit,
+            totalCredit: journalData.totalCredit,
+            pdfSize: journalPdf.length,
+          },
+          period: { startDate: fy.startDate, endDate: fy.endDate },
+        },
+        {
+          companyId,
+          type: 'libro_mayor',
+          title: `Libro Mayor - ${fy.name}`,
+          description: `Libro Mayor generado al cierre del ejercicio fiscal ${fy.name}`,
+          generatedBy: closedBy || 'Sistema',
+          data: {
+            fiscalYearId: id,
+            fiscalYearName: fy.name,
+            totalAccounts: ledgerData.accounts.length,
+            pdfSize: ledgerPdf.length,
+          },
+          period: { startDate: fy.startDate, endDate: fy.endDate },
+        },
+      ]);
+
+      this.logger.log(`Libros obligatorios generados para ejercicio fiscal ${fy.name}`);
+    } catch (error) {
+      this.logger.error(`Error generando libros al cierre: ${error.message}`);
+      // No bloquear cierre si falla generación de PDF
+    }
+
+    // 6. Cerrar el año fiscal
     fy.status = 'closed';
+    fy.closedAt = new Date();
+    fy.closedBy = closedBy || 'Sistema';
     return this.fiscalYearRepo.save(fy);
   }
 

@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { ProductsService } from '../products/products.service';
 import { VoucherService } from '../accounting/voucher.service';
+import { AccountMappingService } from '../accounting/account-mapping.service';
+import { MappingType } from '../entities/account-mapping.entity';
 import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
 import { Movement } from '../entities/movement.entity';
@@ -19,6 +21,7 @@ export class PurchasesService {
     private readonly productsService: ProductsService,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
+    private readonly accountMappingService: AccountMappingService,
     @InjectRepository(Purchase)
     private readonly purchaseRepo: Repository<Purchase>,
     @InjectRepository(PurchaseProduct)
@@ -204,20 +207,22 @@ export class PurchasesService {
           'inventory',
           purchase.id,
           {
-            date: new Date().toISOString().split('T')[0],
+            date: purchase.createdAt
+              ? new Date(purchase.createdAt).toISOString().split('T')[0]
+              : new Date().toISOString().split('T')[0],
             description: `Compra ${data.document} - ${data.supplier}`,
             type: 'inventory',
             reference: `COMPRA-${purchase.id.substring(0, 8)}`,
             createdBy: userName || 'Sistema',
             lines: [
               {
-                accountCode: '189', // Mercancías para la Venta
+                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189',
                 debit: purchaseTotal,
                 credit: 0,
                 description: `Compra mercancías - ${data.document}`,
               },
               {
-                accountCode: '410', // Cuentas por Pagar a Proveedores
+                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410',
                 debit: 0,
                 credit: purchaseTotal,
                 description: `Obligación proveedor ${data.supplier}`,

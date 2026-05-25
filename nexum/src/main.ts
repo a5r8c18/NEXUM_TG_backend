@@ -6,11 +6,27 @@ import { helmetMiddleware } from './middleware/helmet.middleware';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    httpsOptions: process.env.NODE_ENV === 'production' ? {
+      key: process.env.HTTPS_KEY_PATH,
+      cert: process.env.HTTPS_CERT_PATH,
+    } : undefined,
+  });
   const configService = app.get(ConfigService);
 
   // Apply security headers
   app.use(helmetMiddleware);
+
+  // Additional security headers
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
 
   // Configure CORS based on environment
   const corsOrigins = configService.get<string>('CORS_ORIGINS');
@@ -93,8 +109,10 @@ async function bootstrap() {
     },
   });
 
-  await app.listen(3001);
-  console.log('NEXUM API running on http://localhost:3001');
-  console.log('Swagger docs available at http://localhost:3001/api/docs');
+  const port = configService.get<number>('PORT') || 3001;
+  await app.listen(port);
+  const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+  console.log(`NEXUM API running on ${protocol}://localhost:${port}`);
+  console.log(`Swagger docs available at ${protocol}://localhost:${port}/api/docs`);
 }
 bootstrap();

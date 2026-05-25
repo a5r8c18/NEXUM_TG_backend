@@ -7,11 +7,14 @@ import { SubelementsService } from './subelements.service';
 import { VoucherService } from './voucher.service';
 import { ReportService } from './report.service';
 import { PdfService } from './pdf.service';
+import { PdfReportService } from './pdf-report.service';
 import { AccountService } from './account.service';
 import { CostCenterService } from './cost-center.service';
 import { FiscalYearService } from './fiscal-year.service';
 import { ElementoService } from './elemento.service';
 import { ExpenseTypeService } from './expense-type.service';
+import { AccountMappingService } from './account-mapping.service';
+import { AccountMapping } from '../entities/account-mapping.entity';
 import { Elemento } from '../entities/elemento.entity';
 import { Account } from '../entities/account.entity';
 import { Voucher, SourceModule } from '../entities/voucher.entity';
@@ -39,6 +42,7 @@ import { PaginationModule } from '../common/pagination/pagination.module';
       ExpenseType,
       Subelement,
       GeneratedReport,
+      AccountMapping,
     ]),
     forwardRef(() => AuthModule),
     AuditModule,
@@ -49,12 +53,14 @@ import { PaginationModule } from '../common/pagination/pagination.module';
     VoucherService,
     ReportService,
     PdfService,
+    PdfReportService,
     AccountService,
     CostCenterService,
     FiscalYearService,
     SubelementsService,
     ElementoService,
     ExpenseTypeService,
+    AccountMappingService,
   ],
   exports: [
     VoucherService,
@@ -62,6 +68,8 @@ import { PaginationModule } from '../common/pagination/pagination.module';
     AccountService,
     CostCenterService,
     FiscalYearService,
+    PdfReportService,
+    AccountMappingService,
   ],
 })
 export class AccountingModule {}

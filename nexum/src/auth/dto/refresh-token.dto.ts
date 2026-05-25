@@ -7,9 +7,11 @@ export class RefreshTokenDto {
 }
 
 export class LoginResponseDto {
-  accessToken: string;
-  refreshToken: string;
-  user: {
+  requiresMFA?: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  userId?: string;
+  user?: {
     id: string;
     email: string;
     firstName: string;
