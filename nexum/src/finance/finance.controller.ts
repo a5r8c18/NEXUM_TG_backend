@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import { CreateReconciliationDto } from './dto/create-reconciliation.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -226,7 +227,10 @@ export class FinanceController {
   }
 
   @Post('reconciliations')
-  createReconciliation(@Req() req: Request, @Body() body: any) {
+  createReconciliation(
+    @Req() req: Request,
+    @Body() body: CreateReconciliationDto,
+  ) {
     return this.financeService.createReconciliation(getCompanyId(req), body);
   }
 

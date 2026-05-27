@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import { CreateBudgetDto } from './dto/create-budget.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -40,12 +41,16 @@ export class BudgetController {
   }
 
   @Post()
-  create(@Req() req: Request, @Body() body: any) {
+  create(@Req() req: Request, @Body() body: CreateBudgetDto) {
     return this.budgetService.create(getCompanyId(req), body);
   }
 
   @Post(':id/lines')
-  addLine(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+  addLine(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: CreateBudgetDto,
+  ) {
     return this.budgetService.addLine(getCompanyId(req), id, body);
   }
 
