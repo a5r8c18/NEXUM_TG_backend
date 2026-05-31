@@ -87,6 +87,19 @@ import { MaterialRequestItem } from './entities/material-request-item.entity';
 import { WarehouseReturn } from './entities/warehouse-return.entity';
 import { WarehouseReturnItem } from './entities/warehouse-return-item.entity';
 import { ImmutableAuditLog } from './entities/immutable-audit-log.entity';
+import { Budget } from './entities/budget.entity';
+import { BudgetLine } from './entities/budget-line.entity';
+import { BankReconciliation } from './entities/bank-reconciliation.entity';
+import { CashRegister } from './entities/cash-register.entity';
+import { CashMovement } from './entities/cash-movement.entity';
+import { Payroll } from './entities/payroll.entity';
+import { PayrollItem } from './entities/payroll-item.entity';
+import { AccountMapping } from './entities/account-mapping.entity';
+import { DepreciationCatalog } from './entities/depreciation-catalog.entity';
+import { DepreciationHistory } from './entities/depreciation-history.entity';
+import { FixedAssetInventory } from './entities/fixed-asset-inventory.entity';
+import { LoginAttempt } from './entities/login-attempt.entity';
+import { Subaccount } from './entities/subaccount.entity';
 
 @Module({
   imports: [
@@ -155,6 +168,19 @@ import { ImmutableAuditLog } from './entities/immutable-audit-log.entity';
           WarehouseReturn,
           WarehouseReturnItem,
           ImmutableAuditLog,
+          Budget,
+          BudgetLine,
+          BankReconciliation,
+          CashRegister,
+          CashMovement,
+          Payroll,
+          PayrollItem,
+          AccountMapping,
+          DepreciationCatalog,
+          DepreciationHistory,
+          FixedAssetInventory,
+          LoginAttempt,
+          Subaccount,
         ],
         synchronize:
           configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
