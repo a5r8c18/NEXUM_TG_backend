@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { ProductsService } from '../products/products.service';
+import { WarehousesService } from '../warehouses/warehouses.service';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -19,6 +20,7 @@ export class PurchasesService {
   constructor(
     private readonly inventoryWarehouseService: InventoryWarehouseService,
     private readonly productsService: ProductsService,
+    private readonly warehousesService: WarehousesService,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
     private readonly accountMappingService: AccountMappingService,
@@ -94,9 +96,6 @@ export class PurchasesService {
       const product = await this.productsService.ensureProduct(companyId, {
         productCode: p.product_code,
         productName: p.product_name,
-        productUnit: p.unit,
-        category: (p as any).category || 'mercancia',
-        defaultUnitPrice: p.unit_price,
       });
 
       // Determinar código de movimiento según categoría del producto
@@ -177,6 +176,10 @@ export class PurchasesService {
 
     const totalAmount = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
 
+    // Resolver nombre del almacén
+    const warehouseEntity = await this.warehousesService.findByIdOrCode(companyId, data.warehouse);
+    const warehouseName = warehouseEntity?.name || data.warehouse;
+
     await this.rrRepo.save(
       this.rrRepo.create({
         reportNumber: `RP-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`,
@@ -187,7 +190,7 @@ export class PurchasesService {
         receivedBy: userName || 'System',
         notes: JSON.stringify({
           entity: data.entity,
-          warehouse: data.warehouse,
+          warehouse: warehouseName,
           supplier: data.supplier,
           document: data.document,
           products: productsJson,

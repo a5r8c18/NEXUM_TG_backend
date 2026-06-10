@@ -11,16 +11,21 @@ export function getCompanyId(req: any): number {
     throw new ForbiddenException('Usuario no autenticado');
   }
 
-  // Superadmin puede elegir empresa via query/body
+  // Prioridad: header X-Company-ID > query param > JWT companyId
+  const headerCompanyId = req.headers?.['x-company-id'];
+  if (headerCompanyId) {
+    return parseInt(headerCompanyId as string, 10);
+  }
+
+  // Superadmin puede elegir empresa via query param
   if (user.role === 'superadmin') {
-    const override =
-      req.query?.companyId || req.body?.companyId;
+    const override = req.query?.companyId;
     if (override) {
       return parseInt(override as string, 10);
     }
   }
 
-  // Para todos los demás (y superadmin sin override): usar JWT companyId
+  // Fallback: usar JWT companyId
   if (!user.companyId) {
     throw new ForbiddenException('No tiene una empresa asignada');
   }

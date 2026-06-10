@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { JwtModule } from '@nestjs/jwt';
+import { AuthModule } from '../auth/auth.module';
 import { FinanceService } from './finance.service';
 import { FinanceController } from './finance.controller';
 import { AccountReceivable } from '../entities/account-receivable.entity';
@@ -25,7 +25,7 @@ import { AccountingModule } from '../accounting/accounting.module';
       CashMovement,
       BankReconciliation,
     ]),
-    JwtModule.register({}),
+    AuthModule,
     AccountingModule,
   ],
   controllers: [FinanceController],

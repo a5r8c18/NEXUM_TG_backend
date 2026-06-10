@@ -68,7 +68,7 @@ export class DepreciationHistory {
   /**
    * Reference to the accounting voucher generated for this depreciation
    */
-  @Column({ name: 'voucher_reference', nullable: true })
+  @Column({ name: 'voucher_reference', nullable: true, type: 'varchar' })
   voucherReference: string | null;
 
   /**

@@ -38,6 +38,7 @@ export class AuthService {
     const payload = {
       sub: user.id,
       email: user.email,
+      name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
       role: user.role,
       companyId: user.companyId,
       tenantId: user.tenantId,

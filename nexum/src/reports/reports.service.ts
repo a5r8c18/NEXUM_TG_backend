@@ -39,7 +39,7 @@ export class ReportsService {
     });
 
     let result = reports.map((r) => {
-      const details = JSON.parse(r.notes || '{}');
+      const parsed = JSON.parse(r.notes || '{}');
       const createdAtStr =
         r.createdAt instanceof Date
           ? r.createdAt.toISOString()
@@ -52,42 +52,48 @@ export class ReportsService {
         supplierName: r.supplierName,
         warehouseId: r.warehouseId,
         receivedBy: r.receivedBy,
-        entity: details.entity,
-        warehouse: details.warehouse,
-        supplier: details.supplier,
-        document: details.document,
-        products: details.products,
+        entity: parsed.entity,
+        warehouse: parsed.warehouse,
+        supplier: parsed.supplier,
+        document: parsed.document,
+        details: {
+          products: parsed.products || [],
+          totalAmount: Number(r.totalAmount) || 0,
+        },
+        transportista: parsed.transportista || null,
+        responsables: parsed.responsables || {
+          recepcionadoPor: r.receivedBy || null,
+        },
         totalItems: r.totalItems,
-        totalAmount: r.totalAmount,
         status: r.status,
         date: createdAtStr.split('T')[0],
-        createdAt: createdAtStr,
+        created_at: createdAtStr,
       };
     });
 
     if (filters?.product) {
       const s = filters.product.toLowerCase();
       result = result.filter((r: any) =>
-        r.products.some(
+        r.details?.products?.some(
           (p: any) =>
-            p.description.toLowerCase().includes(s) ||
-            p.code.toLowerCase().includes(s),
+            p.description?.toLowerCase().includes(s) ||
+            p.code?.toLowerCase().includes(s),
         ),
       );
     }
     if (filters?.entity) {
       result = result.filter((r: any) =>
-        r.entity.toLowerCase().includes(filters.entity!.toLowerCase()),
+        r.entity?.toLowerCase().includes(filters.entity!.toLowerCase()),
       );
     }
     if (filters?.warehouse) {
       result = result.filter((r: any) =>
-        r.warehouse.toLowerCase().includes(filters.warehouse!.toLowerCase()),
+        r.warehouse?.toLowerCase().includes(filters.warehouse!.toLowerCase()),
       );
     }
     if (filters?.document) {
       result = result.filter((r: any) =>
-        r.document.toLowerCase().includes(filters.document!.toLowerCase()),
+        r.document?.toLowerCase().includes(filters.document!.toLowerCase()),
       );
     }
     if (filters?.fromDate) {
@@ -117,9 +123,11 @@ export class ReportsService {
     });
 
     let result = reports.map((r) => {
-      const products = JSON.parse(r.products);
+      const products = JSON.parse(r.products || '[]');
       const dateStr =
         r.date instanceof Date ? r.date.toISOString() : String(r.date || '');
+      const createdAtStr =
+        r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt);
       return {
         id: r.id,
         code: r.code,
@@ -128,9 +136,12 @@ export class ReportsService {
         document: r.document,
         reportType: r.reportType,
         reason: r.reason,
-        products,
+        details: {
+          products: products || [],
+          totalAmount: products.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0),
+        },
         date: dateStr.split('T')[0],
-        createdAt: dateStr,
+        created_at: createdAtStr,
         createdByName: r.createdByName,
       };
     });
@@ -138,26 +149,26 @@ export class ReportsService {
     if (filters?.product) {
       const s = filters.product.toLowerCase();
       result = result.filter((r: any) =>
-        r.products.some(
+        r.details?.products?.some(
           (p: any) =>
-            p.description.toLowerCase().includes(s) ||
-            p.code.toLowerCase().includes(s),
+            p.description?.toLowerCase().includes(s) ||
+            p.code?.toLowerCase().includes(s),
         ),
       );
     }
     if (filters?.entity) {
       result = result.filter((r: any) =>
-        r.entity.toLowerCase().includes(filters.entity!.toLowerCase()),
+        r.entity?.toLowerCase().includes(filters.entity!.toLowerCase()),
       );
     }
     if (filters?.warehouse) {
       result = result.filter((r: any) =>
-        r.warehouse.toLowerCase().includes(filters.warehouse!.toLowerCase()),
+        r.warehouse?.toLowerCase().includes(filters.warehouse!.toLowerCase()),
       );
     }
     if (filters?.document) {
       result = result.filter((r: any) =>
-        r.document.toLowerCase().includes(filters.document!.toLowerCase()),
+        r.document?.toLowerCase().includes(filters.document!.toLowerCase()),
       );
     }
     if (filters?.fromDate) {

@@ -90,8 +90,8 @@ export class InventoryWarehouseService {
       location?: string;
     },
   ): Promise<InventoryWarehouse> {
-    // Verificar que el almacén exista
-    const warehouse = await this.warehousesService.findOne(
+    // Verificar que el almacén exista (soporta UUID o código de almacén)
+    const warehouse = await this.warehousesService.findByIdOrCode(
       companyId,
       data.warehouseId,
     );

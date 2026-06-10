@@ -6,6 +6,7 @@ import { AuthModule } from '../auth/auth.module';
 import { InventoryWarehouseModule } from '../inventory-warehouse/inventory-warehouse.module';
 import { ProductsModule } from '../products/products.module';
 import { AccountingModule } from '../accounting/accounting.module';
+import { WarehousesModule } from '../warehouses/warehouses.module';
 import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
 import { Movement } from '../entities/movement.entity';
@@ -21,6 +22,7 @@ import { ReceptionReport } from '../entities/reception-report.entity';
     ]),
     InventoryWarehouseModule,
     ProductsModule,
+    WarehousesModule,
     forwardRef(() => AccountingModule),
     forwardRef(() => AuthModule),
   ],

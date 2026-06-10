@@ -44,7 +44,7 @@ export class ProductsService {
     }
 
     if (filters?.isActive !== undefined) {
-      qb.andWhere('p.is_active = :isActive', { isActive: filters.isActive });
+      qb.andWhere('p."isActive" = :isActive', { isActive: filters.isActive });
     }
 
     qb.orderBy('p.product_name', 'ASC');
@@ -108,18 +108,6 @@ export class ProductsService {
     productCode: string;
     productName: string;
     productDescription?: string;
-    productUnit?: string;
-    category?: ProductCategory;
-    cpcuCode?: string;
-    cpcuDescription?: string;
-    defaultAccountCode?: string;
-    defaultSupplier?: string;
-    barcode?: string;
-    defaultUnitPrice?: number;
-    minStock?: number;
-    maxStock?: number;
-    reorderPoint?: number;
-    isPerishable?: boolean;
   }) {
     // Verificar que no exista el mismo código
     const existing = await this.findByCode(companyId, data.productCode);
@@ -140,18 +128,6 @@ export class ProductsService {
       productCode: data.productCode,
       productName: data.productName,
       productDescription: data.productDescription || null,
-      productUnit: data.productUnit || 'und',
-      category: data.category || 'mercancia',
-      cpcuCode: data.cpcuCode || null,
-      cpcuDescription: data.cpcuDescription || null,
-      defaultAccountCode: data.defaultAccountCode || null,
-      defaultSupplier: data.defaultSupplier || null,
-      barcode: data.barcode || null,
-      defaultUnitPrice: data.defaultUnitPrice || 0,
-      minStock: data.minStock || 0,
-      maxStock: data.maxStock || 0,
-      reorderPoint: data.reorderPoint || 0,
-      isPerishable: data.isPerishable || false,
       isActive: true,
     });
 
@@ -235,10 +211,6 @@ export class ProductsService {
     productCode: string;
     productName: string;
     productDescription?: string;
-    productUnit?: string;
-    category?: ProductCategory;
-    defaultUnitPrice?: number;
-    cpcuCode?: string;
   }): Promise<Product> {
     let product = await this.findByCode(companyId, data.productCode);
     
@@ -247,29 +219,17 @@ export class ProductsService {
         productCode: data.productCode,
         productName: data.productName,
         productDescription: data.productDescription,
-        productUnit: data.productUnit,
-        category: data.category || 'mercancia',
-        defaultUnitPrice: data.defaultUnitPrice,
-        cpcuCode: data.cpcuCode,
       });
     } else {
-      // Actualizar datos si es necesario
+      // Actualizar nombre y descripción si cambiaron
       const needsUpdate = 
         product.productName !== data.productName ||
-        product.productDescription !== (data.productDescription || null) ||
-        product.productUnit !== (data.productUnit || 'und') ||
-        product.category !== (data.category || 'mercancia') ||
-        product.defaultUnitPrice !== (data.defaultUnitPrice || 0) ||
-        product.cpcuCode !== (data.cpcuCode || null);
+        product.productDescription !== (data.productDescription || null);
 
       if (needsUpdate) {
         await this.update(companyId, product.id, {
           productName: data.productName,
           productDescription: data.productDescription,
-          productUnit: data.productUnit,
-          category: data.category,
-          defaultUnitPrice: data.defaultUnitPrice,
-          cpcuCode: data.cpcuCode,
         });
       }
     }
