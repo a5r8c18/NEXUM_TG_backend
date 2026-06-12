@@ -23,6 +23,18 @@ export class WarehousesService {
     return wh;
   }
 
+  async findByIdOrCode(companyId: number, identifier: string) {
+    // Intentar buscar por UUID primero
+    const warehouse = await this.warehouseRepo.findOneBy({ id: identifier, companyId });
+    if (warehouse) return warehouse;
+    
+    // Si no encuentra por UUID, buscar por código
+    const warehouseByCode = await this.warehouseRepo.findOneBy({ code: identifier, companyId });
+    if (warehouseByCode) return warehouseByCode;
+    
+    return null;
+  }
+
   async create(
     companyId: number,
     data: { name: string; code: string; address?: string; custodianId?: string; custodianName?: string },

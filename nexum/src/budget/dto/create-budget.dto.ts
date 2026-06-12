@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsDateString, MaxLength, Min } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsDateString, MaxLength, Min, Max } from 'class-validator';
 
 export class CreateBudgetDto {
   @IsString()
