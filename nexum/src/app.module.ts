@@ -100,6 +100,7 @@ import { DepreciationHistory } from './entities/depreciation-history.entity';
 import { FixedAssetInventory } from './entities/fixed-asset-inventory.entity';
 import { LoginAttempt } from './entities/login-attempt.entity';
 import { Subaccount } from './entities/subaccount.entity';
+import { UserMFA } from './entities/user-mfa.entity';
 
 @Module({
   imports: [
@@ -181,6 +182,7 @@ import { Subaccount } from './entities/subaccount.entity';
           FixedAssetInventory,
           LoginAttempt,
           Subaccount,
+          UserMFA,
         ],
         synchronize:
           configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
