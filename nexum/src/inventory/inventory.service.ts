@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { Inventory } from '../entities/inventory.entity';
+import { InventoryWarehouse } from '../entities/inventory-warehouse.entity';
 import { Movement } from '../entities/movement.entity';
 
 @Injectable()
@@ -13,6 +14,8 @@ export class InventoryService {
   constructor(
     @InjectRepository(Inventory)
     private readonly inventoryRepo: Repository<Inventory>,
+    @InjectRepository(InventoryWarehouse)
+    private readonly inventoryWarehouseRepo: Repository<InventoryWarehouse>,
     @InjectRepository(Movement)
     private readonly movementRepo: Repository<Movement>,
   ) {}
@@ -27,9 +30,34 @@ export class InventoryService {
       entity?: string;
       minStock?: number;
       maxStock?: number;
+      isActive?: boolean;
     },
   ) {
-    const qb = this.inventoryRepo
+    console.log('📦 INVENTORY SERVICE - Backend consultando inventario:', {
+      companyId,
+      filters
+    });
+
+    // Verificar datos en ambas tablas
+    const inventoryData = await this.inventoryRepo.find({ 
+      where: { companyId },
+      take: 5 
+    });
+    const warehouseData = await this.inventoryWarehouseRepo.find({ 
+      where: { companyId },
+      take: 5 
+    });
+    
+    console.log('📊 INVENTORY SERVICE - Datos en tabla inventory:', {
+      total: inventoryData.length,
+      items: inventoryData
+    });
+    console.log('📊 INVENTORY SERVICE - Datos en tabla inventory_warehouse:', {
+      total: warehouseData.length,
+      items: warehouseData
+    });
+
+    const qb = this.inventoryWarehouseRepo
       .createQueryBuilder('inv')
       .where('inv.company_id = :companyId', { companyId });
 
@@ -40,7 +68,7 @@ export class InventoryService {
       );
     }
     if (filters?.warehouse) {
-      qb.andWhere('inv.warehouse = :warehouse', {
+      qb.andWhere('inv.warehouse_id = :warehouse', {
         warehouse: filters.warehouse,
       });
     }
@@ -61,10 +89,40 @@ export class InventoryService {
     if (filters?.toDate) {
       qb.andWhere('inv.created_at <= :toDate', { toDate: filters.toDate });
     }
+    if (filters?.isActive !== undefined) {
+      qb.andWhere('inv.is_active = :isActive', { isActive: filters.isActive });
+    }
 
-    qb.orderBy('inv.productName', 'ASC');
+    qb.orderBy('inv.product_name', 'ASC');
+    
+    const sql = qb.getQuery();
+    console.log('📦 INVENTORY SERVICE - SQL generado (inventory_warehouse):', sql);
+    
     const result = await qb.getMany();
-    return { inventory: result };
+    console.log('✅ INVENTORY SERVICE - Resultados obtenidos (inventory_warehouse):', {
+      totalItems: result.length,
+      items: result
+    });
+    
+    // Mapear resultados a estructura compatible con frontend
+    const mappedResults = result.map(item => ({
+      productCode: item.productCode,
+      productName: item.productName,
+      productDescription: item.productDescription,
+      entries: item.entries,
+      exits: item.exits,
+      stock: item.stock,
+      stockLimit: item.stockLimit,
+      unitPrice: item.unitPrice,
+      warehouse: item.warehouseName,
+      warehouseId: item.warehouseId,
+      entity: item.entity,
+      productUnit: item.productUnit,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
+    }));
+    
+    return { inventory: mappedResults };
   }
 
   async findByCode(companyId: number, productCode: string) {
