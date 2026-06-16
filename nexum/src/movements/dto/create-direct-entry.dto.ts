@@ -62,6 +62,16 @@ export class CreateDirectEntryDto {
   @Type(() => EntryItemDto)
   items: EntryItemDto[];
 
+  // ── Cuentas contables seleccionadas por el usuario (del clasificador) ──
+  // Si se proveen, sobrescriben las cuentas por defecto del catálogo de movimientos.
+  @IsOptional()
+  @IsString()
+  debitAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  creditAccountCode?: string;
+
   // ── Backward compatibility (single product) ──
   @IsOptional()
   @IsString()

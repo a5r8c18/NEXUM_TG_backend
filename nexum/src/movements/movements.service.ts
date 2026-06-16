@@ -12,6 +12,7 @@ import {
   getAccountingEntryForMovement,
   getTransferEntryCode,
   isTransferExitCode,
+  getInventoryAccountByCategory,
   MovementTypeDefinition,
 } from './movement-types.catalog';
 import { StockLimitsService, StockWarning } from '../stock-limits/stock-limits.service';
@@ -274,6 +275,9 @@ export class MovementsService {
         location?: string;
         expenseElement?: string;
       }[];
+      // Cuentas contables seleccionadas por el usuario (override de defaults)
+      debitAccountCode?: string;
+      creditAccountCode?: string;
       // Backward compatibility (single product)
       productCode?: string;
       productName?: string;
@@ -396,7 +400,10 @@ export class MovementsService {
     }
 
     // ── Contabilización automática (un solo comprobante para toda la operación) ──
-    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName);
+    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
+      debitAccountCode: data.debitAccountCode,
+      creditAccountCode: data.creditAccountCode,
+    });
 
     // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
@@ -415,6 +422,9 @@ export class MovementsService {
       entity?: string;
       warehouseId: string;
       expenseElement?: string;
+      // Cuentas contables seleccionadas por el usuario (override de defaults)
+      debitAccountCode?: string;
+      creditAccountCode?: string;
       items?: { productCode: string; quantity: number; expenseElement?: string }[];
       // Backward compatibility (single product)
       product_code?: string;
@@ -546,7 +556,10 @@ export class MovementsService {
     );
 
     // ── Contabilización automática (un solo comprobante) ──
-    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName);
+    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
+      debitAccountCode: data.debitAccountCode,
+      creditAccountCode: data.creditAccountCode,
+    });
 
     // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
@@ -781,6 +794,9 @@ export class MovementsService {
       warehouseId: string;
       purchase_id?: string;
       entity?: string;
+      // Cuentas contables seleccionadas por el usuario (override de defaults)
+      debitAccountCode?: string;
+      creditAccountCode?: string;
       items?: { productCode: string; quantity: number }[];
       // Backward compatibility (single product)
       product_code?: string;
@@ -827,13 +843,17 @@ export class MovementsService {
       const totalAmount = unitPrice * item.quantity;
       grandTotal += totalAmount;
 
-      // Para devoluciones, se considera como entrada al almacén
+      // La dirección del stock depende del tipo de devolución:
+      // - Devolución de COMPRA a proveedor (código exit, p.ej. 1107/2107) → sale stock
+      // - Devolución de VENTA del cliente (código entry, p.ej. 106/107) → entra stock
+      const stockDirection: 'entry' | 'exit' =
+        movType.direction === 'exit' ? 'exit' : 'entry';
       await this.inventoryWarehouseService.updateStock(
         companyId,
         item.productCode,
         data.warehouseId,
         item.quantity,
-        'entry',
+        stockDirection,
       );
 
       movementItems.push({
@@ -904,7 +924,10 @@ export class MovementsService {
     );
 
     // ── Contabilización automática (un solo comprobante) ──
-    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName);
+    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
+      debitAccountCode: data.debitAccountCode,
+      creditAccountCode: data.creditAccountCode,
+    });
 
     // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
@@ -963,6 +986,10 @@ export class MovementsService {
     movType: MovementTypeDefinition,
     totalAmount: number,
     userName?: string,
+    overrides?: {
+      debitAccountCode?: string;
+      creditAccountCode?: string;
+    },
   ): Promise<void> {
     if (totalAmount <= 0) {
       this.logger.warn(
@@ -976,10 +1003,57 @@ export class MovementsService {
       return;
     }
 
+    // Determinar cuentas: overrides > defaults del catálogo > defaults resilientes
+    let debitAccount = overrides?.debitAccountCode || '';
+    let creditAccount = overrides?.creditAccountCode || '';
+
     const accountingEntry = getAccountingEntryForMovement(movement.movementCode);
     if (!accountingEntry) {
       this.logger.warn(
         `No se encontró mapeo contable para código de movimiento: ${movement.movementCode}`,
+      );
+      return;
+    }
+
+    // Si no hay overrides, usar defaults del catálogo (con correcciones conocidas)
+    if (!debitAccount) debitAccount = accountingEntry.debitAccountCode || '';
+    if (!creditAccount) creditAccount = accountingEntry.creditAccountCode || '';
+
+    // Validar que las cuentas existan en la empresa; si no, usar defaults resilientes
+    try {
+      await this.voucherService['accountRepo'].findOneBy({ code: debitAccount, companyId });
+    } catch {
+      this.logger.warn(`Cuenta débito ${debitAccount} no existe para la empresa. Usando cuenta de inventario por categoría.`);
+      debitAccount = getInventoryAccountByCategory(movType.category);
+    }
+
+    try {
+      await this.voucherService['accountRepo'].findOneBy({ code: creditAccount, companyId });
+    } catch {
+      this.logger.warn(`Cuenta crédito ${creditAccount} no existe para la empresa. Usando cuenta por defecto según tipo.`);
+      // Defaults resilientes según tipo de movimiento
+      if (['102', '202', '402'].includes(movement.movementCode!)) {
+        creditAccount = '406'; // Cuentas por Pagar - Fuera del Órgano (proveedores)
+      } else if (['1107', '2107'].includes(movement.movementCode!)) {
+        creditAccount = '406'; // Devolución compra a proveedores
+      } else if (['106', '206', '306', '107', '207', '307'].includes(movement.movementCode!)) {
+        // Devolución de ventas: contra Costo de Ventas en lugar de Ventas
+        creditAccount = movType.category === 'mercancia' ? '814' : '810';
+      } else if (['105', '205', '305'].includes(movement.movementCode!)) {
+        creditAccount = '932'; // Sobrantes de Inventarios (ingreso)
+      } else if (['1104', '2104', '3104'].includes(movement.movementCode!)) {
+        // Faltantes: usar cuenta de pérdidas si existe, sino dejar sin generar
+        this.logger.warn(`No existe cuenta de faltantes. No se genera comprobante para movimiento ${movement.id}.`);
+        return;
+      } else {
+        creditAccount = accountingEntry.creditAccountCode; // fallback
+      }
+    }
+
+    // Validación final: asegurar que ambas cuentas tengan valores válidos
+    if (!debitAccount || !creditAccount) {
+      this.logger.error(
+        `No se pudieron determinar cuentas contables válidas para movimiento ${movement.id}. Débito: ${debitAccount}, Crédito: ${creditAccount}`
       );
       return;
     }
@@ -992,14 +1066,14 @@ export class MovementsService {
       // Preparar líneas del comprobante con centro de costo y subelemento si aplica
       const voucherLines = [
         {
-          accountCode: accountingEntry.debitAccountCode,
+          accountCode: debitAccount,
           debit: totalAmount,
           credit: 0,
           description: `${movType.description} - Débito`,
           costCenterId: movement.costCenterId || undefined,
         },
         {
-          accountCode: accountingEntry.creditAccountCode,
+          accountCode: creditAccount,
           debit: 0,
           credit: totalAmount,
           description: `${movType.description} - Crédito`,

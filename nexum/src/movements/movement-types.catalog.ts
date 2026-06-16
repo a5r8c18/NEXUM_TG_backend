@@ -366,7 +366,7 @@ export function isTransferExitCode(code: string): boolean {
  *   189 = Mercancías para la Venta (Mercancía)
  *   188 = Producción Terminada (Producción)
  */
-function getInventoryAccountByCategory(category: InventoryCategory): string {
+export function getInventoryAccountByCategory(category: InventoryCategory): string {
   switch (category) {
     case 'insumo':     return '183';
     case 'mercancia':  return '189';

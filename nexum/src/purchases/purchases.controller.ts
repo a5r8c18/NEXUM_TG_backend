@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Req, Param, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { PurchasesService } from './purchases.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -17,6 +17,12 @@ export class PurchasesController {
   findAll(@Req() req: Request) {
     const companyId = getCompanyId(req);
     return this.purchasesService.findAll(companyId);
+  }
+
+  @Get(':id')
+  findOne(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.purchasesService.findOne(companyId, id);
   }
 
   @Post()

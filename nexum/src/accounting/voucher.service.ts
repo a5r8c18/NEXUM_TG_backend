@@ -352,6 +352,15 @@ export class VoucherService {
         throw new NotFoundException(`Voucher #${id} no encontrado`);
       }
 
+      // Los comprobantes generados automáticamente por otros módulos
+      // (inventario, facturación, activos fijos, nómina) son de solo lectura:
+      // deben reflejar fielmente la operación de origen y no pueden editarse.
+      if (voucher.sourceModule && voucher.sourceModule !== 'manual') {
+        throw new BadRequestException(
+          `Este comprobante fue generado automáticamente por el módulo "${voucher.sourceModule}" y no puede editarse. Solo puede visualizarse. Para corregirlo, ajuste la operación de origen.`,
+        );
+      }
+
       if (voucher.status !== 'draft') {
         throw new BadRequestException(
           'Solo se pueden editar comprobantes en estado borrador',
@@ -571,6 +580,14 @@ export class VoucherService {
 
       if (!voucher) {
         throw new NotFoundException(`Voucher #${id} no encontrado`);
+      }
+
+      // Los comprobantes generados por otros módulos no pueden eliminarse
+      // manualmente: deben anularse desde la operación de origen.
+      if (voucher.sourceModule && voucher.sourceModule !== 'manual') {
+        throw new BadRequestException(
+          `Este comprobante fue generado automáticamente por el módulo "${voucher.sourceModule}" y no puede eliminarse. Para revertirlo, ajuste o anule la operación de origen.`,
+        );
       }
 
       if (voucher.status === 'posted') {

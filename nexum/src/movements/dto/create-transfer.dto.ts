@@ -32,6 +32,15 @@ export class CreateTransferDto {
   @IsString()
   reason?: string;
 
+  // ── Cuentas contables seleccionadas por el usuario (del clasificador) ──
+  @IsOptional()
+  @IsString()
+  debitAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  creditAccountCode?: string;
+
   // ── Batch: array de productos ──
   @IsOptional()
   @IsArray({ message: 'Los productos deben ser un arreglo' })
