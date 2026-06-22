@@ -27,6 +27,7 @@ export class PurchasesController {
 
   @Post()
   create(@Req() req: Request, @Body() body: CreatePurchaseDto) {
+      console.log('📦 Controller received body:', body);
     const companyId = getCompanyId(req);
     return this.purchasesService.create(companyId, body);
   }

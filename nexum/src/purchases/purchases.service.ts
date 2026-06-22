@@ -52,6 +52,11 @@ export class PurchasesService {
     return { purchase, products: purchase.products };
   }
 
+  /**
+   * Crea una compra y genera automáticamente el comprobante contable.
+   * Si se proporcionan debitAccountCode y creditAccountCode, se usan en el voucher;
+   * de lo contrario, se usan los defaults del AccountMappingService.
+   */
   async create(
     companyId: number,
     data: {
@@ -59,6 +64,8 @@ export class PurchasesService {
       warehouse: string;
       supplier: string;
       document: string;
+      debitAccountCode?: string;      // <-- NUEVO: cuenta de inventario (débito)
+      creditAccountCode?: string;     // <-- NUEVO: cuenta de proveedor (crédito)
       products: Array<{
         product_code: string;
         product_name: string;
@@ -205,6 +212,14 @@ export class PurchasesService {
     const purchaseTotal = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
     if (purchaseTotal > 0) {
       try {
+        // Obtener cuentas: si el usuario las proporcionó, usarlas; si no, usar defaults
+        const debitAccount = data.debitAccountCode
+          ? data.debitAccountCode
+          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189';
+        const creditAccount = data.creditAccountCode
+          ? data.creditAccountCode
+          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410';
+
         await this.voucherService.createVoucherFromModule(
           companyId,
           'inventory',
@@ -219,13 +234,13 @@ export class PurchasesService {
             createdBy: userName || 'Sistema',
             lines: [
               {
-                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189',
+                accountCode: debitAccount,
                 debit: purchaseTotal,
                 credit: 0,
                 description: `Compra mercancías - ${data.document}`,
               },
               {
-                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410',
+                accountCode: creditAccount,
                 debit: 0,
                 credit: purchaseTotal,
                 description: `Obligación proveedor ${data.supplier}`,
@@ -233,7 +248,7 @@ export class PurchasesService {
             ],
           },
         );
-        this.logger.log(`Comprobante contable generado para compra ${purchase.id}`);
+        this.logger.log(`Comprobante contable generado para compra ${purchase.id} con cuentas: ${debitAccount} / ${creditAccount}`);
       } catch (error) {
         this.logger.error(
           `Error al generar comprobante para compra ${purchase.id}: ${error.message}`,
