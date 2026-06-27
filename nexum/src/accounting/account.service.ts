@@ -188,34 +188,16 @@ export class AccountService {
   // ══════════════════════════════════════════════════════════
 
   async findAccountsByParentCode(companyId: number, parentCode: string) {
-    // Buscar cuentas hijas directas
-    const childAccounts = await this.accountRepo.find({
+    return this.accountRepo.find({
       where: {
         companyId,
         parentCode,
         isActive: true,
-        allowsMovements: true,
       },
       order: {
         code: 'ASC',
       },
     });
-
-    // Buscar subcuentas (cuentas con level=4 y parentCode)
-    const subaccounts = await this.accountRepo.find({
-      where: {
-        companyId,
-        level: 4,
-        parentCode: parentCode,
-        isActive: true,
-      },
-      order: {
-        code: 'ASC',
-      },
-    });
-
-    // Combinar resultados
-    return [...childAccounts, ...subaccounts];
   }
 
   async getSubaccountsByAccount(companyId: number, accountId: string) {
@@ -443,13 +425,18 @@ export class AccountService {
   // ── BALANCE OPERATIONS ──
   // ══════════════════════════════════════════════════════════
 
-  async updateAccountBalance(
+  private async updateAccountBalance(
     companyId: number,
     accountCode: string,
-    amount: number,
+    debit: number,
+    credit: number,
   ) {
     const account = await this.findAccountByCode(companyId, accountCode);
-    account.balance = Number(account.balance) + amount;
+    if (account.nature === 'acreedora') {
+      account.balance = Number(account.balance) + credit - debit;
+    } else {
+      account.balance = Number(account.balance) + debit - credit;
+    }
     return this.accountRepo.save(account);
   }
 

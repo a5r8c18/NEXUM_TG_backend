@@ -647,10 +647,10 @@ export class VoucherService {
       if (account) {
         const debit = Number(line.debit) || 0;
         const credit = Number(line.credit) || 0;
-        if (account.nature === 'deudora') {
-          account.balance = Number(account.balance) + debit - credit;
-        } else {
+        if (account.nature === 'acreedora') {
           account.balance = Number(account.balance) + credit - debit;
+        } else {
+          account.balance = Number(account.balance) + debit - credit;
         }
         await manager.getRepository(Account).save(account);
       }
@@ -682,10 +682,10 @@ export class VoucherService {
       if (account) {
         const debit = Number(line.debit) || 0;
         const credit = Number(line.credit) || 0;
-        if (account.nature === 'deudora') {
-          account.balance = Number(account.balance) - debit + credit;
-        } else {
+        if (account.nature === 'acreedora') {
           account.balance = Number(account.balance) - credit + debit;
+        } else {
+          account.balance = Number(account.balance) - debit + credit;
         }
         await manager.getRepository(Account).save(account);
       }

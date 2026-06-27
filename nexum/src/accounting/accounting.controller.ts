@@ -761,19 +761,22 @@ export class AccountingController {
     return this.accountService.getSubaccountsByAccount(companyId, accountId);
   }
 
+  @Get('subaccounts/statistics')
+  getSubaccountStatistics(@Req() req: Request) {
+    const companyId = getCompanyId(req);
+    return this.accountService.getAccountStatistics(companyId);
+  }
+
   @Get('subaccounts')
   findAllSubaccounts(
     @Req() req: Request,
     @Query('accountId') accountId?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.accountService.findAllAccounts(companyId, { level: '4' });
-  }
-
-  @Get('subaccounts/statistics')
-  getSubaccountStatistics(@Req() req: Request) {
-    const companyId = getCompanyId(req);
-    return this.accountService.getStatistics(companyId);
+    return this.accountService.findAllAccounts(companyId, {
+      level: '4',
+      ...(accountId ? { parentCode: accountId } : {}),
+    });
   }
 
   @Get('subaccounts/:id')
