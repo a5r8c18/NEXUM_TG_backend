@@ -54,6 +54,22 @@ export class CreatePurchaseDto {
   @IsString()
   creditAccountCode?: string;
 
+  // Transportista y responsables (para reportes de recepción)
+  @IsOptional()
+  transportista?: {
+    nombre?: string;
+    ci?: string;
+    chapa?: string;
+  };
+
+  @IsOptional()
+  responsables?: {
+    jefeAlmacen?: string;
+    recepcionadoPor?: string;
+    anotadoPor?: string;
+    contabilizadoPor?: string;
+  };
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PurchaseProductDto)

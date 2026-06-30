@@ -201,6 +201,8 @@ export class PurchasesService {
           supplier: data.supplier,
           document: data.document,
           products: productsJson,
+          transportista: (data as any).transportista || null,
+          responsables: (data as any).responsables || null,
         }),
         totalItems: products.length,
         totalAmount,
