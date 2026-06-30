@@ -70,6 +70,10 @@ export class CreatePurchaseDto {
     contabilizadoPor?: string;
   };
 
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PurchaseProductDto)

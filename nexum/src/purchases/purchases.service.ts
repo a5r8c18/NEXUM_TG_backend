@@ -187,9 +187,24 @@ export class PurchasesService {
     const warehouseEntity = await this.warehousesService.findByIdOrCode(companyId, data.warehouse);
     const warehouseName = warehouseEntity?.name || data.warehouse;
 
+    // Generar número de informe consecutivo por almacén
+    const year = new Date().getFullYear();
+    const lastReport = await this.rrRepo.findOne({
+      where: { warehouseId: data.warehouse },
+      order: { reportNumber: 'DESC' },
+    });
+    let sequence = 1;
+    if (lastReport?.reportNumber) {
+      const match = lastReport.reportNumber.match(/RP-(\d{4})-(\d{4})/);
+      if (match && match[1] === String(year)) {
+        sequence = parseInt(match[2]) + 1;
+      }
+    }
+    const reportNumber = `RP-${year}-${String(sequence).padStart(4, '0')}`;
+
     await this.rrRepo.save(
       this.rrRepo.create({
-        reportNumber: `RP-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`,
+        reportNumber,
         reportDate: new Date().toISOString().split('T')[0],
         purchaseId: purchase.id,
         supplierName: data.supplier,
@@ -203,6 +218,7 @@ export class PurchasesService {
           products: productsJson,
           transportista: (data as any).transportista || null,
           responsables: (data as any).responsables || null,
+          notes: (data as any).notes || null,
         }),
         totalItems: products.length,
         totalAmount,
