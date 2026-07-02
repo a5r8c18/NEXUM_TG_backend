@@ -65,17 +65,8 @@ export class ProductsController {
 
   @Post()
   async create(@Request() req, @Body() data: any) {
-    console.log('📦 PRODUCTS CONTROLLER - Creando producto:', {
-      user: req.user,
-      companyId: req.user?.companyId,
-      data: data
-    });
-    
     const companyId = req.user.companyId;
-    const result = await this.productsService.create(companyId, data);
-    
-    console.log('✅ PRODUCTS CONTROLLER - Producto creado exitosamente:', result);
-    return result;
+    return await this.productsService.create(companyId, data);
   }
 
   @Put(':id')
