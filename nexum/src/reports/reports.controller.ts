@@ -33,6 +33,25 @@ export class ReportsController {
     });
   }
 
+  @Get('transfers')
+  getTransferReports(
+    @Req() req: Request,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('product') product?: string,
+    @Query('sourceWarehouse') sourceWarehouse?: string,
+    @Query('destinationWarehouse') destinationWarehouse?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.reportsService.getTransferReports(companyId, {
+      fromDate,
+      toDate,
+      product,
+      sourceWarehouse,
+      destinationWarehouse,
+    });
+  }
+
   @Get('delivery')
   getDeliveryReports(
     @Req() req: Request,

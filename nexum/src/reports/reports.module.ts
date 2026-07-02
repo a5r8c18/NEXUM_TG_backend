@@ -7,6 +7,7 @@ import { ReceptionReport } from '../entities/reception-report.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import { Inventory } from '../entities/inventory.entity';
 import { Movement } from '../entities/movement.entity';
+import { MovementItem } from '../entities/movement-item.entity';
 import { Purchase } from '../entities/purchase.entity';
 
 @Module({
@@ -16,6 +17,7 @@ import { Purchase } from '../entities/purchase.entity';
       DeliveryReport,
       Inventory,
       Movement,
+      MovementItem,
       Purchase,
     ]),
     forwardRef(() => AuthModule),

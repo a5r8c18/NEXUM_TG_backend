@@ -5,6 +5,7 @@ import { ReceptionReport } from '../entities/reception-report.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import { Inventory } from '../entities/inventory.entity';
 import { Movement } from '../entities/movement.entity';
+import { MovementItem } from '../entities/movement-item.entity';
 import { Purchase } from '../entities/purchase.entity';
 
 @Injectable()
@@ -18,6 +19,8 @@ export class ReportsService {
     private readonly inventoryRepo: Repository<Inventory>,
     @InjectRepository(Movement)
     private readonly movementRepo: Repository<Movement>,
+    @InjectRepository(MovementItem)
+    private readonly movementItemRepo: Repository<MovementItem>,
     @InjectRepository(Purchase)
     private readonly purchaseRepo: Repository<Purchase>,
   ) {}
@@ -176,6 +179,107 @@ export class ReportsService {
     }
     if (filters?.toDate) {
       result = result.filter((r: any) => r.date <= filters.toDate!);
+    }
+
+    return result;
+  }
+
+  async getTransferReports(
+    companyId: number,
+    filters?: {
+      fromDate?: string;
+      toDate?: string;
+      product?: string;
+      sourceWarehouse?: string;
+      destinationWarehouse?: string;
+    },
+  ) {
+    const qb = this.movementRepo
+      .createQueryBuilder('m')
+      .where('m.company_id = :companyId', { companyId })
+      .andWhere('m.movement_type = :type', { type: 'transfer' })
+      .andWhere('m.source_warehouse IS NOT NULL')
+      .andWhere('m.destination_warehouse IS NOT NULL')
+      .orderBy('m.created_at', 'DESC');
+
+    // Sólo el movimiento de SALIDA (código 1102/2102/3102) para evitar duplicados
+    qb.andWhere('m.movement_code IN (:...exitCodes)', {
+      exitCodes: ['1102', '2102', '3102'],
+    });
+
+    if (filters?.fromDate) {
+      qb.andWhere('m.created_at >= :from', { from: filters.fromDate });
+    }
+    if (filters?.toDate) {
+      qb.andWhere('m.created_at <= :to', { to: filters.toDate + 'T23:59:59' });
+    }
+    if (filters?.sourceWarehouse) {
+      qb.andWhere('m.source_warehouse = :sw', { sw: filters.sourceWarehouse });
+    }
+    if (filters?.destinationWarehouse) {
+      qb.andWhere('m.destination_warehouse = :dw', { dw: filters.destinationWarehouse });
+    }
+
+    const movements = await qb.getMany();
+
+    // Cargar items de todos los movimientos en una sola consulta
+    const movIds = movements.map((m) => m.id);
+    const allItems =
+      movIds.length > 0
+        ? await this.movementItemRepo
+            .createQueryBuilder('mi')
+            .where('mi.movement_id IN (:...ids)', { ids: movIds })
+            .getMany()
+        : [];
+
+    const itemsByMovId = new Map<string, MovementItem[]>();
+    for (const item of allItems) {
+      const list = itemsByMovId.get(item.movementId) || [];
+      list.push(item);
+      itemsByMovId.set(item.movementId, list);
+    }
+
+    let result = movements.map((m) => {
+      const items = itemsByMovId.get(m.id) || [];
+      const products = items.map((i) => ({
+        code: i.productCode,
+        description: i.productName,
+        unit: i.productUnit || '-',
+        quantity: i.quantity,
+        unitPrice: Number(i.unitPrice),
+        amount: Number(i.totalAmount),
+      }));
+      const totalAmount = products.reduce((s, p) => s + p.amount, 0);
+      const dateStr =
+        m.createdAt instanceof Date
+          ? m.createdAt.toISOString()
+          : String(m.createdAt);
+
+      return {
+        id: m.id,
+        relatedMovementId: m.relatedMovementId,
+        movementCode: m.movementCode,
+        movementDescription: m.movementDescription,
+        category: m.category,
+        sourceWarehouse: m.sourceWarehouse,
+        destinationWarehouse: m.destinationWarehouse,
+        reason: m.reason,
+        userName: m.userName,
+        details: { products, totalAmount },
+        date: dateStr.split('T')[0],
+        created_at: dateStr,
+      };
+    });
+
+    if (filters?.product) {
+      const s = filters.product.toLowerCase();
+      result = result.filter((r) =>
+        r.details.products.some(
+          (p) =>
+            p.description.toLowerCase().includes(s) ||
+            p.code.toLowerCase().includes(s),
+        ),
+      );
     }
 
     return result;
