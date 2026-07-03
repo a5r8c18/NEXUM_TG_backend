@@ -31,4 +31,10 @@ export class PurchasesController {
     const companyId = getCompanyId(req);
     return this.purchasesService.create(companyId, body);
   }
+
+  @Post(':id/invoice')
+  registerSupplierInvoice(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.purchasesService.registerSupplierInvoice(companyId, id, body);
+  }
 }

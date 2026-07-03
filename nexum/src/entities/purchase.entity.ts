@@ -39,6 +39,15 @@ export class Purchase {
   @Column({ length: 100, nullable: true })
   document: string;
 
+  @Column({ name: 'invoice_number', length: 100, nullable: true })
+  invoiceNumber: string | null;
+
+  @Column({ name: 'invoice_date', type: 'date', nullable: true })
+  invoiceDate: Date | null;
+
+  @Column({ name: 'is_invoiced', type: 'boolean', default: false })
+  isInvoiced: boolean;
+
   @Column({ length: 50, default: 'pending' })
   status: string;
 

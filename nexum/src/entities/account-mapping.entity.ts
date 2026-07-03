@@ -15,6 +15,7 @@ export enum MappingType {
   INVENTORY_ENTRY = 'inventory_entry',
   INVENTORY_EXIT = 'inventory_exit',
   INVENTORY_RETURN = 'inventory_return',
+  INVENTORY_TRANSIT = 'inventory_transit', // Cuenta puente: Mercancías en tránsito / Recepción no facturada
   FIXED_ASSET_ACQUISITION = 'fixed_asset_acquisition',
   FIXED_ASSET_DEPRECIATION = 'fixed_asset_depreciation',
   PAYROLL_PROCESSING = 'payroll_processing',

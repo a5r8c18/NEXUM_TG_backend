@@ -11,6 +11,7 @@ import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
 import { Movement } from '../entities/movement.entity';
 import { ReceptionReport } from '../entities/reception-report.entity';
+import { AccountPayable } from '../entities/account-payable.entity';
 import { getMovementType } from '../movements/movement-types.catalog';
 
 @Injectable()
@@ -32,6 +33,8 @@ export class PurchasesService {
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(ReceptionReport)
     private readonly rrRepo: Repository<ReceptionReport>,
+    @InjectRepository(AccountPayable)
+    private readonly apRepo: Repository<AccountPayable>,
   ) {}
 
   async findAll(companyId: number) {
@@ -226,17 +229,18 @@ export class PurchasesService {
       }),
     );
 
-    // ── Contabilización automática de compra ──
+    // ── Contabilización automática de compra (recepción de mercancía) ──
     const purchaseTotal = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
     if (purchaseTotal > 0) {
       try {
-        // Obtener cuentas: si el usuario las proporcionó, usarlas; si no, usar defaults
+        // Según normas cubanas: recepción de mercancía usa cuenta puente
+        // Débito: 189 (Inventario) / Crédito: 189-01 (Mercancías en tránsito)
         const debitAccount = data.debitAccountCode
           ? data.debitAccountCode
           : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189';
         const creditAccount = data.creditAccountCode
           ? data.creditAccountCode
-          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410';
+          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '189-01';
 
         await this.voucherService.createVoucherFromModule(
           companyId,
@@ -246,35 +250,144 @@ export class PurchasesService {
             date: purchase.createdAt
               ? new Date(purchase.createdAt).toISOString().split('T')[0]
               : new Date().toISOString().split('T')[0],
-            description: `Compra ${data.document} - ${data.supplier}`,
+            description: `Recepción mercancía ${data.document} - ${data.supplier}`,
             type: 'inventory',
-            reference: `COMPRA-${purchase.id.substring(0, 8)}`,
+            reference: `RECEPCION-${purchase.id.substring(0, 8)}`,
             createdBy: userName || 'Sistema',
             lines: [
               {
                 accountCode: debitAccount,
                 debit: purchaseTotal,
                 credit: 0,
-                description: `Compra mercancías - ${data.document}`,
+                description: `Inventario recibido - ${data.document}`,
               },
               {
                 accountCode: creditAccount,
                 debit: 0,
                 credit: purchaseTotal,
-                description: `Obligación proveedor ${data.supplier}`,
+                description: `Mercancías en tránsito - ${data.supplier}`,
               },
             ],
           },
         );
-        this.logger.log(`Comprobante contable generado para compra ${purchase.id} con cuentas: ${debitAccount} / ${creditAccount}`);
+        this.logger.log(`Comprobante contable generado para recepción ${purchase.id} con cuentas: ${debitAccount} / ${creditAccount}`);
       } catch (error) {
         this.logger.error(
-          `Error al generar comprobante para compra ${purchase.id}: ${error.message}`,
+          `Error al generar comprobante para recepción ${purchase.id}: ${error.message}`,
           error.stack,
         );
       }
     }
 
     return { purchase, products };
+  }
+
+  /**
+   * Registra la factura del proveedor para una compra existente.
+   * Genera el asiento contable: Débito 189-01 (Mercancías en tránsito) / Crédito 410 (Proveedores)
+   */
+  async registerSupplierInvoice(
+    companyId: number,
+    purchaseId: string,
+    data: {
+      invoiceNumber: string;
+      invoiceDate: string;
+      debitAccountCode?: string;  // Override: cuenta puente (default 189-01)
+      creditAccountCode?: string; // Override: cuenta proveedor (default 410)
+    },
+    userName?: string,
+  ) {
+    const purchase = await this.purchaseRepo.findOne({
+      where: { id: purchaseId, companyId },
+      relations: ['products'],
+    });
+
+    if (!purchase) {
+      throw new BadRequestException('Compra no encontrada');
+    }
+
+    if (purchase.isInvoiced) {
+      throw new BadRequestException('Esta compra ya tiene factura registrada');
+    }
+
+    // Actualizar purchase con datos de factura
+    purchase.invoiceNumber = data.invoiceNumber;
+    purchase.invoiceDate = new Date(data.invoiceDate);
+    purchase.isInvoiced = true;
+    purchase.status = 'invoiced';
+    await this.purchaseRepo.save(purchase);
+
+    // Calcular total de la compra
+    const purchaseTotal = purchase.products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
+
+    // Generar asiento contable: liquida cuenta puente, crea CxP
+    const debitAccount = data.debitAccountCode
+      ? data.debitAccountCode
+      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '189-01';
+    const creditAccount = data.creditAccountCode
+      ? data.creditAccountCode
+      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410';
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'inventory',
+      purchase.id,
+      {
+        date: data.invoiceDate,
+        description: `Factura ${data.invoiceNumber} - ${purchase.supplier}`,
+        type: 'inventory',
+        reference: `FAC-${data.invoiceNumber}`,
+        createdBy: userName || 'Sistema',
+        lines: [
+          {
+            accountCode: debitAccount,
+            debit: purchaseTotal,
+            credit: 0,
+            description: `Liquida mercancías en tránsito - ${data.invoiceNumber}`,
+          },
+          {
+            accountCode: creditAccount,
+            debit: 0,
+            credit: purchaseTotal,
+            description: `Cuenta por pagar - ${purchase.supplier}`,
+          },
+        ],
+      },
+    );
+
+    // Crear AccountPayable automáticamente
+    const apCount = await this.apRepo.count({ where: { companyId } });
+    const apNumber = `CP-${new Date().getFullYear()}-${String(apCount + 1).padStart(4, '0')}`;
+    
+    const accountPayable = await this.apRepo.save(
+      this.apRepo.create({
+        apNumber,
+        purchaseId: purchase.id,
+        purchaseNumber: purchase.document,
+        supplierId: 'SUP-' + purchase.supplier.substring(0, 8), // Generar ID temporal
+        supplierName: purchase.supplier,
+        supplierNit: 'NIT-' + purchase.supplier.substring(0, 8), // Generar NIT temporal
+        invoiceNumber: data.invoiceNumber,
+        invoiceDate: data.invoiceDate,
+        originalAmount: purchaseTotal,
+        balanceAmount: purchaseTotal,
+        paidAmount: 0,
+        dueDate: new Date(new Date(data.invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 días por defecto
+        agingDays: 0,
+        agingCategory: 'current',
+        status: 'pending',
+        priority: 'normal',
+        paymentTerms: 'contado',
+        earlyPaymentDiscount: 0,
+        latePaymentPenalty: 0,
+        currency: 'CUP',
+        exchangeRate: 1,
+        companyId,
+      }),
+    );
+
+    this.logger.log(`Factura ${data.invoiceNumber} registrada para compra ${purchaseId}. Asiento: ${debitAccount} / ${creditAccount}. CxP creada: ${apNumber}`);
+
+    return { purchase, message: 'Factura registrada correctamente' };
   }
 }

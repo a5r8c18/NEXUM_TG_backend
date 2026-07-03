@@ -311,6 +311,7 @@ const baseAccounts = [
   { code: '187', name: 'Útiles, Herramientas y Otros', description: 'Útiles, Herramientas y Otros', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
   { code: '188', name: 'Producción Terminada', description: 'Producción Terminada', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: false }, // tiene subcuentas
   { code: '189', name: 'Mercancías para la Venta', description: 'Mercancías para la Venta', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
+  { code: '189-01', name: 'Mercancías en Tránsito / Recepción no Facturada', description: 'Cuenta puente para mercancías recibidas pero no facturadas', type: 'asset', nature: 'deudora', level: 4, groupNumber: '10', parentCode: '189', allowsMovements: true },
   { code: '190', name: 'Medicamentos', description: 'Medicamentos', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
   { code: '191', name: 'Base Material de Estudio', description: 'Base Material de Estudio', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
   { code: '192', name: 'Vestuario y Lencería', description: 'Vestuario y Lencería', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },

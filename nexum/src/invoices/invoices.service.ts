@@ -16,6 +16,7 @@ import { MappingType } from '../entities/account-mapping.entity';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
+import { AccountReceivable } from '../entities/account-receivable.entity';
 import { PaginationService } from '../common/pagination/pagination.service';
 import {
   PaginationDto,
@@ -40,6 +41,8 @@ export class InvoicesService {
     private readonly invoiceItemRepo: Repository<InvoiceItem>,
     @InjectRepository(Movement)
     private readonly movementRepo: Repository<Movement>,
+    @InjectRepository(AccountReceivable)
+    private readonly arRepo: Repository<AccountReceivable>,
   ) {}
 
   async findAll(
@@ -310,6 +313,38 @@ export class InvoicesService {
         this.logger.error(`Error contabilización factura ${invoice.id}: ${error.message}`);
       }
     }
+
+    // Crear AccountReceivable automáticamente
+    const arCount = await this.arRepo.count({ where: { companyId } });
+    const arNumber = `CC-${new Date().getFullYear()}-${String(arCount + 1).padStart(4, '0')}`;
+    
+    const accountReceivable = await this.arRepo.save(
+      this.arRepo.create({
+        arNumber,
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        customerName: invoice.customerName,
+        customerId: invoice.customerId || null,
+        customerAddress: invoice.customerAddress || null,
+        customerPhone: invoice.customerPhone || null,
+        customerEmail: null,
+        customerNit: null,
+        originalAmount: Number(invoice.total),
+        balanceAmount: Number(invoice.total),
+        paidAmount: 0,
+        dueDate: new Date(new Date(invoice.date).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 días por defecto
+        agingDays: 0,
+        agingCategory: 'current',
+        status: 'pending',
+        priority: 'normal',
+        creditLimit: null,
+        availableCredit: null,
+        collectionNotes: null,
+        companyId,
+      }),
+    );
+
+    this.logger.log(`CxC creada para factura ${invoice.invoiceNumber}: ${arNumber}`);
 
     return { invoice };
   }
