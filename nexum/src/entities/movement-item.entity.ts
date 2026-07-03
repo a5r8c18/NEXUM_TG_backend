@@ -57,4 +57,7 @@ export class MovementItem {
 
   @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
   costCenterId: string | null;
+
+  @Column({ name: 'subelement_id', type: 'uuid', nullable: true })
+  subelementId: string | null;
 }

@@ -40,6 +40,28 @@ export class PhysicalCount {
   @Column({ type: 'date' })
   date: string;
 
+  // SC-2-22 (Conteo Físico) - Campos específicos del formato oficial MINCIN
+  @Column({ name: 'authorization_number', type: 'varchar', length: 50, nullable: true })
+  authorizationNumber: string | null;
+
+  @Column({ name: 'authorization_date', type: 'timestamp', nullable: true })
+  authorizationDate: Date | null;
+
+  @Column({ name: 'responsible_person', type: 'varchar', length: 255, nullable: true })
+  responsiblePerson: string | null;
+
+  @Column({ name: 'count_team', type: 'text', nullable: true })
+  countTeam: string | null;
+
+  @Column({ name: 'count_method', type: 'varchar', length: 100, default: 'complete' })
+  countMethod: string;
+
+  @Column({ name: 'count_period_start', type: 'date', nullable: true })
+  countPeriodStart: Date | null;
+
+  @Column({ name: 'count_period_end', type: 'date', nullable: true })
+  countPeriodEnd: Date | null;
+
   @Column({ type: 'varchar', length: 20, default: 'draft' })
   status: PhysicalCountStatus;
 

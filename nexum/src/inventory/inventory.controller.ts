@@ -1,6 +1,6 @@
 import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
-import { InventoryService } from './inventory.service';
+import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
@@ -10,7 +10,7 @@ import { getCompanyId } from '../common/get-company-id';
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('inventory')
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(private readonly inventoryWarehouseService: InventoryWarehouseService) {}
 
   @Get()
   getInventory(
@@ -25,14 +25,6 @@ export class InventoryController {
     @Query('maxStock') maxStock?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.inventoryService.getInventory(companyId, {
-      fromDate,
-      toDate,
-      product,
-      warehouse,
-      entity,
-      minStock: minStock ? parseInt(minStock) : undefined,
-      maxStock: maxStock ? parseInt(maxStock) : undefined,
-    });
+    return this.inventoryWarehouseService.findByCompany(companyId);
   }
 }

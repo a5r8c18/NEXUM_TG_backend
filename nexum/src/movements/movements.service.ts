@@ -275,11 +275,13 @@ export class MovementsService {
         location?: string;
         expenseElement?: string;
         costCenterId?: string;
+        subelementId?: string;
       }[];
       // Cuentas contables seleccionadas por el usuario (override de defaults)
       debitAccountCode?: string;
       creditAccountCode?: string;
       costCenterId?: string;
+      subelementId?: string;
       // Backward compatibility (single product)
       productCode?: string;
       productName?: string;
@@ -305,6 +307,7 @@ export class MovementsService {
         location: data.location,
         expenseElement: data.expenseElement,
         costCenterId: data.costCenterId,
+        subelementId: data.subelementId,
       }];
     }
 
@@ -369,6 +372,7 @@ export class MovementsService {
         productDescription: item.productDescription || null,
         expenseElement: item.expenseElement || null,
         costCenterId: item.costCenterId || null,
+        subelementId: item.subelementId || null,
       });
     }
 
@@ -388,6 +392,7 @@ export class MovementsService {
       label: data.label || null,
       expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
       costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
+      subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
       destinationWarehouse: data.warehouseId,
       userName: userName || 'System',
     });
@@ -431,7 +436,8 @@ export class MovementsService {
       debitAccountCode?: string;
       creditAccountCode?: string;
       costCenterId?: string;
-      items?: { productCode: string; quantity: number; expenseElement?: string; costCenterId?: string }[];
+      subelementId?: string;
+      items?: { productCode: string; quantity: number; expenseElement?: string; costCenterId?: string; subelementId?: string }[];
       // Backward compatibility (single product)
       product_code?: string;
       quantity?: number;
@@ -446,6 +452,7 @@ export class MovementsService {
         quantity: data.quantity,
         expenseElement: data.expenseElement,
         costCenterId: data.costCenterId,
+        subelementId: data.subelementId,
       }];
     }
 
@@ -504,6 +511,7 @@ export class MovementsService {
         productDescription: inventory?.productDescription || null,
         expenseElement: item.expenseElement || data.expenseElement || null,
         costCenterId: item.costCenterId || data.costCenterId || null,
+        subelementId: item.subelementId || data.subelementId || null,
       });
 
       valeProducts.push({
@@ -533,6 +541,7 @@ export class MovementsService {
         sourceWarehouse: data.warehouseId,
         expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
         costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
+        subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
         userName: userName || 'System',
       }),
     );
@@ -807,7 +816,8 @@ export class MovementsService {
       debitAccountCode?: string;
       creditAccountCode?: string;
       costCenterId?: string;
-      items?: { productCode: string; quantity: number; costCenterId?: string }[];
+      subelementId?: string;
+      items?: { productCode: string; quantity: number; costCenterId?: string; subelementId?: string }[];
       // Backward compatibility (single product)
       product_code?: string;
       quantity?: number;
@@ -817,7 +827,7 @@ export class MovementsService {
     // Normalizar: convertir single-product a items[]
     let items = data.items || [];
     if (!items.length && data.product_code && data.quantity) {
-      items = [{ productCode: data.product_code, quantity: data.quantity, costCenterId: data.costCenterId }];
+      items = [{ productCode: data.product_code, quantity: data.quantity, costCenterId: data.costCenterId, subelementId: data.subelementId }];
     }
 
     if (!items.length) {
@@ -875,6 +885,7 @@ export class MovementsService {
         productUnit: inventory?.productUnit || 'und',
         productDescription: inventory?.productDescription || null,
         costCenterId: item.costCenterId || data.costCenterId || null,
+        subelementId: item.subelementId || data.subelementId || null,
       });
 
       valeProducts.push({
@@ -903,6 +914,7 @@ export class MovementsService {
         reason: data.reason,
         destinationWarehouse: data.warehouseId,
         costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
+        subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
         userName: userName || 'System',
         purchaseId: data.purchase_id || null,
       }),

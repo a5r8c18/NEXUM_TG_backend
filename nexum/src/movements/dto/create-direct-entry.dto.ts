@@ -33,6 +33,10 @@ export class EntryItemDto {
   @IsOptional()
   @IsString()
   expenseElement?: string;
+
+  @IsOptional()
+  @IsString()
+  subelementId?: string;
 }
 
 export class CreateDirectEntryDto {
@@ -75,6 +79,10 @@ export class CreateDirectEntryDto {
   @IsOptional()
   @IsString()
   costCenterId?: string;
+
+  @IsOptional()
+  @IsString()
+  subelementId?: string;
 
   // ── Backward compatibility (single product) ──
   @IsOptional()

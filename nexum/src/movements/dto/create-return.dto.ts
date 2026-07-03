@@ -13,6 +13,10 @@ export class ReturnItemDto {
   @IsOptional()
   @IsString()
   costCenterId?: string;
+
+  @IsOptional()
+  @IsString()
+  subelementId?: string;
 }
 
 export class CreateReturnDto {
@@ -52,6 +56,10 @@ export class CreateReturnDto {
   @IsOptional()
   @IsString()
   costCenterId?: string;
+
+  @IsOptional()
+  @IsString()
+  subelementId?: string;
 
   // ── Batch: array de productos ──
   @IsOptional()
