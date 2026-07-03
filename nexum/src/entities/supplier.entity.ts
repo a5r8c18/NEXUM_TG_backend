@@ -3,12 +3,10 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
-  OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { Company } from './company.entity';
-import { Purchase } from './purchase.entity';
 
 @Entity('suppliers')
 export class Supplier {
@@ -71,9 +69,6 @@ export class Supplier {
 
   @ManyToOne(() => Company)
   company: Company;
-
-  @OneToMany(() => Purchase, purchase => purchase.supplier)
-  purchases: Purchase[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

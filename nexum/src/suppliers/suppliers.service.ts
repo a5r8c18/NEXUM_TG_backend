@@ -31,7 +31,6 @@ export class SuppliersService {
   async findOne(companyId: number, id: string) {
     const supplier = await this.supplierRepo.findOne({
       where: { id, companyId },
-      relations: ['purchases'],
     });
     if (!supplier) throw new NotFoundException(`Proveedor ${id} no encontrado`);
     return supplier;
