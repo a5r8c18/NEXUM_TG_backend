@@ -13,6 +13,10 @@ export class ExitItemDto {
   @IsOptional()
   @IsString()
   expenseElement?: string;
+
+  @IsOptional()
+  @IsString()
+  costCenterId?: string;
 }
 
 export class CreateExitDto {
@@ -48,6 +52,10 @@ export class CreateExitDto {
   @IsOptional()
   @IsString()
   creditAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  costCenterId?: string;
 
   // ── Batch: array de productos ──
   @IsOptional()

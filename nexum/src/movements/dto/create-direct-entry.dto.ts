@@ -72,6 +72,10 @@ export class CreateDirectEntryDto {
   @IsString()
   creditAccountCode?: string;
 
+  @IsOptional()
+  @IsString()
+  costCenterId?: string;
+
   // ── Backward compatibility (single product) ──
   @IsOptional()
   @IsString()

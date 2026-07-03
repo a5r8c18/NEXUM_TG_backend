@@ -54,4 +54,7 @@ export class MovementItem {
 
   @Column({ name: 'expense_element', type: 'varchar', length: 100, nullable: true })
   expenseElement: string | null;
+
+  @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
+  costCenterId: string | null;
 }

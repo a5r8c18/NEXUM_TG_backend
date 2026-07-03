@@ -9,6 +9,10 @@ export class ReturnItemDto {
   @IsNumber({}, { message: 'La cantidad debe ser un número' })
   @IsPositive({ message: 'La cantidad debe ser mayor que 0' })
   quantity: number;
+
+  @IsOptional()
+  @IsString()
+  costCenterId?: string;
 }
 
 export class CreateReturnDto {
@@ -44,6 +48,10 @@ export class CreateReturnDto {
   @IsOptional()
   @IsString()
   creditAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  costCenterId?: string;
 
   // ── Batch: array de productos ──
   @IsOptional()
