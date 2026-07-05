@@ -562,13 +562,15 @@ export class MovementsService {
     await this.drRepo.save(
       this.drRepo.create({
         companyId,
-        code: `VE-${savedMov.id.substring(0, 8)}`,
-        entity: data.entity || 'Entrega Directa',
-        warehouse: firstInventory?.warehouseName || data.warehouseId,
-        document: `SALIDA-${savedMov.id.substring(0, 8)}`,
+        reportNumber: `VE-${savedMov.id.substring(0, 8)}`,
+        reportDate: new Date(),
+        entityName: data.entity || 'Entrega Directa',
+        warehouseId: data.warehouseId,
+        warehouseName: firstInventory?.warehouseName || data.warehouseId,
+        authorizationDocument: `SALIDA-${savedMov.id.substring(0, 8)}`,
         products: JSON.stringify(valeProducts),
-        reportType: 'Vale de Entrega',
-        reason: data.reason || movType.description,
+        reportType: 'SC-2-08',
+        observations: data.reason || movType.description,
         createdByName: userName || 'System',
       }),
     );
@@ -936,13 +938,15 @@ export class MovementsService {
     await this.drRepo.save(
       this.drRepo.create({
         companyId,
-        code: `VD-${savedMov.id.substring(0, 8)}`,
-        entity: data.entity || 'Devolución',
-        warehouse: firstInventory?.warehouseName || data.warehouseId,
-        document: `DEVOL-${savedMov.id.substring(0, 8)}`,
+        reportNumber: `VD-${savedMov.id.substring(0, 8)}`,
+        reportDate: new Date(),
+        entityName: data.entity || 'Devolución',
+        warehouseId: data.warehouseId,
+        warehouseName: firstInventory?.warehouseName || data.warehouseId,
+        authorizationDocument: `DEVOL-${savedMov.id.substring(0, 8)}`,
         products: JSON.stringify(valeProducts),
-        reportType: 'Vale de Devolución',
-        reason: data.reason,
+        reportType: 'SC-2-08',
+        observations: data.reason,
         createdByName: userName || 'System',
       }),
     );

@@ -37,4 +37,10 @@ export class PurchasesController {
     const companyId = getCompanyId(req);
     return this.purchasesService.registerSupplierInvoice(companyId, id, body);
   }
+
+  @Post(':id/reconcile')
+  reconcilePurchase(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.purchasesService.reconcilePurchase(companyId, id, body);
+  }
 }

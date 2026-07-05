@@ -10,10 +10,11 @@ import { PaginationModule } from '../common/pagination/pagination.module';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
+import { AccountReceivable } from '../entities/account-receivable.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Invoice, InvoiceItem, Movement]),
+    TypeOrmModule.forFeature([Invoice, InvoiceItem, Movement, AccountReceivable]),
     InventoryWarehouseModule,
     ProductsModule,
     AuthModule,

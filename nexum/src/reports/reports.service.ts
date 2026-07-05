@@ -128,17 +128,17 @@ export class ReportsService {
     let result = reports.map((r) => {
       const products = JSON.parse(r.products || '[]');
       const dateStr =
-        r.date instanceof Date ? r.date.toISOString() : String(r.date || '');
+        r.reportDate instanceof Date ? r.reportDate.toISOString() : String(r.reportDate || '');
       const createdAtStr =
         r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt);
       return {
         id: r.id,
-        code: r.code,
-        entity: r.entity,
-        warehouse: r.warehouse,
-        document: r.document,
+        code: r.reportNumber,
+        entity: r.entityName,
+        warehouse: r.warehouseName || r.warehouseId,
+        document: r.authorizationDocument,
         reportType: r.reportType,
-        reason: r.reason,
+        reason: r.observations,
         details: {
           products: products || [],
           totalAmount: products.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0),

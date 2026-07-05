@@ -11,6 +11,7 @@ import { Purchase } from '../entities/purchase.entity';
 import { PurchaseProduct } from '../entities/purchase-product.entity';
 import { Movement } from '../entities/movement.entity';
 import { ReceptionReport } from '../entities/reception-report.entity';
+import { AccountPayable } from '../entities/account-payable.entity';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { ReceptionReport } from '../entities/reception-report.entity';
       PurchaseProduct,
       Movement,
       ReceptionReport,
+      AccountPayable,
     ]),
     InventoryWarehouseModule,
     ProductsModule,

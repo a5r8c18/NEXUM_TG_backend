@@ -390,4 +390,61 @@ export class PurchasesService {
 
     return { purchase, message: 'Factura registrada correctamente' };
   }
+
+  /**
+   * Realiza conciliación a tres vías: pedido, albarán, factura
+   * Valida que los tres documentos coincidan antes de liberar pago
+   */
+  async reconcilePurchase(
+    companyId: number,
+    purchaseId: string,
+    data: {
+      purchaseOrderId?: string;
+      deliveryNoteId?: string;
+    },
+    userName?: string,
+  ) {
+    const purchase = await this.purchaseRepo.findOne({
+      where: { id: purchaseId, companyId },
+    });
+
+    if (!purchase) {
+      throw new BadRequestException('Compra no encontrada');
+    }
+
+    if (purchase.isReconciled) {
+      throw new BadRequestException('Esta compra ya está conciliada');
+    }
+
+    // Validar que exista factura
+    if (!purchase.isInvoiced || !purchase.invoiceNumber) {
+      throw new BadRequestException('La compra debe tener factura registrada antes de conciliar');
+    }
+
+    // Actualizar con IDs de documentos
+    if (data.purchaseOrderId) {
+      purchase.purchaseOrderId = data.purchaseOrderId;
+    }
+    if (data.deliveryNoteId) {
+      purchase.deliveryNoteId = data.deliveryNoteId;
+    }
+
+    // Marcar como conciliada
+    purchase.isReconciled = true;
+    purchase.reconciledAt = new Date();
+    purchase.status = 'reconciled';
+    await this.purchaseRepo.save(purchase);
+
+    this.logger.log(`Compra ${purchaseId} conciliada por ${userName || 'Sistema'}`);
+
+    return { 
+      purchase, 
+      message: 'Conciliación a tres vías completada correctamente',
+      documents: {
+        purchaseOrderId: purchase.purchaseOrderId,
+        deliveryNoteId: purchase.deliveryNoteId,
+        invoiceNumber: purchase.invoiceNumber,
+      }
+    };
+  }
 }

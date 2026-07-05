@@ -48,6 +48,18 @@ export class Purchase {
   @Column({ name: 'is_invoiced', type: 'boolean', default: false })
   isInvoiced: boolean;
 
+  @Column({ name: 'purchase_order_id', type: 'varchar', length: 100, nullable: true })
+  purchaseOrderId: string | null;
+
+  @Column({ name: 'delivery_note_id', type: 'varchar', length: 100, nullable: true })
+  deliveryNoteId: string | null;
+
+  @Column({ name: 'is_reconciled', type: 'boolean', default: false })
+  isReconciled: boolean;
+
+  @Column({ name: 'reconciled_at', type: 'timestamp', nullable: true })
+  reconciledAt: Date | null;
+
   @Column({ length: 50, default: 'pending' })
   status: string;
 
