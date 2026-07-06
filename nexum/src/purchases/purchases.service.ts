@@ -233,14 +233,14 @@ export class PurchasesService {
     const purchaseTotal = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
     if (purchaseTotal > 0) {
       try {
-        // Según normas cubanas: recepción de mercancía usa cuenta puente
-        // Débito: 189 (Inventario) / Crédito: 189-01 (Mercancías en tránsito)
+        // Según normas cubanas: recepción de mercancía usa cuenta transitoria
+        // Débito: 189 (Inventario) / Crédito: 699 (Transitoria del Sistema Automatizado)
         const debitAccount = data.debitAccountCode
           ? data.debitAccountCode
           : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189';
         const creditAccount = data.creditAccountCode
           ? data.creditAccountCode
-          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '189-01';
+          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '699';
 
         await this.voucherService.createVoucherFromModule(
           companyId,
@@ -265,7 +265,7 @@ export class PurchasesService {
                 accountCode: creditAccount,
                 debit: 0,
                 credit: purchaseTotal,
-                description: `Mercancías en tránsito - ${data.supplier}`,
+                description: `Cuenta transitoria - ${data.supplier}`,
               },
             ],
           },
@@ -284,7 +284,7 @@ export class PurchasesService {
 
   /**
    * Registra la factura del proveedor para una compra existente.
-   * Genera el asiento contable: Débito 189-01 (Mercancías en tránsito) / Crédito 410 (Proveedores)
+   * Genera el asiento contable: Débito 699 (Transitoria) / Crédito 410 (Proveedores)
    */
   async registerSupplierInvoice(
     companyId: number,
@@ -292,7 +292,7 @@ export class PurchasesService {
     data: {
       invoiceNumber: string;
       invoiceDate: string;
-      debitAccountCode?: string;  // Override: cuenta puente (default 189-01)
+      debitAccountCode?: string;  // Override: cuenta transitoria (default 699)
       creditAccountCode?: string; // Override: cuenta proveedor (default 410)
     },
     userName?: string,
@@ -320,10 +320,10 @@ export class PurchasesService {
     // Calcular total de la compra
     const purchaseTotal = purchase.products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
 
-    // Generar asiento contable: liquida cuenta puente, crea CxP
+    // Generar asiento contable: liquida cuenta transitoria, crea CxP
     const debitAccount = data.debitAccountCode
       ? data.debitAccountCode
-      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '189-01';
+      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '699';
     const creditAccount = data.creditAccountCode
       ? data.creditAccountCode
       : await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410';

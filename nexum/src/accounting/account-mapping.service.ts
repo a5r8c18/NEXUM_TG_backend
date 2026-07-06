@@ -24,7 +24,7 @@ export class AccountMappingService {
     [MappingType.INVENTORY_ENTRY]: '189',   // Mercancías para la Venta
     [MappingType.INVENTORY_EXIT]: '810',    // Costo de Ventas de Mercancías
     [MappingType.INVENTORY_RETURN]: '189',  // Mercancías (reverso)
-    [MappingType.INVENTORY_TRANSIT]: '189-01', // Mercancías en Tránsito / Recepción no Facturada
+    [MappingType.INVENTORY_TRANSIT]: '699', // Transitoria del Sistema Automatizado
     [MappingType.FIXED_ASSET_ACQUISITION]: '240', // Activos Fijos Tangibles
     [MappingType.FIXED_ASSET_DEPRECIATION]: '840', // Gasto de Depreciación
     [MappingType.PAYROLL_PROCESSING]: '731', // Gastos de Fuerza de Trabajo
