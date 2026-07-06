@@ -41,17 +41,30 @@ export class ReportsService {
       order: { createdAt: 'DESC' },
     });
 
+    // Cargar purchases asociadas para enriquecer con estado del ciclo
+    const purchaseIds = reports
+      .map((r) => r.purchaseId)
+      .filter((id): id is string => !!id);
+    const purchases = purchaseIds.length
+      ? await this.purchaseRepo.findByIds(purchaseIds)
+      : [];
+    const purchaseMap = new Map(purchases.map((p) => [p.id, p]));
+
     let result = reports.map((r) => {
       const parsed = JSON.parse(r.notes || '{}');
       const createdAtStr =
         r.createdAt instanceof Date
           ? r.createdAt.toISOString()
           : String(r.createdAt);
+      const purchase = r.purchaseId ? purchaseMap.get(r.purchaseId) : null;
       return {
         id: r.id,
         reportNumber: r.reportNumber,
         reportDate: r.reportDate,
         purchaseId: r.purchaseId,
+        isInvoiced: purchase?.isInvoiced ?? false,
+        isReconciled: purchase?.isReconciled ?? false,
+        invoiceNumber: purchase?.invoiceNumber ?? null,
         supplierName: r.supplierName,
         warehouseId: r.warehouseId,
         receivedBy: r.receivedBy,
