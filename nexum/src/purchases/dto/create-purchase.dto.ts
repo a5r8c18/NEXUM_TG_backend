@@ -45,6 +45,15 @@ export class CreatePurchaseDto {
   @IsNotEmpty()
   document: string;
 
+  // 👇 Opción C: compra que llega ya facturada (asiento directo 189/405, sin 699)
+  @IsOptional()
+  @IsString()
+  invoiceNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  invoiceDate?: string;
+
   // 👇 NUEVOS CAMPOS OPCIONALES
   @IsOptional()
   @IsString()

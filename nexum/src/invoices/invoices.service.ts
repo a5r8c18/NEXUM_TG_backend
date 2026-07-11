@@ -237,6 +237,12 @@ export class InvoicesService {
     if (invoiceTotal > 0) {
       try {
         // 1. Contabilizar venta (ingreso)
+        // Partida doble: DEBE 135 Cuentas por Cobrar / HABER 900 Ventas
+        const receivableAccount =
+          (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
+        const salesAccount =
+          (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE)) || '900';
+
         await this.voucherService.createVoucherFromModule(
           companyId,
           'invoices',
@@ -249,13 +255,13 @@ export class InvoicesService {
             createdBy: data.createdByName || 'Sistema',
             lines: [
               {
-                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE) || '135',
+                accountCode: receivableAccount,
                 debit: invoiceTotal,
                 credit: 0,
                 description: `Cobro pendiente ${invoice.invoiceNumber}`,
               },
               {
-                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE) === '135' ? '900' : '900',
+                accountCode: salesAccount,
                 debit: 0,
                 credit: invoiceTotal,
                 description: `Venta ${invoice.invoiceNumber}`,

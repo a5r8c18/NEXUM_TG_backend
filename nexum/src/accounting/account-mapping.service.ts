@@ -19,6 +19,7 @@ export class AccountMappingService {
   // Default account mappings — Nomenclador Cubano Resolución 2016
   private readonly defaultMappings: Record<MappingType, string> = {
     [MappingType.INVOICE_SALE]: '900',   // Ventas
+    [MappingType.INVOICE_RECEIVABLE]: '135', // Cuentas por Cobrar (débito venta a crédito)
     [MappingType.INVOICE_PAYMENT]: '101', // Efectivo en Caja
     [MappingType.INVOICE_CANCELLATION]: '900', // Ventas (reverso)
     [MappingType.INVENTORY_ENTRY]: '189',   // Mercancías para la Venta

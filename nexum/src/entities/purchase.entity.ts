@@ -33,13 +33,13 @@ export class Purchase {
   @Column({ length: 255 })
   warehouse: string;
 
-  @Column({ length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   supplier: string;
 
-  @Column({ length: 100, nullable: true })
+  @Column({ type: 'varchar', length: 100, nullable: true })
   document: string;
 
-  @Column({ name: 'invoice_number', length: 100, nullable: true })
+  @Column({ name: 'invoice_number', type: 'varchar', length: 100, nullable: true })
   invoiceNumber: string | null;
 
   @Column({ name: 'invoice_date', type: 'date', nullable: true })

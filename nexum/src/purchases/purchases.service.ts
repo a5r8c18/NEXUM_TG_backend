@@ -67,6 +67,8 @@ export class PurchasesService {
       warehouse: string;
       supplier: string;
       document: string;
+      invoiceNumber?: string;         // <-- Opción C: si la compra llega ya facturada
+      invoiceDate?: string;           // <-- Opción C: fecha de la factura del proveedor
       debitAccountCode?: string;      // <-- NUEVO: cuenta de inventario (débito)
       creditAccountCode?: string;     // <-- NUEVO: cuenta de proveedor (crédito)
       products: Array<{
@@ -87,6 +89,7 @@ export class PurchasesService {
       );
     }
 
+    const arrivesInvoiced = !!data.invoiceNumber;
     const purchase = await this.purchaseRepo.save(
       this.purchaseRepo.create({
         companyId,
@@ -94,7 +97,10 @@ export class PurchasesService {
         warehouse: data.warehouse,
         supplier: data.supplier,
         document: data.document,
-        status: 'completed',
+        status: arrivesInvoiced ? 'invoiced' : 'completed',
+        invoiceNumber: arrivesInvoiced ? data.invoiceNumber : null,
+        invoiceDate: arrivesInvoiced && data.invoiceDate ? new Date(data.invoiceDate) : null,
+        isInvoiced: arrivesInvoiced,
       }),
     );
 
@@ -229,51 +235,90 @@ export class PurchasesService {
       }),
     );
 
-    // ── Contabilización automática de compra (recepción de mercancía) ──
+    // ── Contabilización automática de la compra ──
     const purchaseTotal = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
     if (purchaseTotal > 0) {
       try {
-        // Según normas cubanas: recepción de mercancía usa cuenta transitoria
-        // Débito: 189 (Inventario) / Crédito: 699 (Transitoria del Sistema Automatizado)
-        const debitAccount = data.debitAccountCode
+        const inventoryAccount = data.debitAccountCode
           ? data.debitAccountCode
-          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189';
-        const creditAccount = data.creditAccountCode
-          ? data.creditAccountCode
-          : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '699';
+          : (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY)) || '189';
 
-        await this.voucherService.createVoucherFromModule(
-          companyId,
-          'inventory',
-          purchase.id,
-          {
-            date: purchase.createdAt
-              ? new Date(purchase.createdAt).toISOString().split('T')[0]
-              : new Date().toISOString().split('T')[0],
-            description: `Recepción mercancía ${data.document} - ${data.supplier}`,
-            type: 'inventory',
-            reference: `RECEPCION-${purchase.id.substring(0, 8)}`,
-            createdBy: userName || 'Sistema',
-            lines: [
-              {
-                accountCode: debitAccount,
-                debit: purchaseTotal,
-                credit: 0,
-                description: `Inventario recibido - ${data.document}`,
-              },
-              {
-                accountCode: creditAccount,
-                debit: 0,
-                credit: purchaseTotal,
-                description: `Cuenta transitoria - ${data.supplier}`,
-              },
-            ],
-          },
-        );
-        this.logger.log(`Comprobante contable generado para recepción ${purchase.id} con cuentas: ${debitAccount} / ${creditAccount}`);
+        if (arrivesInvoiced) {
+          // Opción C: la compra llega CON factura → asiento contable directo
+          // Débito 189 (Inventario) / Crédito 405-410 (Cuentas por Pagar). La 699 no interviene.
+          const payableAccount = data.creditAccountCode
+            ? data.creditAccountCode
+            : (await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER)) || '410';
+
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'inventory',
+            purchase.id,
+            {
+              date: purchase.invoiceDate
+                ? new Date(purchase.invoiceDate).toISOString().split('T')[0]
+                : new Date().toISOString().split('T')[0],
+              description: `Compra ${data.document} (fact. ${data.invoiceNumber}) - ${data.supplier}`,
+              type: 'inventory',
+              reference: `FAC-${data.invoiceNumber}`,
+              createdBy: userName || 'Sistema',
+              lines: [
+                {
+                  accountCode: inventoryAccount,
+                  debit: purchaseTotal,
+                  credit: 0,
+                  description: `Inventario recibido - ${data.document}`,
+                },
+                {
+                  accountCode: payableAccount,
+                  debit: 0,
+                  credit: purchaseTotal,
+                  description: `Obligación de pago proveedor - ${data.supplier}`,
+                },
+              ],
+            },
+          );
+          this.logger.log(`Comprobante directo (facturado) generado para compra ${purchase.id}: ${inventoryAccount} / ${payableAccount}`);
+        } else {
+          // Recepción SIN factura → cuenta transitoria (GRNI: mercancía recibida no facturada)
+          // Débito 189 (Inventario) / Crédito 699 (Transitoria). Se liquida al registrar la factura.
+          const transitAccount = data.creditAccountCode
+            ? data.creditAccountCode
+            : (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT)) || '699';
+
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'inventory',
+            purchase.id,
+            {
+              date: purchase.createdAt
+                ? new Date(purchase.createdAt).toISOString().split('T')[0]
+                : new Date().toISOString().split('T')[0],
+              description: `Recepción mercancía ${data.document} - ${data.supplier}`,
+              type: 'inventory',
+              reference: `RECEPCION-${purchase.id.substring(0, 8)}`,
+              createdBy: userName || 'Sistema',
+              lines: [
+                {
+                  accountCode: inventoryAccount,
+                  debit: purchaseTotal,
+                  credit: 0,
+                  description: `Inventario recibido - ${data.document}`,
+                },
+                {
+                  accountCode: transitAccount,
+                  debit: 0,
+                  credit: purchaseTotal,
+                  description: `Cuenta transitoria - ${data.supplier}`,
+                },
+              ],
+            },
+          );
+          this.logger.log(`Comprobante de recepción (sin factura) generado para compra ${purchase.id}: ${inventoryAccount} / ${transitAccount}`);
+        }
       } catch (error) {
         this.logger.error(
-          `Error al generar comprobante para recepción ${purchase.id}: ${error.message}`,
+          `Error al generar comprobante para compra ${purchase.id}: ${error.message}`,
           error.stack,
         );
       }

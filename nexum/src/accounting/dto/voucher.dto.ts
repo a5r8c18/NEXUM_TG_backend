@@ -139,3 +139,15 @@ export class UpdateVoucherStatusDto {
   })
   status: string;
 }
+
+export class BatchUpdateVoucherStatusDto {
+  @IsArray({ message: 'Los ids deben ser un arreglo' })
+  @IsString({ each: true, message: 'Cada id debe ser texto' })
+  ids: string[];
+
+  @IsString({ message: 'El estado debe ser texto' })
+  @IsIn(['draft', 'posted', 'cancelled'], {
+    message: 'Estado inválido. Valores permitidos: draft, posted, cancelled',
+  })
+  status: string;
+}

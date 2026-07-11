@@ -10,6 +10,8 @@ import { CashRegister } from '../entities/cash-register.entity';
 import { CashMovement } from '../entities/cash-movement.entity';
 import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { VoucherService } from '../accounting/voucher.service';
+import { AccountMappingService } from '../accounting/account-mapping.service';
+import { MappingType } from '../entities/account-mapping.entity';
 
 @Injectable()
 export class FinanceService {
@@ -33,6 +35,7 @@ export class FinanceService {
     @InjectRepository(BankReconciliation)
     private readonly reconciliationRepo: Repository<BankReconciliation>,
     private readonly voucherService: VoucherService,
+    private readonly accountMappingService: AccountMappingService,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -400,32 +403,36 @@ export class FinanceService {
     const lines: any[] = [];
 
     if (isIncome) {
-      // Cobro: Abonar CxC (débito) y registrar efectivo (crédito)
-      lines.push({
-        accountCode: '135', // Cuentas por Cobrar a Clientes
-        debit: amount,
-        credit: 0,
-        description: `Cobro ${payment.paymentNumber} - ${data.description || ''}`,
-      });
+      // Cobro de cliente: entra efectivo (DEBE) y se cancela la CxC (HABER)
+      const receivableAccount =
+        (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
       lines.push({
         accountCode: cashAccountCode,
-        debit: 0,
-        credit: amount,
+        debit: amount,
+        credit: 0,
         description: `Ingreso por ${data.paymentMethod}`,
       });
-    } else {
-      // Pago: Abonar CxP (crédito) y registrar salida de efectivo (débito)
       lines.push({
-        accountCode: cashAccountCode,
-        debit: amount,
-        credit: 0,
-        description: `Pago por ${data.paymentMethod}`,
-      });
-      lines.push({
-        accountCode: '136', // Cuentas por Pagar a Proveedores
+        accountCode: receivableAccount, // Cuentas por Cobrar a Clientes
         debit: 0,
         credit: amount,
+        description: `Cobro ${payment.paymentNumber} - ${data.description || ''}`,
+      });
+    } else {
+      // Pago a proveedor: se cancela la CxP (DEBE) y sale efectivo (HABER)
+      const payableAccount =
+        (await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER)) || '410';
+      lines.push({
+        accountCode: payableAccount, // Cuentas por Pagar a Proveedores
+        debit: amount,
+        credit: 0,
         description: `Pago ${payment.paymentNumber} - ${data.description || ''}`,
+      });
+      lines.push({
+        accountCode: cashAccountCode,
+        debit: 0,
+        credit: amount,
+        description: `Pago por ${data.paymentMethod}`,
       });
     }
 

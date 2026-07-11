@@ -24,23 +24,23 @@ export class DeliveryReport {
   company: Company;
 
   // SC-2-08 (Vale de Entrega) - Campos específicos del formato oficial MINCIN
-  @Column({ name: 'report_number', type: 'varchar', length: 50, unique: true })
-  reportNumber: string;
+  @Column({ name: 'report_number', type: 'varchar', length: 50, unique: true, nullable: true })
+  reportNumber: string | null;
 
-  @Column({ type: 'timestamp' })
-  reportDate: Date;
+  @Column({ type: 'timestamp', nullable: true })
+  reportDate: Date | null;
 
-  @Column({ name: 'entity_name', type: 'varchar', length: 255 })
-  entityName: string;
+  @Column({ name: 'entity_name', type: 'varchar', length: 255, nullable: true })
+  entityName: string | null;
 
   @Column({ name: 'entity_nit', type: 'varchar', length: 50, nullable: true })
   entityNit: string | null;
 
-  @Column({ name: 'warehouse_id', type: 'varchar', length: 100 })
-  warehouseId: string;
+  @Column({ name: 'warehouse_id', type: 'varchar', length: 100, nullable: true })
+  warehouseId: string | null;
 
-  @Column({ name: 'warehouse_name', type: 'varchar', length: 255 })
-  warehouseName: string;
+  @Column({ name: 'warehouse_name', type: 'varchar', length: 255, nullable: true })
+  warehouseName: string | null;
 
   @Column({ name: 'authorization_document', type: 'varchar', length: 100, nullable: true })
   authorizationDocument: string | null;
@@ -54,20 +54,20 @@ export class DeliveryReport {
   @Column({ name: 'received_at', type: 'timestamp', nullable: true })
   receivedAt: Date | null;
 
-  @Column({ type: 'text' })
-  products: string;
+  @Column({ type: 'text', nullable: true })
+  products: string | null;
 
-  @Column({ name: 'total_amount', type: 'decimal', precision: 12, scale: 2, default: 0 })
-  totalAmount: number;
+  @Column({ name: 'total_amount', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  totalAmount: number | null;
 
-  @Column({ name: 'report_type', type: 'varchar', length: 50, default: 'SC-2-08' })
-  reportType: string;
+  @Column({ name: 'report_type', type: 'varchar', length: 50, nullable: true })
+  reportType: string | null;
 
   @Column({ type: 'text', nullable: true })
   observations: string | null;
 
-  @Column({ name: 'status', type: 'varchar', length: 50, default: 'draft' })
-  status: string;
+  @Column({ name: 'status', type: 'varchar', length: 50, nullable: true })
+  status: string | null;
 
   @Column({
     name: 'created_by_name',

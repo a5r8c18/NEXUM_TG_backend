@@ -10,6 +10,7 @@ import { Company } from './company.entity';
 
 export enum MappingType {
   INVOICE_SALE = 'invoice_sale',
+  INVOICE_RECEIVABLE = 'invoice_receivable', // Débito venta a crédito: Cuentas por Cobrar
   INVOICE_PAYMENT = 'invoice_payment',
   INVOICE_CANCELLATION = 'invoice_cancellation',
   INVENTORY_ENTRY = 'inventory_entry',

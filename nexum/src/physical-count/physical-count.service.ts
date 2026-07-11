@@ -281,34 +281,51 @@ export class PhysicalCountService {
       for (const item of items) {
         if (item.difference === 0) continue;
 
-        // Determinar código de movimiento según la diferencia
-        const movementCode = item.difference > 0 ? '105' : '1104'; // Sobrante o Faltante
-        const movementType = item.difference > 0 ? 'entry' : 'exit';
-        
-        // Crear movimiento de ajuste
-        await this.movementsService.createDirectEntry(
-          companyId,
-          {
-            movementCode,
-            category: 'mercancia', // Por defecto, podría obtenerse del producto
-            label: `Ajuste por conteo físico - ${count.countNumber}`,
-            entity: 'Ajuste Inventario',
-            warehouseId: count.warehouseId,
-            items: [{
-              productCode: item.productCode,
-              productName: item.productName,
-              quantity: Math.abs(item.difference),
-              unitPrice: item.unitPrice,
-              unit: item.productUnit,
-              location: undefined,
-              expenseElement: undefined,
-            }],
-          },
-          userName || 'System',
-        );
+        let adjustmentMovement: { id: string };
+
+        if (item.difference > 0) {
+          // Sobrante: entrada de inventario (código 205 - mercancía)
+          adjustmentMovement = await this.movementsService.createDirectEntry(
+            companyId,
+            {
+              movementCode: '205',
+              category: 'mercancia', // Por defecto, podría obtenerse del producto
+              label: `Ajuste por conteo físico - ${count.countNumber}`,
+              entity: 'Ajuste Inventario',
+              warehouseId: count.warehouseId,
+              items: [{
+                productCode: item.productCode,
+                productName: item.productName,
+                quantity: item.difference,
+                unitPrice: item.unitPrice,
+                unit: item.productUnit,
+                location: undefined,
+                expenseElement: undefined,
+              }],
+            },
+            userName || 'System',
+          );
+        } else {
+          // Faltante: salida de inventario (código 2104 - mercancía)
+          adjustmentMovement = await this.movementsService.createExit(
+            companyId,
+            {
+              movementCode: '2104',
+              category: 'mercancia',
+              reason: `Ajuste por conteo físico - ${count.countNumber}`,
+              entity: 'Ajuste Inventario',
+              warehouseId: count.warehouseId,
+              items: [{
+                productCode: item.productCode,
+                quantity: Math.abs(item.difference),
+              }],
+            },
+            userName || 'System',
+          );
+        }
 
         // Vincular el movimiento al item del conteo
-        item.adjustmentMovementId = 'MOV-' + Date.now(); // Simplificado
+        item.adjustmentMovementId = adjustmentMovement?.id ?? null;
         await this.physicalCountItemRepo.save(item);
       }
 
