@@ -35,6 +35,7 @@ import {
   CreateVoucherDto,
   UpdateVoucherDto,
   UpdateVoucherStatusDto,
+  BatchUpdateVoucherStatusDto,
   CreateAccountDto,
   UpdateAccountDto,
   CreateSubaccountDto,
@@ -124,6 +125,15 @@ export class AccountingController {
   ) {
     const companyId = getCompanyId(req);
     return this.voucherService.updateVoucherStatus(companyId, id, body.status);
+  }
+
+  @Put('vouchers/batch/status')
+  batchUpdateVoucherStatus(
+    @Req() req: Request,
+    @Body() body: BatchUpdateVoucherStatusDto,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.voucherService.batchUpdateVoucherStatus(companyId, body.ids, body.status);
   }
 
   @Delete('vouchers/:id')

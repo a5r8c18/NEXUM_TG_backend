@@ -571,6 +571,35 @@ export class VoucherService {
     return statusResult;
   }
 
+  async batchUpdateVoucherStatus(
+    companyId: number,
+    ids: string[],
+    status: string,
+  ) {
+    const results: { id: string; status: string }[] = [];
+    const errors: { id: string; error: string }[] = [];
+
+    for (const id of ids) {
+      try {
+        await this.updateVoucherStatus(companyId, id, status);
+        results.push({ id, status });
+      } catch (err) {
+        this.logger.error(
+          `Error al actualizar comprobante ${id}: ${err.message || err}`,
+          err?.stack,
+        );
+        errors.push({ id, error: err.message || 'Error desconocido' });
+      }
+    }
+
+    return {
+      processed: results.length,
+      failed: errors.length,
+      errors,
+      status,
+    };
+  }
+
   async deleteVoucher(companyId: number, id: string) {
     const deleteResult = await this.entityManager.transaction(async (manager) => {
       const voucher = await manager.getRepository(Voucher).findOne({
