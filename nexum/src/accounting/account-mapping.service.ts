@@ -23,12 +23,12 @@ export class AccountMappingService {
     [MappingType.INVOICE_PAYMENT]: '101', // Efectivo en Caja
     [MappingType.INVOICE_CANCELLATION]: '900', // Ventas (reverso)
     [MappingType.INVENTORY_ENTRY]: '189',   // Mercancías para la Venta
-    [MappingType.INVENTORY_EXIT]: '810',    // Costo de Ventas de Mercancías
+    [MappingType.INVENTORY_EXIT]: '810',    // Costo de Ventas de la Producción (mercancías: 814)
     [MappingType.INVENTORY_RETURN]: '189',  // Mercancías (reverso)
     [MappingType.INVENTORY_TRANSIT]: '699', // Transitoria del Sistema Automatizado
     [MappingType.FIXED_ASSET_ACQUISITION]: '240', // Activos Fijos Tangibles
-    [MappingType.FIXED_ASSET_DEPRECIATION]: '840', // Gasto de Depreciación
-    [MappingType.PAYROLL_PROCESSING]: '731', // Gastos de Fuerza de Trabajo
+    [MappingType.FIXED_ASSET_DEPRECIATION]: '822', // Gastos Generales y de Administración (gasto de depreciación)
+    [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción
     [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
     [MappingType.PURCHASE_ORDER]: '410',  // Cuentas por Pagar a Proveedores
     [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
@@ -217,22 +217,24 @@ export class AccountMappingService {
   }
 
   private getAccountName(accountCode: string): string {
+    // Códigos del Nomenclador Cubano 2016 (ver seed-accounts-2016.ts)
     const accountNames: Record<string, string> = {
-      '1100': 'Caja y Bancos',
-      '1200': 'Cuentas por Cobrar',
-      '1400': 'Activos Fijos',
-      '1401': 'Depreciación Acumulada',
-      '1830': 'Inventario de Mercancías',
-      '2110': 'Salarios por Pagar',
-      '2120': 'Impuestos Retenidos',
-      '2100': 'Obligaciones Laborales',
-      '4010': 'Cuentas por Pagar',
-      '4050': 'Cuentas por Pagar Transitorio',
-      '4100': 'Ventas',
-      '4200': 'Descuentos',
-      '5100': 'Gastos de Personal',
-      '8100': 'Costo de Ventas',
-      '8220': 'Gasto de Depreciación',
+      '101': 'Efectivo en Caja',
+      '110': 'Efectivo en Banco y en Otras Instituciones',
+      '135': 'Cuentas por Cobrar a Corto Plazo',
+      '183': 'Materias Primas y Materiales',
+      '188': 'Producción Terminada',
+      '189': 'Mercancías para la Venta',
+      '240': 'Activos Fijos Tangibles',
+      '375': 'Depreciación de Activos Fijos Tangibles',
+      '410': 'Cuentas por Pagar a Corto Plazo',
+      '455': 'Nóminas por Pagar',
+      '699': 'Transitoria del Sistema Automatizado',
+      '731': 'Gastos Asociados a la Producción',
+      '810': 'Costo de Ventas de la Producción',
+      '814': 'Costo de Ventas de Mercancías',
+      '822': 'Gastos Generales y de Administración',
+      '900': 'Ventas',
     };
 
     return accountNames[accountCode] || `Cuenta ${accountCode}`;

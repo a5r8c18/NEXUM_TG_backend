@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
 import { DepreciationHistory } from '../entities/depreciation-history.entity';
 import { VoucherService } from '../accounting/voucher.service';
+import { AccountMappingService } from '../accounting/account-mapping.service';
+import { MappingType } from '../entities/account-mapping.entity';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 import { DepreciationCatalog } from '../entities/depreciation-catalog.entity';
@@ -21,6 +23,7 @@ export class FixedAssetsService {
     private readonly depreciationHistoryRepo: Repository<DepreciationHistory>,
     @InjectRepository(DepreciationCatalog)
     private readonly catalogRepo: Repository<DepreciationCatalog>,
+    private readonly accountMappingService: AccountMappingService,
     private readonly auditService: AuditService,
   ) {}
 
@@ -842,6 +845,15 @@ export class FixedAssetsService {
     // ── Contabilización de depreciación mensual ──
     if (totalDepreciation > 0) {
       try {
+        // Cuenta de gasto por depreciación (configurable). Default: 822 Gastos
+        // Generales y de Administración. La 840 (Financiamiento a la OSDE) NO
+        // corresponde a depreciación.
+        const depreciationExpenseAccount =
+          (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.FIXED_ASSET_DEPRECIATION,
+          )) || '822';
+
         const voucher = await this.voucherService.createVoucherFromModule(
           companyId,
           'fixed-assets',
@@ -854,7 +866,7 @@ export class FixedAssetsService {
             createdBy: 'Sistema',
             lines: [
               {
-                accountCode: '840', // Gasto de Depreciación
+                accountCode: depreciationExpenseAccount, // Gasto por Depreciación
                 debit: totalDepreciation,
                 credit: 0,
                 description: `Depreciación ${month}/${year}`,
