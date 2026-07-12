@@ -178,10 +178,35 @@ export class InventoryWarehouseService {
       }
       inventory.exits += quantityChange;
       inventory.stock -= quantityChange;
-      // En salidas, el unitPrice no cambia (método PEPS implícito)
+      // En salidas, el unitPrice no cambia (WAC): el costo de salida usa el
+      // promedio ponderado vigente al momento de la salida. NCC Res. 235-2005 MFP.
     }
 
     return this.inventoryWarehouseRepo.save(inventory);
+  }
+
+  // Costo Promedio Ponderado (WAC) de un producto a nivel de empresa.
+  // Si hay varios almacenes, se calcula el promedio ponderado del inventario
+  // disponible en todos ellos. NCC Res. 235-2005 MFP.
+  async getWeightedAverageCost(
+    companyId: number,
+    productCode: string,
+  ): Promise<{ unitCost: number; totalStock: number } | null> {
+    const inventories = await this.findByCode(companyId, productCode);
+    if (!inventories.length) return null;
+
+    let totalStock = 0;
+    let totalValue = 0;
+    for (const inv of inventories) {
+      totalStock += Number(inv.stock);
+      totalValue += Number(inv.stock) * Number(inv.unitPrice);
+    }
+
+    if (totalStock <= 0) return { unitCost: 0, totalStock: 0 };
+    return {
+      unitCost: Math.round((totalValue / totalStock) * 100) / 100,
+      totalStock,
+    };
   }
 
   // Transferir stock entre almacenes

@@ -276,26 +276,28 @@ export class InvoicesService {
 
         for (const item of invoice.items) {
           if (item.productCode) {
-            const inventories = await this.inventoryWarehouseService.findByCode(companyId, item.productCode);
-            const inventory = inventories[0];
-            if (inventory) {
-              const itemCost = item.quantity * inventory.unitPrice;
-              costOfSales += itemCost;
-              
-              costLines.push({
-                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_EXIT) || '810',
-                debit: itemCost,
-                credit: 0,
-                description: `Costo venta ${item.productCode}`,
-              });
-              
-              costLines.push({
-                accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189',
-                debit: 0,
-                credit: itemCost,
-                description: `Salida inventario ${item.productCode}`,
-              });
-            }
+            const wac = await this.inventoryWarehouseService.getWeightedAverageCost(
+              companyId,
+              item.productCode,
+            );
+            if (!wac) continue;
+
+            const itemCost = item.quantity * wac.unitCost;
+            costOfSales += itemCost;
+
+            costLines.push({
+              accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_EXIT) || '810',
+              debit: itemCost,
+              credit: 0,
+              description: `Costo venta ${item.productCode} (WAC: ${wac.unitCost})`,
+            });
+
+            costLines.push({
+              accountCode: await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY) || '189',
+              debit: 0,
+              credit: itemCost,
+              description: `Salida inventario ${item.productCode} (WAC: ${wac.unitCost})`,
+            });
           }
         }
 

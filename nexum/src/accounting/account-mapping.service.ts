@@ -16,10 +16,12 @@ export class AccountMappingService {
     private readonly mappingRepo: Repository<AccountMapping>,
   ) {}
 
-  // Default account mappings — Nomenclador Cubano Resolución 2016
+  // Default account mappings — Nomenclador Cubano Resolución 2016.
+  // Las cuentas de contrapartida deben ser subcuentas analíticas (allowsMovements=true)
+  // porque los asientos no pueden registrarse en cuentas agrupadoras.
   private readonly defaultMappings: Record<MappingType, string> = {
     [MappingType.INVOICE_SALE]: '900',   // Ventas
-    [MappingType.INVOICE_RECEIVABLE]: '135', // Cuentas por Cobrar (débito venta a crédito)
+    [MappingType.INVOICE_RECEIVABLE]: '135-0020', // Cuentas por Cobrar - Fuera del Órgano (clientes externos)
     [MappingType.INVOICE_PAYMENT]: '101', // Efectivo en Caja
     [MappingType.INVOICE_CANCELLATION]: '900', // Ventas (reverso)
     [MappingType.INVENTORY_ENTRY]: '189',   // Mercancías para la Venta
@@ -29,8 +31,8 @@ export class AccountMappingService {
     [MappingType.FIXED_ASSET_ACQUISITION]: '240', // Activos Fijos Tangibles
     [MappingType.FIXED_ASSET_DEPRECIATION]: '822', // Gastos Generales y de Administración (gasto de depreciación)
     [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción
-    [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
-    [MappingType.PURCHASE_ORDER]: '410',  // Cuentas por Pagar a Proveedores
+    [MappingType.PAYROLL_PAYMENT]: '455-0040', // Nóminas por Pagar - Obreros
+    [MappingType.PURCHASE_ORDER]: '410-0020',  // Cuentas por Pagar - Fuera del Órgano (proveedores)
     [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
   };
 
@@ -222,13 +224,16 @@ export class AccountMappingService {
       '101': 'Efectivo en Caja',
       '110': 'Efectivo en Banco y en Otras Instituciones',
       '135': 'Cuentas por Cobrar a Corto Plazo',
+      '135-0020': 'Cuentas por Cobrar - Fuera del Órgano u Organismo',
       '183': 'Materias Primas y Materiales',
       '188': 'Producción Terminada',
       '189': 'Mercancías para la Venta',
       '240': 'Activos Fijos Tangibles',
       '375': 'Depreciación de Activos Fijos Tangibles',
       '410': 'Cuentas por Pagar a Corto Plazo',
+      '410-0020': 'Cuentas por Pagar - Fuera del Órgano u Organismo',
       '455': 'Nóminas por Pagar',
+      '455-0040': 'Nóminas por Pagar - Obreros',
       '699': 'Transitoria del Sistema Automatizado',
       '731': 'Gastos Asociados a la Producción',
       '810': 'Costo de Ventas de la Producción',

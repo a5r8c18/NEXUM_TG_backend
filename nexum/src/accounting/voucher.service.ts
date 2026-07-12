@@ -306,18 +306,15 @@ export class VoucherService {
       }[];
     },
   ) {
-    // Resolver accountId y accountName desde accountCode
+    // Resolver accountId y accountName desde accountCode.
+    // Las cuentas agrupadoras se redirigen a su subcuenta analítica asentable.
     const resolvedLines: any[] = [];
     for (const line of data.lines) {
-      const account = await this.accountRepo.findOneBy({
-        code: line.accountCode,
+      const account = await this.resolvePostableAccount(
+        this.accountRepo,
         companyId,
-      });
-      if (!account) {
-        throw new BadRequestException(
-          `Cuenta contable ${line.accountCode} no encontrada para esta empresa`,
-        );
-      }
+        line.accountCode,
+      );
       resolvedLines.push({
         accountId: account.id,
         accountCode: account.code,
@@ -728,6 +725,52 @@ export class VoucherService {
   // ── HELPER METHODS ──
   // ══════════════════════════════════════════════════════════
 
+  /**
+   * Resuelve una cuenta contable "asentable" a partir de un código.
+   *
+   * Conforme al Nomenclador Cubano y a los sistemas contables de referencia,
+   * los asientos SOLO pueden registrarse en cuentas analíticas de último nivel
+   * (allowsMovements = true). Si el código apunta a una cuenta agrupadora
+   * (allowsMovements = false), se redirige automáticamente a su subcuenta de
+   * contrapartida (preferentemente la terminada en "-0020", Fuera del Órgano u
+   * Organismo). Si la cuenta no existe o no tiene ninguna subcuenta con
+   * movimientos, se rechaza el asiento.
+   */
+  private async resolvePostableAccount(
+    repo: Repository<Account>,
+    companyId: number,
+    code: string,
+  ): Promise<Account> {
+    const account = await repo.findOneBy({ code, companyId });
+    if (!account) {
+      throw new BadRequestException(
+        `Cuenta contable ${code} no encontrada para esta empresa`,
+      );
+    }
+    if (account.allowsMovements) {
+      return account;
+    }
+
+    // La cuenta es agrupadora: buscar una subcuenta analítica con movimientos.
+    const children = await repo.find({
+      where: { companyId, parentCode: code, allowsMovements: true },
+      order: { code: 'ASC' },
+    });
+    if (children.length === 0) {
+      throw new BadRequestException(
+        `La cuenta ${code} (${account.name}) es agrupadora y no admite movimientos. ` +
+          `Configure una subcuenta analítica de contrapartida (p. ej. ${code}-0020) para poder registrar el asiento.`,
+      );
+    }
+
+    const preferred =
+      children.find((c) => c.code.endsWith('-0020')) || children[0];
+    this.logger.warn(
+      `Asiento redirigido de cuenta agrupadora ${code} a subcuenta analítica ${preferred.code} (${preferred.name})`,
+    );
+    return preferred;
+  }
+
   private async resolveVoucherLines(
     manager: EntityManager,
     companyId: number,
@@ -736,19 +779,17 @@ export class VoucherService {
     return await Promise.all(
       lines.map(async (line) => {
         let accountId = line.accountId;
+        let accountCode = line.accountCode;
         let accountName = line.accountName;
 
         if (!accountId) {
-          const account = await manager.getRepository(Account).findOneBy({
-            code: line.accountCode,
+          const account = await this.resolvePostableAccount(
+            manager.getRepository(Account),
             companyId,
-          });
-          if (!account) {
-            throw new BadRequestException(
-              `Cuenta contable ${line.accountCode} no encontrada para esta empresa`,
-            );
-          }
+            line.accountCode,
+          );
           accountId = account.id;
+          accountCode = account.code;
           accountName = account.name;
         }
 
@@ -808,7 +849,7 @@ export class VoucherService {
 
         return {
           accountId,
-          accountCode: line.accountCode,
+          accountCode: accountCode || line.accountCode,
           accountName: accountName || line.accountName,
           subaccountCode: line.subaccountCode || null,
           subaccountName,
