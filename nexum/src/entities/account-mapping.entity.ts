@@ -21,6 +21,8 @@ export enum MappingType {
   FIXED_ASSET_DEPRECIATION = 'fixed_asset_depreciation',
   PAYROLL_PROCESSING = 'payroll_processing',
   PAYROLL_PAYMENT = 'payroll_payment',
+  PAYROLL_RETENTION = 'payroll_retention', // Crédito: Retenciones y deducciones por pagar
+  PAYROLL_CASH = 'payroll_cash', // Crédito: cuenta de tesorería para el pago de nómina
   PURCHASE_ORDER = 'purchase_order',
   PURCHASE_PAYMENT = 'purchase_payment',
 }

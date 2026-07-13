@@ -59,17 +59,33 @@ export class PayrollController {
     return this.payrollService.create(companyId, body);
   }
 
+  @Post('generate')
+  generate(
+    @Req() req: Request,
+    @Body()
+    body: {
+      period: string;
+      startDate: string;
+      endDate: string;
+      processedBy?: string;
+    },
+  ) {
+    const companyId = getCompanyId(req);
+    return this.payrollService.generateFromEmployees(companyId, body);
+  }
+
   @Put(':id/process')
   process(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { processedBy: string },
+    @Body() body: { processedBy: string; costCenterId?: string },
   ) {
     const companyId = getCompanyId(req);
     return this.payrollService.process(
       companyId,
       parseInt(id),
       body.processedBy,
+      body.costCenterId,
     );
   }
 
@@ -77,5 +93,15 @@ export class PayrollController {
   markAsPaid(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
     return this.payrollService.markAsPaid(companyId, parseInt(id));
+  }
+
+  @Put(':id/cancel')
+  cancel(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+  ) {
+    const companyId = getCompanyId(req);
+    return this.payrollService.cancel(companyId, parseInt(id), body?.reason);
   }
 }

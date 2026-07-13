@@ -32,6 +32,8 @@ export class AccountMappingService {
     [MappingType.FIXED_ASSET_DEPRECIATION]: '822', // Gastos Generales y de Administración (gasto de depreciación)
     [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción
     [MappingType.PAYROLL_PAYMENT]: '455-0040', // Nóminas por Pagar - Obreros
+    [MappingType.PAYROLL_RETENTION]: '440', // Retenciones y Descuentos por Pagar
+    [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
     [MappingType.PURCHASE_ORDER]: '410-0020',  // Cuentas por Pagar - Fuera del Órgano (proveedores)
     [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
   };
@@ -232,6 +234,7 @@ export class AccountMappingService {
       '375': 'Depreciación de Activos Fijos Tangibles',
       '410': 'Cuentas por Pagar a Corto Plazo',
       '410-0020': 'Cuentas por Pagar - Fuera del Órgano u Organismo',
+      '440': 'Retenciones y Descuentos por Pagar',
       '455': 'Nóminas por Pagar',
       '455-0040': 'Nóminas por Pagar - Obreros',
       '699': 'Transitoria del Sistema Automatizado',
