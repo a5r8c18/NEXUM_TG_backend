@@ -437,6 +437,9 @@ export class MovementsService {
       creditAccountCode?: string;
       costCenterId?: string;
       subelementId?: string;
+      // Trazabilidad a trabajador
+      employeeId?: string;
+      employeeName?: string;
       items?: { productCode: string; quantity: number; expenseElement?: string; costCenterId?: string; subelementId?: string }[];
       // Backward compatibility (single product)
       product_code?: string;

@@ -77,6 +77,12 @@ export class DeliveryReport {
   })
   createdByName: string | null;
 
+  @Column({ name: 'employee_id', type: 'varchar', length: 100, nullable: true })
+  employeeId: string | null;
+
+  @Column({ name: 'employee_name', type: 'varchar', length: 255, nullable: true })
+  employeeName: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }
