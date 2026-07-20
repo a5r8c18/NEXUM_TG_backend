@@ -30,7 +30,7 @@ export class BankAccount {
   bankCode: string | null;
 
   @Column({ name: 'account_type', type: 'varchar', length: 20 })
-  accountType: 'checking' | 'savings' | 'investment' | 'credit';
+  accountType: 'checking' | 'expenses' | 'mlc';
 
   @Column({ name: 'currency', type: 'varchar', length: 3, default: 'CUP' })
   currency: string;
