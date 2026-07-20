@@ -8,15 +8,36 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Between, Repository } from 'typeorm';
 import { Payroll, PayrollItem } from '../entities';
 import { Employee } from '../entities/employee.entity';
+import { Attendance } from '../entities/attendance.entity';
+import { LeaveRequest } from '../entities/leave-request.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
+import { FinanceService } from '../finance/finance.service';
 
 // Contribución Especial a la Seguridad Social del trabajador (Cuba): 5% del salario.
 const EMPLOYEE_SOCIAL_SECURITY_RATE = 0.05;
+// Jornada legal mensual promedio en Cuba (horas) para el cálculo del salario/hora.
+const MONTHLY_LEGAL_HOURS = 190.6;
+// Días promedio del mes para el cálculo del salario diario (descuentos por ausencia).
+const DAYS_PER_MONTH = 30;
+
+/** Días de solapamiento (inclusivos) entre dos rangos de fechas. */
+function overlapDays(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string,
+): number {
+  const start = new Date(Math.max(new Date(aStart).getTime(), new Date(bStart).getTime()));
+  const end = new Date(Math.min(new Date(aEnd).getTime(), new Date(bEnd).getTime()));
+  const ms = end.getTime() - start.getTime();
+  if (isNaN(ms) || ms < 0) return 0;
+  return Math.floor(ms / (1000 * 60 * 60 * 24)) + 1;
+}
 
 @Injectable()
 export class PayrollService {
@@ -29,9 +50,15 @@ export class PayrollService {
     private readonly payrollItemRepo: Repository<PayrollItem>,
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
+    @InjectRepository(Attendance)
+    private readonly attendanceRepo: Repository<Attendance>,
+    @InjectRepository(LeaveRequest)
+    private readonly leaveRepo: Repository<LeaveRequest>,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
     private readonly accountMappingService: AccountMappingService,
+    @Inject(forwardRef(() => FinanceService))
+    private readonly financeService: FinanceService,
   ) {}
 
   async findAll(
@@ -215,27 +242,62 @@ export class PayrollService {
     let totalDeductions = 0;
     let totalNet = 0;
 
-    const items = employees.map((emp) => {
+    const items: any[] = [];
+    for (const emp of employees) {
       const baseSalary = Number(emp.salary) || 0;
-      const grossSalary = baseSalary;
+
+      // ── Horas extra reales del período (desde Asistencia) ──
+      const attendances = await this.attendanceRepo.find({
+        where: {
+          companyId,
+          employeeId: emp.id,
+          date: Between(data.startDate, data.endDate),
+        },
+      });
+      const overtimeHours = attendances.reduce(
+        (sum, a) => sum + Number(a.overtimeHours || 0),
+        0,
+      );
+      const hourlyRate = baseSalary / MONTHLY_LEGAL_HOURS;
+      // El recargo por hora extra se pacta en convenio; se usa la tarifa base.
+      const overtimePay = Math.round(overtimeHours * hourlyRate * 100) / 100;
+
+      // ── Descuento por licencias NO remuneradas aprobadas que solapan el período ──
+      const unpaidLeaves = await this.leaveRepo.find({
+        where: {
+          companyId,
+          employeeId: emp.id,
+          type: 'unpaid',
+          status: 'approved',
+        },
+      });
+      const unpaidDays = unpaidLeaves.reduce(
+        (sum, l) =>
+          sum + overlapDays(l.startDate, l.endDate, data.startDate, data.endDate),
+        0,
+      );
+      const dailyRate = baseSalary / DAYS_PER_MONTH;
+      const unpaidDeduction = Math.round(unpaidDays * dailyRate * 100) / 100;
+
+      const grossSalary = baseSalary + overtimePay;
       const socialSecurity =
         Math.round(grossSalary * EMPLOYEE_SOCIAL_SECURITY_RATE * 100) / 100;
-      const totalDeductionsItem = socialSecurity;
+      const totalDeductionsItem = socialSecurity + unpaidDeduction;
       const netSalary = grossSalary - totalDeductionsItem;
 
       totalGross += grossSalary;
       totalDeductions += totalDeductionsItem;
       totalNet += netSalary;
 
-      return {
+      items.push({
         companyId,
         employeeId: emp.id,
         employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
         employeeDocument: emp.documentId || '',
         position: emp.position || '',
         baseSalary,
-        overtimeHours: 0,
-        overtimePay: 0,
+        overtimeHours,
+        overtimePay,
         bonuses: 0,
         commissions: 0,
         allowances: 0,
@@ -244,11 +306,12 @@ export class PayrollService {
         healthInsurance: 0,
         pension: 0,
         taxWithholding: 0,
-        otherDeductions: 0,
+        otherDeductions: unpaidDeduction,
         totalDeductions: totalDeductionsItem,
         netSalary,
-      };
-    });
+        notes: unpaidDays > 0 ? `${unpaidDays} día(s) sin sueldo descontados` : undefined,
+      });
+    }
 
     const payroll = await this.payrollRepo.save({
       companyId,
@@ -265,6 +328,105 @@ export class PayrollService {
     for (const itemData of items) {
       await this.payrollItemRepo.save({ ...itemData, payrollId: payroll.id });
     }
+
+    return this.findOne(companyId, payroll.id);
+  }
+
+  /**
+   * Actualiza las líneas de una nómina en borrador y recalcula los totales.
+   * Solo permitido mientras la nómina está en estado 'draft'.
+   */
+  async updateItems(
+    companyId: number,
+    id: number,
+    items: Array<{
+      id?: number;
+      employeeId: string;
+      employeeName: string;
+      employeeDocument?: string;
+      position?: string;
+      baseSalary: number;
+      overtimeHours?: number;
+      overtimePay?: number;
+      bonuses?: number;
+      commissions?: number;
+      allowances?: number;
+      socialSecurity?: number;
+      healthInsurance?: number;
+      pension?: number;
+      taxWithholding?: number;
+      otherDeductions?: number;
+      notes?: string;
+    }>,
+  ) {
+    const payroll = await this.payrollRepo.findOne({
+      where: { id, companyId },
+      relations: ['items'],
+    });
+    if (!payroll) {
+      throw new NotFoundException(`Payroll #${id} not found`);
+    }
+    if (payroll.status !== 'draft') {
+      throw new BadRequestException(
+        'Solo se pueden editar las líneas de una nómina en borrador',
+      );
+    }
+
+    // Reemplazar las líneas existentes por las nuevas.
+    await this.payrollItemRepo.delete({ payrollId: payroll.id });
+
+    let totalGross = 0;
+    let totalDeductions = 0;
+    let totalNet = 0;
+
+    for (const item of items) {
+      const grossSalary =
+        Number(item.baseSalary || 0) +
+        Number(item.overtimePay || 0) +
+        Number(item.bonuses || 0) +
+        Number(item.commissions || 0) +
+        Number(item.allowances || 0);
+      const totalDeductionsItem =
+        Number(item.socialSecurity || 0) +
+        Number(item.healthInsurance || 0) +
+        Number(item.pension || 0) +
+        Number(item.taxWithholding || 0) +
+        Number(item.otherDeductions || 0);
+      const netSalary = grossSalary - totalDeductionsItem;
+
+      totalGross += grossSalary;
+      totalDeductions += totalDeductionsItem;
+      totalNet += netSalary;
+
+      await this.payrollItemRepo.save({
+        payrollId: payroll.id,
+        companyId,
+        employeeId: item.employeeId,
+        employeeName: item.employeeName,
+        employeeDocument: item.employeeDocument || '',
+        position: item.position || '',
+        baseSalary: Number(item.baseSalary || 0),
+        overtimeHours: Number(item.overtimeHours || 0),
+        overtimePay: Number(item.overtimePay || 0),
+        bonuses: Number(item.bonuses || 0),
+        commissions: Number(item.commissions || 0),
+        allowances: Number(item.allowances || 0),
+        grossSalary,
+        socialSecurity: Number(item.socialSecurity || 0),
+        healthInsurance: Number(item.healthInsurance || 0),
+        pension: Number(item.pension || 0),
+        taxWithholding: Number(item.taxWithholding || 0),
+        otherDeductions: Number(item.otherDeductions || 0),
+        totalDeductions: totalDeductionsItem,
+        netSalary,
+        notes: item.notes,
+      });
+    }
+
+    payroll.totalGross = totalGross;
+    payroll.totalDeductions = totalDeductions;
+    payroll.totalNet = totalNet;
+    await this.payrollRepo.save(payroll);
 
     return this.findOne(companyId, payroll.id);
   }
@@ -357,7 +519,7 @@ export class PayrollService {
     return { payroll };
   }
 
-  async markAsPaid(companyId: number, id: number) {
+  async markAsPaid(companyId: number, id: number, bankAccountId?: string) {
     const payroll = await this.payrollRepo.findOne({
       where: { id, companyId },
     });
@@ -419,6 +581,30 @@ export class PayrollService {
         this.logger.log(`Comprobante pago nómina ${payroll.period} generado`);
       } catch (error) {
         this.logger.error(`Error contabilización pago nómina: ${error.message}`);
+      }
+
+      // ── Reflejar la salida de efectivo en Finanzas (saldo bancario) ──
+      // Se registra solo el movimiento bancario (sin comprobante propio) porque
+      // la contabilización ya se hizo arriba, evitando duplicar el asiento.
+      if (bankAccountId) {
+        try {
+          await this.financeService.createBankTransaction(companyId, {
+            transactionNumber: `TXB-NOM-${payroll.period}-${payroll.id}`,
+            bankAccountId,
+            transactionDate: payroll.paidAt || new Date().toISOString().split('T')[0],
+            transactionType: 'debit',
+            amount: netAmount,
+            currency: 'CUP',
+            exchangeRate: 1,
+            description: `Pago nómina ${payroll.period}`,
+            referenceNumber: `PAGO-NOM-${payroll.period}-${payroll.id}`,
+            category: 'payroll',
+            companyId,
+          });
+          this.logger.log(`Movimiento bancario registrado para pago nómina ${payroll.period}`);
+        } catch (error) {
+          this.logger.error(`Error registrando movimiento bancario de nómina: ${error.message}`);
+        }
       }
     }
 

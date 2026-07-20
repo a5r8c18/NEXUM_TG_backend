@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
+import { EmployeeSalaryHistory } from '../entities/employee-salary-history.entity';
 
 @Injectable()
 export class HrService {
@@ -11,6 +12,8 @@ export class HrService {
     private readonly employeeRepo: Repository<Employee>,
     @InjectRepository(Department)
     private readonly departmentRepo: Repository<Department>,
+    @InjectRepository(EmployeeSalaryHistory)
+    private readonly salaryHistoryRepo: Repository<EmployeeSalaryHistory>,
   ) {}
 
   // ── Employees ──
@@ -53,8 +56,33 @@ export class HrService {
 
   async updateEmployee(companyId: number, id: string, data: Partial<Employee>) {
     const emp = await this.findOneEmployee(companyId, id);
+    const previousSalary = Number(emp.salary) || 0;
     Object.assign(emp, data);
-    return this.employeeRepo.save(emp);
+    const saved = await this.employeeRepo.save(emp);
+
+    // Registrar historial si el salario cambió.
+    if (data.salary !== undefined && Number(data.salary) !== previousSalary) {
+      await this.salaryHistoryRepo.save(
+        this.salaryHistoryRepo.create({
+          companyId,
+          employeeId: id,
+          previousSalary,
+          newSalary: Number(data.salary),
+          effectiveDate: new Date().toISOString().split('T')[0],
+          changedBy: (data as any).changedBy || null,
+          reason: (data as any).salaryChangeReason || null,
+        }),
+      );
+    }
+
+    return saved;
+  }
+
+  async getSalaryHistory(companyId: number, employeeId: string) {
+    return this.salaryHistoryRepo.find({
+      where: { companyId, employeeId },
+      order: { effectiveDate: 'DESC', createdAt: 'DESC' },
+    });
   }
 
   async deleteEmployee(companyId: number, id: string) {

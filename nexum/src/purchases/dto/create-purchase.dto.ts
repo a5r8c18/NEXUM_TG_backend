@@ -41,6 +41,11 @@ export class CreatePurchaseDto {
   @IsNotEmpty()
   supplier: string;
 
+  // Enlace opcional a un Supplier real (submayor por tercero).
+  @IsOptional()
+  @IsString()
+  supplierId?: string;
+
   @IsString()
   @IsNotEmpty()
   document: string;

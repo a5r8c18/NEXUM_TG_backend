@@ -424,6 +424,10 @@ export class InvoicesService {
       const total = Number(invoice.total || 0);
       if (total > 0) {
         try {
+          const cashAccount =
+            (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_PAYMENT)) || '101';
+          const receivableAccount =
+            (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
           await this.voucherService.createVoucherFromModule(
             companyId,
             'invoices',
@@ -436,13 +440,13 @@ export class InvoicesService {
               createdBy: 'Sistema',
               lines: [
                 {
-                  accountCode: '101', // Efectivo en Caja
+                  accountCode: cashAccount, // Efectivo/Banco (tesorería)
                   debit: total,
                   credit: 0,
                   description: `Cobro factura ${invoice.invoiceNumber}`,
                 },
                 {
-                  accountCode: '135', // Cuentas por Cobrar
+                  accountCode: receivableAccount, // Cuentas por Cobrar
                   debit: 0,
                   credit: total,
                   description: `Liquidación CxC ${invoice.invoiceNumber}`,
@@ -461,6 +465,10 @@ export class InvoicesService {
       const total = Number(invoice.total || 0);
       if (total > 0) {
         try {
+          const salesAccount =
+            (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE)) || '900';
+          const receivableAccount =
+            (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
           await this.voucherService.createVoucherFromModule(
             companyId,
             'invoices',
@@ -473,13 +481,13 @@ export class InvoicesService {
               createdBy: 'Sistema',
               lines: [
                 {
-                  accountCode: '900', // Ventas (reverso)
+                  accountCode: salesAccount, // Ventas (reverso)
                   debit: total,
                   credit: 0,
                   description: `Reverso venta ${invoice.invoiceNumber}`,
                 },
                 {
-                  accountCode: '135', // Cuentas por Cobrar (reverso)
+                  accountCode: receivableAccount, // Cuentas por Cobrar (reverso)
                   debit: 0,
                   credit: total,
                   description: `Reverso CxC ${invoice.invoiceNumber}`,

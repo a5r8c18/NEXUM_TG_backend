@@ -54,6 +54,12 @@ export class HrController {
     return this.hrService.findOneEmployee(companyId, id);
   }
 
+  @Get('employees/:id/salary-history')
+  getSalaryHistory(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.hrService.getSalaryHistory(companyId, id);
+  }
+
   @Post('employees')
   createEmployee(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);

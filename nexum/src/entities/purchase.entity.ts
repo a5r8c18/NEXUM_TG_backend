@@ -36,6 +36,10 @@ export class Purchase {
   @Column({ type: 'varchar', length: 255, nullable: true })
   supplier: string;
 
+  // Enlace opcional a un Supplier real (submayor por tercero). Si es null, solo se usa el nombre.
+  @Column({ name: 'supplier_id', type: 'uuid', nullable: true })
+  supplierId: string | null;
+
   @Column({ type: 'varchar', length: 100, nullable: true })
   document: string;
 

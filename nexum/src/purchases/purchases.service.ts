@@ -56,6 +56,56 @@ export class PurchasesService {
   }
 
   /**
+   * Crea (o devuelve, si ya existe) la Cuenta por Pagar asociada a una compra.
+   * Se genera para toda compra, con o sin factura formal (GRNI):
+   * la obligación con el proveedor existe desde la recepción de la mercancía.
+   */
+  private async createPayableForPurchase(
+    companyId: number,
+    purchase: Purchase,
+    amount: number,
+    opts: { invoiceNumber?: string | null; invoiceDate?: string | null } = {},
+  ): Promise<AccountPayable> {
+    const existing = await this.apRepo.findOne({
+      where: { purchaseId: purchase.id, companyId },
+    });
+    if (existing) return existing;
+
+    const apCount = await this.apRepo.count({ where: { companyId } });
+    const apNumber = `CP-${new Date().getFullYear()}-${String(apCount + 1).padStart(4, '0')}`;
+    const baseDate = opts.invoiceDate || new Date().toISOString().split('T')[0];
+
+    return this.apRepo.save(
+      this.apRepo.create({
+        apNumber,
+        purchaseId: purchase.id,
+        purchaseNumber: purchase.document,
+        supplierId: purchase.supplierId || null, // Usar supplierId si está vinculado
+        supplierName: purchase.supplier,
+        supplierNit: 'N/D',
+        invoiceNumber: opts.invoiceNumber || null,
+        invoiceDate: opts.invoiceDate || null,
+        originalAmount: amount,
+        balanceAmount: amount,
+        paidAmount: 0,
+        dueDate: new Date(new Date(baseDate).getTime() + 30 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split('T')[0], // 30 días por defecto
+        agingDays: 0,
+        agingCategory: 'current',
+        status: 'pending',
+        priority: 'normal',
+        paymentTerms: 'contado',
+        earlyPaymentDiscount: 0,
+        latePaymentPenalty: 0,
+        currency: 'CUP',
+        exchangeRate: 1,
+        companyId,
+      }),
+    );
+  }
+
+  /**
    * Crea una compra y genera automáticamente el comprobante contable.
    * Si se proporcionan debitAccountCode y creditAccountCode, se usan en el voucher;
    * de lo contrario, se usan los defaults del AccountMappingService.
@@ -66,6 +116,7 @@ export class PurchasesService {
       entity: string;
       warehouse: string;
       supplier: string;
+      supplierId?: string;            // <-- Opcional: enlace a Supplier real
       document: string;
       invoiceNumber?: string;         // <-- Opción C: si la compra llega ya facturada
       invoiceDate?: string;           // <-- Opción C: fecha de la factura del proveedor
@@ -96,6 +147,7 @@ export class PurchasesService {
         entity: data.entity,
         warehouse: data.warehouse,
         supplier: data.supplier,
+        supplierId: data.supplierId || null,
         document: data.document,
         status: arrivesInvoiced ? 'invoiced' : 'completed',
         invoiceNumber: arrivesInvoiced ? data.invoiceNumber : null,
@@ -237,6 +289,7 @@ export class PurchasesService {
 
     // ── Contabilización automática de la compra ──
     const purchaseTotal = products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
+    let accountingWarning: string | null = null;
     if (purchaseTotal > 0) {
       try {
         const inventoryAccount = data.debitAccountCode
@@ -317,6 +370,7 @@ export class PurchasesService {
           this.logger.log(`Comprobante de recepción (sin factura) generado para compra ${purchase.id}: ${inventoryAccount} / ${transitAccount}`);
         }
       } catch (error) {
+        accountingWarning = `No se pudo generar el comprobante contable: ${error.message}`;
         this.logger.error(
           `Error al generar comprobante para compra ${purchase.id}: ${error.message}`,
           error.stack,
@@ -324,7 +378,26 @@ export class PurchasesService {
       }
     }
 
-    return { purchase, products };
+    // ── Cuenta por Pagar automática (para toda compra) ──
+    // Si la compra llega facturada, se registra con su número/fecha de factura;
+    // de lo contrario queda pendiente de factura (GRNI) pero la obligación ya existe.
+    if (purchaseTotal > 0) {
+      try {
+        await this.createPayableForPurchase(companyId, purchase, purchaseTotal, {
+          invoiceNumber: arrivesInvoiced ? data.invoiceNumber : null,
+          invoiceDate: arrivesInvoiced ? data.invoiceDate : null,
+        });
+      } catch (error) {
+        const msg = `No se pudo crear la Cuenta por Pagar: ${error.message}`;
+        accountingWarning = accountingWarning ? `${accountingWarning}. ${msg}` : msg;
+        this.logger.error(
+          `Error al crear CxP para compra ${purchase.id}: ${error.message}`,
+          error.stack,
+        );
+      }
+    }
+
+    return { purchase, products, accountingWarning };
   }
 
   /**
@@ -400,38 +473,33 @@ export class PurchasesService {
       },
     );
 
-    // Crear AccountPayable automáticamente
-    const apCount = await this.apRepo.count({ where: { companyId } });
-    const apNumber = `CP-${new Date().getFullYear()}-${String(apCount + 1).padStart(4, '0')}`;
-    
-    const accountPayable = await this.apRepo.save(
-      this.apRepo.create({
-        apNumber,
-        purchaseId: purchase.id,
-        purchaseNumber: purchase.document,
-        supplierId: 'SUP-' + purchase.supplier.substring(0, 8), // Generar ID temporal
-        supplierName: purchase.supplier,
-        supplierNit: 'NIT-' + purchase.supplier.substring(0, 8), // Generar NIT temporal
-        invoiceNumber: data.invoiceNumber,
-        invoiceDate: data.invoiceDate,
-        originalAmount: purchaseTotal,
-        balanceAmount: purchaseTotal,
-        paidAmount: 0,
-        dueDate: new Date(new Date(data.invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 días por defecto
-        agingDays: 0,
-        agingCategory: 'current',
-        status: 'pending',
-        priority: 'normal',
-        paymentTerms: 'contado',
-        earlyPaymentDiscount: 0,
-        latePaymentPenalty: 0,
-        currency: 'CUP',
-        exchangeRate: 1,
+    // Actualizar la CxP existente (creada al registrar la recepción) con los
+    // datos de la factura. Si no existe (compras antiguas), se crea.
+    const existingAp = await this.apRepo.findOne({
+      where: { purchaseId: purchase.id, companyId },
+    });
+    let apNumber: string;
+    if (existingAp) {
+      existingAp.invoiceNumber = data.invoiceNumber;
+      existingAp.invoiceDate = data.invoiceDate;
+      existingAp.dueDate = new Date(
+        new Date(data.invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000,
+      )
+        .toISOString()
+        .split('T')[0];
+      await this.apRepo.save(existingAp);
+      apNumber = existingAp.apNumber;
+    } else {
+      const ap = await this.createPayableForPurchase(
         companyId,
-      }),
-    );
+        purchase,
+        purchaseTotal,
+        { invoiceNumber: data.invoiceNumber, invoiceDate: data.invoiceDate },
+      );
+      apNumber = ap.apNumber;
+    }
 
-    this.logger.log(`Factura ${data.invoiceNumber} registrada para compra ${purchaseId}. Asiento: ${debitAccount} / ${creditAccount}. CxP creada: ${apNumber}`);
+    this.logger.log(`Factura ${data.invoiceNumber} registrada para compra ${purchaseId}. Asiento: ${debitAccount} / ${creditAccount}. CxP: ${apNumber}`);
 
     return { purchase, message: 'Factura registrada correctamente' };
   }

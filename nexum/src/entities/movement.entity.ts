@@ -110,6 +110,13 @@ export class Movement {
   @Column({ name: 'entity_name', type: 'varchar', length: 255, nullable: true })
   entityName: string | null;
 
+  // Trazabilidad de salidas hacia trabajadores (venta a trabajadores 1101/2101/3101, custodio 1106).
+  @Column({ name: 'employee_id', type: 'uuid', nullable: true })
+  employeeId: string | null;
+
+  @Column({ name: 'employee_name', type: 'varchar', length: 255, nullable: true })
+  employeeName: string | null;
+
   @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
   costCenterId: string | null;
 

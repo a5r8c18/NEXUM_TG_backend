@@ -30,6 +30,10 @@ export { Employee } from './employee.entity';
 export { Message } from './message.entity';
 export { Payroll } from './payroll.entity';
 export { PayrollItem } from './payroll-item.entity';
+export { EmployeeContract, ContractStatus } from './employee-contract.entity';
+export { Attendance, AttendanceStatus } from './attendance.entity';
+export { LeaveRequest, LeaveType, LeaveStatus } from './leave-request.entity';
+export { EmployeeSalaryHistory } from './employee-salary-history.entity';
 export { AccountMapping, MappingType } from './account-mapping.entity';
 export {
   Subscription,

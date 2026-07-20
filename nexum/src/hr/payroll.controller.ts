@@ -74,6 +74,16 @@ export class PayrollController {
     return this.payrollService.generateFromEmployees(companyId, body);
   }
 
+  @Put(':id/items')
+  updateItems(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { items: any[] },
+  ) {
+    const companyId = getCompanyId(req);
+    return this.payrollService.updateItems(companyId, parseInt(id), body.items);
+  }
+
   @Put(':id/process')
   process(
     @Req() req: Request,
@@ -90,9 +100,13 @@ export class PayrollController {
   }
 
   @Put(':id/pay')
-  markAsPaid(@Req() req: Request, @Param('id') id: string) {
+  markAsPaid(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { bankAccountId?: string },
+  ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.markAsPaid(companyId, parseInt(id));
+    return this.payrollService.markAsPaid(companyId, parseInt(id), body?.bankAccountId);
   }
 
   @Put(':id/cancel')

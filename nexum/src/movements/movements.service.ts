@@ -542,6 +542,8 @@ export class MovementsService {
         expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
         costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
         subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
+        employeeId: data.employeeId || null,
+        employeeName: data.employeeName || null,
         userName: userName || 'System',
       }),
     );
@@ -565,6 +567,8 @@ export class MovementsService {
         reportNumber: `VE-${savedMov.id.substring(0, 8)}`,
         reportDate: new Date(),
         entityName: data.entity || 'Entrega Directa',
+        employeeId: data.employeeId || null,
+        employeeName: data.employeeName || null,
         warehouseId: data.warehouseId,
         warehouseName: firstInventory?.warehouseName || data.warehouseId,
         authorizationDocument: `SALIDA-${savedMov.id.substring(0, 8)}`,

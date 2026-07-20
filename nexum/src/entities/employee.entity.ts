@@ -35,6 +35,10 @@ export class Employee {
   @Column({ type: 'varchar', nullable: true })
   departmentName: string | null;
 
+  // Enlace opcional a la cuenta de usuario del sistema (login) del empleado.
+  @Column({ type: 'uuid', nullable: true })
+  userId: string | null;
+
   @Column({ type: 'date', nullable: true })
   hireDate: string | null;
 

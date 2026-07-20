@@ -65,6 +65,15 @@ export class CreateExitDto {
   @IsString()
   subelementId?: string;
 
+  // ── Trazabilidad a trabajador (venta a trabajadores / custodio) ──
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  employeeName?: string;
+
   // ── Batch: array de productos ──
   @IsOptional()
   @IsArray({ message: 'Los productos deben ser un arreglo' })

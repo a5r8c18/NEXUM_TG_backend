@@ -26,8 +26,8 @@ export class AccountPayable {
   @Column({ name: 'purchase_number', type: 'varchar', length: 50, nullable: true })
   purchaseNumber: string | null;
 
-  @Column({ name: 'supplier_id', type: 'uuid' })
-  supplierId: string;
+  @Column({ name: 'supplier_id', type: 'uuid', nullable: true })
+  supplierId: string | null;
 
   @Column({ name: 'supplier_name', type: 'varchar', length: 200 })
   supplierName: string;

@@ -94,6 +94,10 @@ import { CashRegister } from './entities/cash-register.entity';
 import { CashMovement } from './entities/cash-movement.entity';
 import { Payroll } from './entities/payroll.entity';
 import { PayrollItem } from './entities/payroll-item.entity';
+import { EmployeeContract } from './entities/employee-contract.entity';
+import { Attendance } from './entities/attendance.entity';
+import { LeaveRequest } from './entities/leave-request.entity';
+import { EmployeeSalaryHistory } from './entities/employee-salary-history.entity';
 import { AccountMapping } from './entities/account-mapping.entity';
 import { DepreciationCatalog } from './entities/depreciation-catalog.entity';
 import { DepreciationHistory } from './entities/depreciation-history.entity';
@@ -176,6 +180,10 @@ import { UserMFA } from './entities/user-mfa.entity';
           CashMovement,
           Payroll,
           PayrollItem,
+          EmployeeContract,
+          Attendance,
+          LeaveRequest,
+          EmployeeSalaryHistory,
           AccountMapping,
           DepreciationCatalog,
           DepreciationHistory,

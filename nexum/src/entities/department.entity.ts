@@ -20,6 +20,10 @@ export class Department {
   @Column({ type: 'varchar', nullable: true })
   managerName: string | null;
 
+  // Enlace opcional a un centro de costo para el costeo de nómina por departamento.
+  @Column({ type: 'uuid', nullable: true })
+  costCenterId: string | null;
+
   @Column({ default: 0 })
   employeeCount: number;
 
