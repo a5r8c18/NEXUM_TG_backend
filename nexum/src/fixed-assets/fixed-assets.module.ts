@@ -6,15 +6,18 @@ import { FixedAsset } from '../entities/fixed-asset.entity';
 import { DepreciationHistory } from '../entities/depreciation-history.entity';
 import { DepreciationCatalog } from '../entities/depreciation-catalog.entity';
 import { FixedAssetInventory } from '../entities/fixed-asset-inventory.entity';
+import { Employee } from '../entities/employee.entity';
 import { AuthModule } from '../auth/auth.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { AuditModule } from '../audit/audit.module';
+import { FinanceModule } from '../finance/finance.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([FixedAsset, DepreciationHistory, DepreciationCatalog, FixedAssetInventory]),
+    TypeOrmModule.forFeature([FixedAsset, DepreciationHistory, DepreciationCatalog, FixedAssetInventory, Employee]),
     forwardRef(() => AuthModule),
     forwardRef(() => AccountingModule),
+    forwardRef(() => FinanceModule),
     AuditModule,
   ],
   controllers: [FixedAssetsController],

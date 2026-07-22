@@ -163,10 +163,10 @@ GET    /fixed-assets/export/pdf
 
 ### Depreciación Mensual
 - **Débito**: Cuenta 842 (Gastos de Depreciación)
-- **Crédito**: Cuenta 241 (Depreciación Acumulada)
+- **Crédito**: Cuenta 375 (Depreciación de Activos Fijos Tangibles)
 
 ### Baja de AFT
-- **Débito**: Cuenta 241 (Depreciación Acumulada)
+- **Débito**: Cuenta 375 (Depreciación de Activos Fijos Tangibles)
 - **Débito**: Cuenta 845 (Faltantes y Pérdidas) - pérdida residual
 - **Crédito**: Cuenta 240 (Activos Fijos Tangibles)
 

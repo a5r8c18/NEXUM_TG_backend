@@ -9,6 +9,9 @@ import { MappingType } from '../entities/account-mapping.entity';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 import { DepreciationCatalog } from '../entities/depreciation-catalog.entity';
+import { FixedAssetInventory } from '../entities/fixed-asset-inventory.entity';
+import { Employee } from '../entities/employee.entity';
+import { FinanceService } from '../finance/finance.service';
 
 @Injectable()
 export class FixedAssetsService {
@@ -23,6 +26,12 @@ export class FixedAssetsService {
     private readonly depreciationHistoryRepo: Repository<DepreciationHistory>,
     @InjectRepository(DepreciationCatalog)
     private readonly catalogRepo: Repository<DepreciationCatalog>,
+    @InjectRepository(FixedAssetInventory)
+    private readonly inventoryRepo: Repository<FixedAssetInventory>,
+    @InjectRepository(Employee)
+    private readonly employeeRepo: Repository<Employee>,
+    @Inject(forwardRef(() => FinanceService))
+    private readonly financeService: FinanceService,
     private readonly accountMappingService: AccountMappingService,
     private readonly auditService: AuditService,
   ) {}
@@ -92,9 +101,20 @@ export class FixedAssetsService {
       acquisitionDate: string;
       location?: string;
       responsiblePerson?: string;
+      employeeId?: string;
     },
   ) {
     const depRate = await this.getDepreciationRateFromCatalog(companyId, data.groupNumber, data.subgroup);
+
+    let responsiblePerson = data.responsiblePerson || '';
+    if (data.employeeId) {
+      const employee = await this.employeeRepo.findOne({
+        where: { id: data.employeeId, companyId },
+      });
+      if (employee) {
+        responsiblePerson = `${employee.firstName} ${employee.lastName}`.trim();
+      }
+    }
 
     const asset = new FixedAsset();
     asset.companyId = companyId;
@@ -107,7 +127,8 @@ export class FixedAssetsService {
     asset.acquisitionValue = data.acquisitionValue;
     asset.acquisitionDate = data.acquisitionDate;
     asset.location = data.location || '';
-    asset.responsiblePerson = data.responsiblePerson || '';
+    asset.responsiblePerson = responsiblePerson;
+    asset.employeeId = data.employeeId || null;
     asset.depreciationRate = depRate ?? 0;
     asset.currentValue = data.acquisitionValue;
     asset.status = 'active';
@@ -129,6 +150,9 @@ export class FixedAssetsService {
         depreciationRate: asset.depreciationRate,
       },
     });
+
+    // ── Registro en inventario AFT ──
+    await this.upsertFixedAssetInventory(asset);
 
     // ── Contabilización de adquisición de activo fijo ──
     const acquisitionValue = Number(asset.acquisitionValue);
@@ -258,6 +282,8 @@ export class FixedAssetsService {
       reason: string;
       disposalType: 'deterioro' | 'obsolescencia' | 'rotura' | 'faltante' | 'venta' | 'donacion';
       disposalDate?: string;
+      bankAccountId?: string;
+      saleAmount?: number;
     },
     userName?: string,
   ) {
@@ -340,6 +366,30 @@ export class FixedAssetsService {
         throw new BadRequestException(`Error al generar comprobante contable: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+
+    // ── Registro bancario por venta de AFT ──
+    if (data.disposalType === 'venta' && data.bankAccountId) {
+      try {
+        const saleAmount = data.saleAmount ?? currentValue;
+        await this.financeService.createBankTransaction(companyId, {
+          bankAccountId: data.bankAccountId,
+          transactionNumber: `TXB-AFT-VENTA-${asset.assetCode}-${Date.now()}`,
+          transactionDate: disposalDate,
+          transactionType: 'credit',
+          amount: saleAmount,
+          description: `Venta de AFT ${asset.assetCode} - ${asset.name}`,
+          referenceNumber: `BAJA-${asset.assetCode}`,
+          category: 'fixed-asset-sale',
+          counterpartyName: asset.responsiblePerson,
+        });
+        this.logger.log(`Transacción bancaria por venta AFT ${asset.assetCode} generada`);
+      } catch (error) {
+        this.logger.error(`Error transacción bancaria venta AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // ── Actualizar inventario AFT como dado de baja ──
+    await this.upsertFixedAssetInventory(asset, 'disposed');
 
     // ── Auditoría de la baja ──
     await this.auditService.log({
@@ -605,6 +655,10 @@ export class FixedAssetsService {
       throw new BadRequestException(`Error al generar comprobante de entrada: ${error instanceof Error ? error.message : String(error)}`);
     }
 
+    // ── Actualizar inventario AFT en ambas entidades ──
+    await this.upsertFixedAssetInventory({ ...asset, companyId: oldCompanyId, status: 'transferred' } as FixedAsset);
+    await this.upsertFixedAssetInventory(asset);
+
     // ── Auditoría de la transferencia ──
     await this.auditService.log({
       companyId: oldCompanyId,
@@ -635,6 +689,53 @@ export class FixedAssetsService {
         reason: data.reason,
       },
     };
+  }
+
+  // ── Sincronizar Registro de Inventario de AFT ──
+  private async upsertFixedAssetInventory(asset: FixedAsset, overrideStatus?: 'active' | 'disposed' | 'transferred' | 'fully_depreciated') {
+    try {
+      const existing = await this.inventoryRepo.findOne({
+        where: { assetId: asset.id, companyId: asset.companyId },
+        order: { createdAt: 'DESC' },
+      });
+
+      const acquisitionValue = Number(asset.acquisitionValue);
+      const currentValue = Number(asset.currentValue);
+      const accumulatedDepreciation = acquisitionValue - currentValue;
+      const usefulLifeYears = asset.depreciationRate > 0 ? 100 / asset.depreciationRate : null;
+      const reportDate = new Date();
+
+      const inventoryData = {
+        assetId: asset.id,
+        companyId: asset.companyId,
+        reportDate,
+        assetCode: asset.assetCode,
+        name: asset.name,
+        groupNumber: asset.groupNumber,
+        subgroup: asset.subgroup || '',
+        subgroupDetail: asset.subgroupDetail || null,
+        acquisitionDate: new Date(asset.acquisitionDate),
+        acquisitionValue,
+        depreciationRate: asset.depreciationRate,
+        accumulatedDepreciation,
+        currentBookValue: currentValue,
+        location: asset.location || null,
+        responsiblePerson: asset.responsiblePerson || null,
+        status: overrideStatus || (asset.status as any) || 'active',
+        usefulLifeYears: usefulLifeYears ? Math.round(usefulLifeYears) : null,
+        remainingUsefulLife: usefulLifeYears ? Math.max(0, Math.round(usefulLifeYears - (accumulatedDepreciation / (acquisitionValue / usefulLifeYears)))) : null,
+      };
+
+      if (existing) {
+        Object.assign(existing, inventoryData);
+        await this.inventoryRepo.save(existing);
+      } else {
+        const record = this.inventoryRepo.create(inventoryData);
+        await this.inventoryRepo.save(record);
+      }
+    } catch (error) {
+      this.logger.error(`Error sincronizando inventario AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async getDepreciationCatalog(companyId: number) {

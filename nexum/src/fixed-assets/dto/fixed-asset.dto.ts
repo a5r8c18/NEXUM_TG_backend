@@ -53,6 +53,10 @@ export class CreateFixedAssetDto {
   @IsOptional()
   @IsString()
   responsiblePerson?: string;
+
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
 }
 
 export class UpdateFixedAssetDto {
@@ -100,6 +104,10 @@ export class UpdateFixedAssetDto {
   responsiblePerson?: string;
 
   @IsOptional()
+  @IsString()
+  employeeId?: string;
+
+  @IsOptional()
   @IsIn(['active', 'disposed', 'fully_depreciated'])
   status?: string;
 }
@@ -118,6 +126,14 @@ export class DisposeAssetDto {
   @IsOptional()
   @IsDateString()
   disposalDate?: string;
+
+  @IsOptional()
+  @IsString()
+  bankAccountId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  saleAmount?: number;
 }
 
 export class ProcessDepreciationDto {
@@ -169,5 +185,9 @@ export class TransferAssetDto {
   @IsOptional()
   @IsString()
   newResponsiblePerson?: string;
+
+  @IsOptional()
+  @IsString()
+  newEmployeeId?: string;
 }
 
