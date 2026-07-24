@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
 import { DepreciationHistory } from '../entities/depreciation-history.entity';
 import { VoucherService } from '../accounting/voucher.service';
@@ -102,6 +102,7 @@ export class FixedAssetsService {
       location?: string;
       responsiblePerson?: string;
       employeeId?: string;
+      costCenterId?: string;
     },
   ) {
     const depRate = await this.getDepreciationRateFromCatalog(companyId, data.groupNumber, data.subgroup);
@@ -158,6 +159,17 @@ export class FixedAssetsService {
     const acquisitionValue = Number(asset.acquisitionValue);
     if (acquisitionValue > 0) {
       try {
+        const assetAccount =
+          (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.FIXED_ASSET_ACQUISITION,
+          )) || '240';
+        const payableAccount =
+          (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PURCHASE_ORDER,
+          )) || '410';
+
         await this.voucherService.createVoucherFromModule(
           companyId,
           'fixed-assets',
@@ -170,13 +182,13 @@ export class FixedAssetsService {
             createdBy: 'Sistema',
             lines: [
               {
-                accountCode: '240', // Activos Fijos Tangibles
+                accountCode: assetAccount, // Activos Fijos Tangibles
                 debit: acquisitionValue,
                 credit: 0,
                 description: `Alta AFT ${asset.assetCode}`,
               },
               {
-                accountCode: '410', // Cuentas por Pagar
+                accountCode: payableAccount, // Cuentas por Pagar
                 debit: 0,
                 credit: acquisitionValue,
                 description: `Obligación por adquisición AFT`,
@@ -184,8 +196,23 @@ export class FixedAssetsService {
             ],
           },
         );
+
+        // ── Cuenta por Pagar asociada a la adquisición ──
+        const dueDate = new Date(asset.acquisitionDate);
+        dueDate.setDate(dueDate.getDate() + 30);
+
+        await this.financeService.createPayable(companyId, {
+          purchaseNumber: asset.assetCode,
+          supplierName: 'Proveedor AFT',
+          supplierNit: 'N/D',
+          originalAmount: acquisitionValue,
+          dueDate: dueDate.toISOString().split('T')[0],
+          status: 'pending',
+          currency: 'CUP',
+          notes: `CxP generada por adquisición AFT ${asset.assetCode} - ${asset.name}`,
+        });
       } catch (error) {
-        this.logger.error(`Error contabilización AFT ${asset.id}: ${error.message}`);
+        this.logger.error(`Error contabilización/finanzas AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -201,6 +228,8 @@ export class FixedAssetsService {
       location?: string;
       responsiblePerson?: string;
       status?: string;
+      costCenterId?: string | null;
+      employeeId?: string | null;
     },
   ) {
     const asset = await this.assetRepo.findOneBy({ id, companyId });
@@ -212,16 +241,41 @@ export class FixedAssetsService {
       location: asset.location,
       responsiblePerson: asset.responsiblePerson,
       status: asset.status,
+      employeeId: asset.employeeId,
     };
 
     if (data.name !== undefined) asset.name = data.name;
     if (data.description !== undefined) asset.description = data.description;
     if (data.location !== undefined) asset.location = data.location;
-    if (data.responsiblePerson !== undefined)
-      asset.responsiblePerson = data.responsiblePerson;
     if (data.status !== undefined) asset.status = data.status;
 
+    if (data.employeeId !== undefined) {
+      if (data.employeeId) {
+        const employee = await this.employeeRepo.findOne({
+          where: { id: data.employeeId, companyId },
+        });
+        if (employee) {
+          asset.employeeId = data.employeeId;
+          asset.responsiblePerson = `${employee.firstName} ${employee.lastName}`.trim();
+        }
+      } else {
+        asset.employeeId = null;
+        if (data.responsiblePerson !== undefined) {
+          asset.responsiblePerson = data.responsiblePerson;
+        }
+      }
+    } else if (data.responsiblePerson !== undefined) {
+      asset.responsiblePerson = data.responsiblePerson;
+    }
+
+    if (data.costCenterId !== undefined) {
+      asset.costCenterId = data.costCenterId || null;
+    }
+
     const saved = await this.assetRepo.save(asset);
+
+    // ── Sincronizar inventario AFT ──
+    await this.upsertFixedAssetInventory(saved);
 
     // ── Auditoría de actualización ──
     await this.auditService.log({
@@ -238,6 +292,7 @@ export class FixedAssetsService {
         location: saved.location,
         responsiblePerson: saved.responsiblePerson,
         status: saved.status,
+        employeeId: saved.employeeId,
       },
     });
 
@@ -307,6 +362,17 @@ export class FixedAssetsService {
     // ── Comprobante contable de baja ──
     if (acquisitionValue > 0) {
       try {
+        const assetAccount =
+          (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.FIXED_ASSET_ACQUISITION,
+          )) || '240';
+        const accumulatedDepreciationAccount =
+          (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION,
+          )) || '375';
+
         const lines: Array<{
           accountCode: string;
           debit: number;
@@ -314,30 +380,84 @@ export class FixedAssetsService {
           description: string;
         }> = [];
 
-        // Débito: Depreciación Acumulada (375) por lo ya depreciado
+        // Débito: Depreciación Acumulada por lo ya depreciado
         if (accumulatedDepreciation > 0) {
           lines.push({
-            accountCode: '375',
+            accountCode: accumulatedDepreciationAccount,
             debit: accumulatedDepreciation,
             credit: 0,
             description: `Dep. acumulada baja AFT ${asset.assetCode}`,
           });
         }
 
-        // Débito: Faltantes y Pérdidas (845) por valor residual
-        if (residualLoss > 0) {
-          const lossAccount = data.disposalType === 'venta' ? '350' : '845';
+        if (data.disposalType === 'venta') {
+          const saleAmount = data.saleAmount ?? currentValue;
+          const bookValue = currentValue;
+          const gainOrLoss = saleAmount - bookValue;
+
+          // Débito: Cuenta por Cobrar / Banco por el importe de venta
+          const proceedsAccount = data.bankAccountId
+            ? (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.PAYROLL_CASH,
+              )) || '110'
+            : (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.FIXED_ASSET_SALE_PROCEEDS,
+              )) || '135';
           lines.push({
-            accountCode: lossAccount,
-            debit: residualLoss,
+            accountCode: proceedsAccount,
+            debit: saleAmount,
             credit: 0,
-            description: `${data.disposalType === 'venta' ? 'Venta' : 'Pérdida'} AFT ${asset.assetCode} - ${data.reason}`,
+            description: `Importe venta AFT ${asset.assetCode}`,
           });
+
+          // Ganancia o Pérdida
+          if (gainOrLoss > 0) {
+            const gainAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.FIXED_ASSET_DISPOSAL_GAIN,
+              )) || '980';
+            lines.push({
+              accountCode: gainAccount,
+              debit: 0,
+              credit: gainOrLoss,
+              description: `Ganancia venta AFT ${asset.assetCode}`,
+            });
+          } else if (gainOrLoss < 0) {
+            const lossAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.FIXED_ASSET_DISPOSAL_LOSS,
+              )) || '845';
+            lines.push({
+              accountCode: lossAccount,
+              debit: Math.abs(gainOrLoss),
+              credit: 0,
+              description: `Pérdida venta AFT ${asset.assetCode}`,
+            });
+          }
+        } else {
+          // Débito: Faltantes y Pérdidas de AFT por valor residual
+          if (residualLoss > 0) {
+            const lossAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.FIXED_ASSET_DISPOSAL_LOSS,
+              )) || '845';
+            lines.push({
+              accountCode: lossAccount,
+              debit: residualLoss,
+              credit: 0,
+              description: `Pérdida AFT ${asset.assetCode} - ${data.reason}`,
+            });
+          }
         }
 
-        // Crédito: Activos Fijos Tangibles (240) por valor total de adquisición
+        // Crédito: Activos Fijos Tangibles por valor total de adquisición
         lines.push({
-          accountCode: '240',
+          accountCode: assetAccount,
           debit: 0,
           credit: acquisitionValue,
           description: `Baja AFT ${asset.assetCode}: ${asset.name}`,
@@ -367,24 +487,46 @@ export class FixedAssetsService {
       }
     }
 
-    // ── Registro bancario por venta de AFT ──
-    if (data.disposalType === 'venta' && data.bankAccountId) {
-      try {
-        const saleAmount = data.saleAmount ?? currentValue;
-        await this.financeService.createBankTransaction(companyId, {
-          bankAccountId: data.bankAccountId,
-          transactionNumber: `TXB-AFT-VENTA-${asset.assetCode}-${Date.now()}`,
-          transactionDate: disposalDate,
-          transactionType: 'credit',
-          amount: saleAmount,
-          description: `Venta de AFT ${asset.assetCode} - ${asset.name}`,
-          referenceNumber: `BAJA-${asset.assetCode}`,
-          category: 'fixed-asset-sale',
-          counterpartyName: asset.responsiblePerson,
-        });
-        this.logger.log(`Transacción bancaria por venta AFT ${asset.assetCode} generada`);
-      } catch (error) {
-        this.logger.error(`Error transacción bancaria venta AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+    // ── Registro financiero por venta de AFT ──
+    if (data.disposalType === 'venta') {
+      const saleAmount = data.saleAmount ?? currentValue;
+      const saleDate = new Date(disposalDate);
+      const dueDate = new Date(saleDate);
+      dueDate.setDate(dueDate.getDate() + 30);
+
+      if (data.bankAccountId) {
+        try {
+          await this.financeService.createBankTransaction(companyId, {
+            bankAccountId: data.bankAccountId,
+            transactionNumber: `TXB-AFT-VENTA-${asset.assetCode}-${Date.now()}`,
+            transactionDate: disposalDate,
+            transactionType: 'credit',
+            amount: saleAmount,
+            description: `Venta de AFT ${asset.assetCode} - ${asset.name}`,
+            referenceNumber: `BAJA-${asset.assetCode}`,
+            category: 'fixed-asset-sale',
+            counterpartyName: asset.responsiblePerson,
+          });
+          this.logger.log(`Transacción bancaria por venta AFT ${asset.assetCode} generada`);
+        } catch (error) {
+          this.logger.error(`Error transacción bancaria venta AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        // Venta a crédito: generar Cuenta por Cobrar
+        try {
+          await this.financeService.createReceivable(companyId, {
+            invoiceNumber: `AFT-VENTA-${asset.assetCode}`,
+            customerName: asset.responsiblePerson || 'Cliente AFT',
+            originalAmount: saleAmount,
+            dueDate: dueDate.toISOString().split('T')[0],
+            status: 'pending',
+            currency: 'CUP',
+            notes: `Cuenta por cobrar generada por venta de AFT ${asset.assetCode} - ${asset.name}`,
+          });
+          this.logger.log(`Cuenta por cobrar por venta AFT ${asset.assetCode} generada`);
+        } catch (error) {
+          this.logger.error(`Error cuenta por cobrar venta AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
 
@@ -464,6 +606,12 @@ export class FixedAssetsService {
 
     // ── Comprobante contable de revalorización ──
     try {
+      const assetAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.FIXED_ASSET_ACQUISITION,
+        )) || '240';
+
       const lines: Array<{
         accountCode: string;
         debit: number;
@@ -474,7 +622,7 @@ export class FixedAssetsService {
       if (revaluationDifference > 0) {
         // Superávit de revalorización
         lines.push({
-          accountCode: '240', // Activos Fijos Tangibles
+          accountCode: assetAccount, // Activos Fijos Tangibles
           debit: revaluationDifference,
           credit: 0,
           description: `Revalorización AFT ${asset.assetCode} - ${data.reason}`,
@@ -495,7 +643,7 @@ export class FixedAssetsService {
           description: `Déficit revalorización AFT ${asset.assetCode} - ${data.reason}`,
         });
         lines.push({
-          accountCode: '240', // Activos Fijos Tangibles
+          accountCode: assetAccount, // Activos Fijos Tangibles
           debit: 0,
           credit: deficit,
           description: `Reducción valor AFT ${asset.assetCode}`,
@@ -570,6 +718,7 @@ export class FixedAssetsService {
       transferDate: string;
       newLocation?: string;
       newResponsiblePerson?: string;
+      newEmployeeId?: string;
     },
     userName?: string,
   ) {
@@ -584,11 +733,34 @@ export class FixedAssetsService {
 
     const oldCompanyId = asset.companyId;
     const oldLocation = asset.location;
+    const oldEmployeeId = asset.employeeId;
     const oldResponsiblePerson = asset.responsiblePerson;
 
     // ── Comprobante contable de salida (entidad origen) ──
+    let assetAccount: string;
+    let accumulatedDepreciationAccount: string = '375';
+    let transferAccount: string = '699';
     try {
+      const acquisitionValue = Number(asset.acquisitionValue);
       const currentValue = Number(asset.currentValue);
+      const accumulatedDepreciation = acquisitionValue - currentValue;
+
+      assetAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.FIXED_ASSET_ACQUISITION,
+        )) || '240';
+      accumulatedDepreciationAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION,
+        )) || '375';
+      transferAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.FIXED_ASSET_TRANSFER,
+        )) || '699';
+
       await this.voucherService.createVoucherFromModule(
         companyId,
         'fixed-assets',
@@ -601,9 +773,21 @@ export class FixedAssetsService {
           createdBy: userName || 'Sistema',
           lines: [
             {
-              accountCode: '240', // Activos Fijos Tangibles
+              accountCode: transferAccount,
+              debit: currentValue,
+              credit: 0,
+              description: `Cuenta puente traspaso AFT ${asset.assetCode}`,
+            },
+            {
+              accountCode: accumulatedDepreciationAccount,
+              debit: accumulatedDepreciation,
+              credit: 0,
+              description: `Dep. acumulada AFT ${asset.assetCode} transferida`,
+            },
+            {
+              accountCode: assetAccount,
               debit: 0,
-              credit: currentValue,
+              credit: acquisitionValue,
               description: `Salida AFT ${asset.assetCode} por transferencia`,
             },
           ],
@@ -615,15 +799,28 @@ export class FixedAssetsService {
       throw new BadRequestException(`Error al generar comprobante de salida: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // ── Cambiar companyId del activo ──
+    // ── Cambiar companyId y responsable del activo ──
     asset.companyId = data.targetCompanyId;
     if (data.newLocation) asset.location = data.newLocation;
-    if (data.newResponsiblePerson) asset.responsiblePerson = data.newResponsiblePerson;
+    if (data.newEmployeeId) {
+      const newEmployee = await this.employeeRepo.findOne({
+        where: { id: data.newEmployeeId, companyId: data.targetCompanyId },
+      });
+      if (newEmployee) {
+        asset.employeeId = data.newEmployeeId;
+        asset.responsiblePerson = `${newEmployee.firstName} ${newEmployee.lastName}`.trim();
+      }
+    } else if (data.newResponsiblePerson) {
+      asset.responsiblePerson = data.newResponsiblePerson;
+    }
     await this.assetRepo.save(asset);
 
     // ── Comprobante contable de entrada (entidad destino) ──
     try {
+      const acquisitionValue = Number(asset.acquisitionValue);
       const currentValue = Number(asset.currentValue);
+      const accumulatedDepreciation = acquisitionValue - currentValue;
+
       await this.voucherService.createVoucherFromModule(
         data.targetCompanyId,
         'fixed-assets',
@@ -636,10 +833,22 @@ export class FixedAssetsService {
           createdBy: userName || 'Sistema',
           lines: [
             {
-              accountCode: '240', // Activos Fijos Tangibles
-              debit: currentValue,
+              accountCode: assetAccount,
+              debit: acquisitionValue,
               credit: 0,
               description: `Entrada AFT ${asset.assetCode} por transferencia`,
+            },
+            {
+              accountCode: accumulatedDepreciationAccount,
+              debit: 0,
+              credit: accumulatedDepreciation,
+              description: `Dep. acumulada AFT ${asset.assetCode} recibida`,
+            },
+            {
+              accountCode: transferAccount,
+              debit: 0,
+              credit: currentValue,
+              description: `Cuenta puente traspaso AFT ${asset.assetCode}`,
             },
           ],
         },
@@ -650,7 +859,8 @@ export class FixedAssetsService {
       // Revert companyId if accounting fails
       asset.companyId = oldCompanyId;
       if (data.newLocation) asset.location = oldLocation;
-      if (data.newResponsiblePerson) asset.responsiblePerson = oldResponsiblePerson;
+      asset.employeeId = oldEmployeeId;
+      asset.responsiblePerson = oldResponsiblePerson;
       await this.assetRepo.save(asset);
       throw new BadRequestException(`Error al generar comprobante de entrada: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -671,11 +881,13 @@ export class FixedAssetsService {
         companyId: oldCompanyId,
         location: oldLocation,
         responsiblePerson: oldResponsiblePerson,
+        employeeId: oldEmployeeId,
       },
       newValues: {
         companyId: data.targetCompanyId,
         location: data.newLocation || asset.location,
-        responsiblePerson: data.newResponsiblePerson || asset.responsiblePerson,
+        responsiblePerson: asset.responsiblePerson,
+        employeeId: asset.employeeId,
         reason: data.reason,
       },
     });
@@ -935,50 +1147,113 @@ export class FixedAssetsService {
     const records = result.records;
 
     if (records.length === 0) {
-      return { message: 'No depreciation records for this period', voucher: null };
+      return { message: 'No hay depreciaciones para este período', voucher: null };
     }
 
-    const totalDepreciation = records.reduce(
+    // ── Idempotencia: omitir activos ya depreciados en el período ──
+    const alreadyProcessedAssetIds = new Set(
+      (
+        await this.depreciationHistoryRepo.find({
+          where: { companyId, year, month },
+          select: ['assetId'],
+        })
+      ).map((h) => h.assetId),
+    );
+
+    const newRecords = records.filter((r) => !alreadyProcessedAssetIds.has(r.assetId));
+
+    if (newRecords.length === 0) {
+      return { message: `Depreciación ${month}/${year} ya fue procesada`, voucher: null };
+    }
+
+    const totalDepreciation = newRecords.reduce(
       (sum, r) => sum + Number(r.monthlyDepreciation),
       0,
     );
 
-    // ── Contabilización de depreciación mensual ──
+    // Cargar activos con centro de costo para enrutar el gasto
+    const assetsWithCostCenter = await this.assetRepo.find({
+      where: { id: In(newRecords.map((r) => r.assetId)), companyId },
+      relations: ['costCenter'],
+    });
+    const assetCostCenterMap = new Map(
+      assetsWithCostCenter.map((a) => [a.id, a]),
+    );
+
+    let voucher: any = null;
+
+    // ── Contabilización de depreciación mensual por centro de costo ──
     if (totalDepreciation > 0) {
       try {
-        // Cuenta de gasto por depreciación (configurable). Default: 822 Gastos
-        // Generales y de Administración. La 840 (Financiamiento a la OSDE) NO
-        // corresponde a depreciación.
-        const depreciationExpenseAccount =
+        const accumulatedDepreciationAccount =
           (await this.accountMappingService.getAccountForMapping(
             companyId,
-            MappingType.FIXED_ASSET_DEPRECIATION,
-          )) || '822';
+            MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION,
+          )) || '375';
 
-        const voucher = await this.voucherService.createVoucherFromModule(
+        const [prodDepAccount, assocDepAccount, adminDepAccount] =
+          await Promise.all([
+            this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.FIXED_ASSET_DEPRECIATION_PRODUCTION,
+            ),
+            this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.FIXED_ASSET_DEPRECIATION_ASSOCIATED,
+            ),
+            this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.FIXED_ASSET_DEPRECIATION_ADMINISTRATIVE,
+            ),
+          ]);
+
+        const expenseByAccount = new Map<string, number>();
+        for (const record of newRecords) {
+          const asset = assetCostCenterMap.get(record.assetId);
+          const costCenterType = asset?.costCenter?.type;
+          let accountCode: string;
+          if (costCenterType === 'production') {
+            accountCode = prodDepAccount || '730';
+          } else if (costCenterType === 'associated') {
+            accountCode = assocDepAccount || '731';
+          } else {
+            accountCode = adminDepAccount || '822';
+          }
+          expenseByAccount.set(
+            accountCode,
+            (expenseByAccount.get(accountCode) || 0) +
+              Number(record.monthlyDepreciation),
+          );
+        }
+
+        const lines: any[] = [];
+        for (const [accountCode, amount] of expenseByAccount.entries()) {
+          lines.push({
+            accountCode,
+            debit: amount,
+            credit: 0,
+            description: `Depreciación ${month}/${year}`,
+          });
+        }
+
+        lines.push({
+          accountCode: accumulatedDepreciationAccount,
+          debit: 0,
+          credit: totalDepreciation,
+          description: `Dep. acumulada ${month}/${year}`,
+        });
+
+        voucher = await this.voucherService.createVoucherFromModule(
           companyId,
           'fixed-assets',
           `DEP-${year}-${String(month).padStart(2, '0')}`,
           {
             date: `${year}-${String(month).padStart(2, '0')}-28`,
-            description: `Depreciación mensual ${month}/${year} (${records.length} activos)`,
+            description: `Depreciación mensual ${month}/${year} (${newRecords.length} activos)`,
             type: 'fixed-assets',
             reference: `DEP-${year}-${String(month).padStart(2, '0')}`,
             createdBy: 'Sistema',
-            lines: [
-              {
-                accountCode: depreciationExpenseAccount, // Gasto por Depreciación
-                debit: totalDepreciation,
-                credit: 0,
-                description: `Depreciación ${month}/${year}`,
-              },
-              {
-                accountCode: '375', // Depreciación Acumulada AFT
-                debit: 0,
-                credit: totalDepreciation,
-                description: `Dep. acumulada ${month}/${year}`,
-              },
-            ],
+            lines,
           },
         );
         this.logger.log(`Comprobante depreciación ${month}/${year} generado`);
@@ -990,8 +1265,8 @@ export class FixedAssetsService {
       }
     }
 
-    // Update asset current values
-    for (const record of records) {
+    // Update asset current values and persist history
+    for (const record of newRecords) {
       const asset = await this.assetRepo.findOneBy({
         id: record.assetId,
         companyId,
@@ -999,13 +1274,28 @@ export class FixedAssetsService {
       if (asset) {
         asset.currentValue = record.currentValue;
         await this.assetRepo.save(asset);
+
+        const history = new DepreciationHistory();
+        history.companyId = companyId;
+        history.assetId = asset.id;
+        history.year = year;
+        history.month = month;
+        history.monthlyDepreciation = record.monthlyDepreciation;
+        history.accumulatedDepreciation = record.accumulatedDepreciation;
+        history.currentValue = record.currentValue;
+        history.depreciationRate = record.depreciationRate;
+        history.voucherReference = voucher?.reference ?? `DEP-${year}-${String(month).padStart(2, '0')}`;
+        history.status = 'processed';
+        await this.depreciationHistoryRepo.save(history);
+
+        await this.upsertFixedAssetInventory(asset);
       }
     }
 
     return {
-      message: `Depreciation processed for ${records.length} assets`,
+      message: `Depreciación procesada para ${newRecords.length} activos`,
       totalDepreciation,
-      voucher: null,
+      voucher,
     };
   }
 }

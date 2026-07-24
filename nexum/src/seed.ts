@@ -6,6 +6,8 @@ import { User, UserRole } from './entities/user.entity';
 import { Warehouse } from './entities/warehouse.entity';
 import { Inventory } from './entities/inventory.entity';
 import { ExpenseType } from './entities/expense-type.entity';
+import { DepreciationCatalog } from './entities/depreciation-catalog.entity';
+import { mockDepreciationCatalog } from './shared/mock-data';
 import * as bcrypt from 'bcryptjs';
 import { LoggerService } from './logger/logger.service';
 
@@ -43,6 +45,7 @@ async function seed() {
   const warehouseRepo = ds.getRepository(Warehouse);
   const inventoryRepo = ds.getRepository(Inventory);
   const expenseTypeRepo = ds.getRepository(ExpenseType);
+  const depreciationCatalogRepo = ds.getRepository(DepreciationCatalog);
 
   // --- Companies ---
   let company1 = await companyRepo.findOneBy({ name: 'Empresa Demo S.A.' });
@@ -342,6 +345,37 @@ async function seed() {
       inv.entity = p.entity;
       await inventoryRepo.save(inv);
       logger.log(`Inventory created: ${p.productName}`, 'Seed');
+    }
+  }
+
+  // --- Depreciation Catalog (Cuban regulations) ---
+  const allCompanies = [company1, company2, teneduriaGarcia];
+  for (const company of allCompanies) {
+    for (const group of mockDepreciationCatalog) {
+      for (const sub of (group as any).subgroups) {
+        const existing = await depreciationCatalogRepo.findOneBy({
+          companyId: company.id,
+          groupNumber: (group as any).group_number,
+          subgroupName: sub.name,
+        });
+        if (!existing) {
+          const entry = new DepreciationCatalog();
+          entry.companyId = company.id;
+          entry.groupNumber = (group as any).group_number;
+          entry.groupName = (group as any).group_name;
+          entry.subgroupName = sub.name;
+          entry.depreciationRate = sub.rate;
+          entry.usefulLifeYears =
+            sub.rate > 0 ? Math.round(100 / sub.rate) : null;
+          entry.description = sub.detail || null;
+          entry.isActive = true;
+          await depreciationCatalogRepo.save(entry);
+          logger.log(
+            `Depreciation catalog entry for ${company.name}: Grupo ${entry.groupNumber} - ${entry.subgroupName}`,
+            'Seed',
+          );
+        }
+      }
     }
   }
 

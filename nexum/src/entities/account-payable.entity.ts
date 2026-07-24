@@ -111,6 +111,7 @@ export class AccountPayable {
   companyId: number;
 
   @ManyToOne(() => Company)
+  @JoinColumn({ name: 'company_id' })
   company: Company;
 
   @ManyToOne(() => Purchase, { nullable: true })

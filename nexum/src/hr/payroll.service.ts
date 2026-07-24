@@ -121,6 +121,7 @@ export class PayrollService {
         employeeName: string;
         employeeDocument: string;
         position: string;
+        costCenterId?: string;
         baseSalary: number;
         overtimeHours: number;
         overtimePay: number;
@@ -166,6 +167,7 @@ export class PayrollService {
         employeeName: item.employeeName,
         employeeDocument: item.employeeDocument,
         position: item.position,
+        costCenterId: item.costCenterId || null,
         baseSalary: item.baseSalary,
         overtimeHours: item.overtimeHours,
         overtimePay: item.overtimePay,
@@ -295,6 +297,7 @@ export class PayrollService {
         employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
         employeeDocument: emp.documentId || '',
         position: emp.position || '',
+        costCenterId: emp.costCenterId || null,
         baseSalary,
         overtimeHours,
         overtimePay,
@@ -345,6 +348,7 @@ export class PayrollService {
       employeeName: string;
       employeeDocument?: string;
       position?: string;
+      costCenterId?: string;
       baseSalary: number;
       overtimeHours?: number;
       overtimePay?: number;
@@ -405,6 +409,7 @@ export class PayrollService {
         employeeName: item.employeeName,
         employeeDocument: item.employeeDocument || '',
         position: item.position || '',
+        costCenterId: item.costCenterId || null,
         baseSalary: Number(item.baseSalary || 0),
         overtimeHours: Number(item.overtimeHours || 0),
         overtimePay: Number(item.overtimePay || 0),
@@ -434,7 +439,7 @@ export class PayrollService {
   async process(companyId: number, id: number, processedBy: string, costCenterId?: string) {
     const payroll = await this.payrollRepo.findOne({
       where: { id, companyId },
-      relations: ['items'],
+      relations: ['items', 'items.costCenter'],
     });
 
     if (!payroll) {
@@ -458,21 +463,78 @@ export class PayrollService {
     const totalNet = Number(payroll.totalNet);
     if (totalGross > 0) {
       try {
-        const [expenseAccount, payableAccount, retentionAccount] =
-          await Promise.all([
-            this.accountMappingService.getAccountForMapping(
-              companyId,
-              MappingType.PAYROLL_PROCESSING,
-            ),
-            this.accountMappingService.getAccountForMapping(
-              companyId,
-              MappingType.PAYROLL_PAYMENT,
-            ),
-            this.accountMappingService.getAccountForMapping(
-              companyId,
-              MappingType.PAYROLL_RETENTION,
-            ),
-          ]);
+        const [
+          payableAccount,
+          retentionAccount,
+          prodExpenseAccount,
+          assocExpenseAccount,
+          adminExpenseAccount,
+        ] = await Promise.all([
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_PAYMENT,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_RETENTION,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_PROCESSING_PRODUCTION,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_PROCESSING_ASSOCIATED,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE,
+          ),
+        ]);
+
+        const expenseByAccount = new Map<string, number>();
+        for (const item of payroll.items) {
+          const costCenterType = item.costCenter?.type;
+          let accountCode: string;
+          if (costCenterType === 'production') {
+            accountCode = prodExpenseAccount || '730';
+          } else if (costCenterType === 'associated') {
+            accountCode = assocExpenseAccount || '731';
+          } else {
+            accountCode = adminExpenseAccount || '822';
+          }
+          expenseByAccount.set(
+            accountCode,
+            (expenseByAccount.get(accountCode) || 0) + Number(item.grossSalary),
+          );
+        }
+
+        const lines: any[] = [];
+        for (const [accountCode, amount] of expenseByAccount.entries()) {
+          lines.push({
+            accountCode,
+            debit: amount,
+            credit: 0,
+            description: `Salarios brutos ${payroll.period}`,
+          });
+        }
+
+        lines.push({
+          accountCode: payableAccount, // Nóminas por Pagar
+          debit: 0,
+          credit: totalNet,
+          description: `Nómina neta por pagar ${payroll.period}`,
+        });
+
+        if (totalDeductions > 0) {
+          lines.push({
+            accountCode: retentionAccount, // Retenciones por Pagar
+            debit: 0,
+            credit: totalDeductions,
+            description: `Retenciones y deducciones ${payroll.period}`,
+          });
+        }
+
         await this.voucherService.createVoucherFromModule(
           companyId,
           'payroll',
@@ -483,31 +545,7 @@ export class PayrollService {
             type: 'payroll',
             reference: `NOM-${payroll.period}-${payroll.id}`,
             createdBy: processedBy || 'Sistema',
-            lines: [
-              {
-                accountCode: expenseAccount, // Gasto de Salario
-                debit: totalGross,
-                credit: 0,
-                description: `Salarios brutos ${payroll.period}`,
-                costCenterId: costCenterId || undefined,
-              },
-              {
-                accountCode: payableAccount, // Nóminas por Pagar
-                debit: 0,
-                credit: totalNet,
-                description: `Nómina neta por pagar ${payroll.period}`,
-              },
-              ...(totalDeductions > 0
-                ? [
-                    {
-                      accountCode: retentionAccount, // Retenciones por Pagar
-                      debit: 0,
-                      credit: totalDeductions,
-                      description: `Retenciones y deducciones ${payroll.period}`,
-                    },
-                  ]
-                : []),
-            ],
+            lines,
           },
         );
         this.logger.log(`Comprobante nómina ${payroll.period} generado`);

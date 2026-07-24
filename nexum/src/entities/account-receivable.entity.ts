@@ -20,8 +20,8 @@ export class AccountReceivable {
   @Column({ name: 'ar_number', type: 'varchar', length: 20, unique: true })
   arNumber: string;
 
-  @Column({ name: 'invoice_id', type: 'uuid' })
-  invoiceId: string;
+  @Column({ name: 'invoice_id', type: 'uuid', nullable: true })
+  invoiceId: string | null;
 
   @Column({ name: 'invoice_number', type: 'varchar', length: 50 })
   invoiceNumber: string;
@@ -99,9 +99,10 @@ export class AccountReceivable {
   companyId: number;
 
   @ManyToOne(() => Company)
+  @JoinColumn({ name: 'company_id' })
   company: Company;
 
-  @ManyToOne(() => Invoice)
+  @ManyToOne(() => Invoice, { nullable: true })
   @JoinColumn({ name: 'invoice_id' })
   invoice: Invoice;
 

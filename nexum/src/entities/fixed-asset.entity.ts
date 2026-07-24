@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 import { Company } from './company.entity';
 import { Employee } from './employee.entity';
+import { CostCenter } from './cost-center.entity';
 
 @Entity('fixed_assets')
 @Index('IDX_fixed_assets_company_id', ['companyId'])
@@ -89,9 +90,16 @@ export class FixedAsset {
   @Column({ name: 'employee_id', type: 'uuid', nullable: true })
   employeeId: string | null;
 
-  @ManyToOne(() => Employee)
+  @ManyToOne(() => Employee, { nullable: true })
   @JoinColumn({ name: 'employee_id' })
   employee: Employee | null;
+
+  @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
+  costCenterId: string | null;
+
+  @ManyToOne(() => CostCenter, { nullable: true })
+  @JoinColumn({ name: 'cost_center_id' })
+  costCenter: CostCenter | null;
 
   @Column({ length: 20, default: 'active' })
   status: string;

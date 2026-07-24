@@ -4,11 +4,13 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { Company } from './company.entity';
 import { Payroll } from './payroll.entity';
+import { CostCenter } from './cost-center.entity';
 
 @Entity('payroll_items')
 export class PayrollItem {
@@ -38,6 +40,13 @@ export class PayrollItem {
 
   @Column({ type: 'varchar', length: 50 })
   position: string;
+
+  @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
+  costCenterId: string | null;
+
+  @ManyToOne(() => CostCenter, { nullable: true })
+  @JoinColumn({ name: 'cost_center_id' })
+  costCenter: CostCenter | null;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   baseSalary: number;

@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -19,7 +20,18 @@ export enum MappingType {
   INVENTORY_TRANSIT = 'inventory_transit', // Cuenta puente: Mercancías en tránsito / Recepción no facturada
   FIXED_ASSET_ACQUISITION = 'fixed_asset_acquisition',
   FIXED_ASSET_DEPRECIATION = 'fixed_asset_depreciation',
+  FIXED_ASSET_DEPRECIATION_PRODUCTION = 'fixed_asset_depreciation_production',
+  FIXED_ASSET_DEPRECIATION_ASSOCIATED = 'fixed_asset_depreciation_associated',
+  FIXED_ASSET_DEPRECIATION_ADMINISTRATIVE = 'fixed_asset_depreciation_administrative',
+  FIXED_ASSET_ACCUMULATED_DEPRECIATION = 'fixed_asset_accumulated_depreciation',
+  FIXED_ASSET_TRANSFER = 'fixed_asset_transfer',
+  FIXED_ASSET_DISPOSAL_GAIN = 'fixed_asset_disposal_gain',
+  FIXED_ASSET_DISPOSAL_LOSS = 'fixed_asset_disposal_loss',
+  FIXED_ASSET_SALE_PROCEEDS = 'fixed_asset_sale_proceeds',
   PAYROLL_PROCESSING = 'payroll_processing',
+  PAYROLL_PROCESSING_PRODUCTION = 'payroll_processing_production',
+  PAYROLL_PROCESSING_ASSOCIATED = 'payroll_processing_associated',
+  PAYROLL_PROCESSING_ADMINISTRATIVE = 'payroll_processing_administrative',
   PAYROLL_PAYMENT = 'payroll_payment',
   PAYROLL_RETENTION = 'payroll_retention', // Crédito: Retenciones y deducciones por pagar
   PAYROLL_CASH = 'payroll_cash', // Crédito: cuenta de tesorería para el pago de nómina
@@ -32,10 +44,11 @@ export class AccountMapping {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column()
+  @Column({ name: 'company_id' })
   companyId: number;
 
   @ManyToOne(() => Company)
+  @JoinColumn({ name: 'company_id' })
   company: Company;
 
   @Column({ type: 'varchar', length: 50 })

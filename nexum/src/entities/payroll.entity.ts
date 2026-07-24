@@ -7,6 +7,7 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  JoinColumn,
 } from 'typeorm';
 import { Company } from './company.entity';
 
@@ -15,10 +16,11 @@ export class Payroll {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column()
+  @Column({ name: 'company_id' })
   companyId: number;
 
   @ManyToOne(() => Company)
+  @JoinColumn({ name: 'company_id' })
   company: Company;
 
   @Column({ type: 'varchar', length: 50 })

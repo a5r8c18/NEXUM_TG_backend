@@ -14,7 +14,8 @@ export type CostCenterType =
   | 'maintenance'
   | 'research'
   | 'marketing'
-  | 'general';
+  | 'general'
+  | 'associated';
 
 @Entity('cost_centers')
 export class CostCenter {

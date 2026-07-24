@@ -30,7 +30,18 @@ export class AccountMappingService {
     [MappingType.INVENTORY_TRANSIT]: '699', // Transitoria del Sistema Automatizado
     [MappingType.FIXED_ASSET_ACQUISITION]: '240', // Activos Fijos Tangibles
     [MappingType.FIXED_ASSET_DEPRECIATION]: '822', // Gastos Generales y de Administración (gasto de depreciación)
-    [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción
+    [MappingType.FIXED_ASSET_DEPRECIATION_PRODUCTION]: '730', // Gastos de Producción
+    [MappingType.FIXED_ASSET_DEPRECIATION_ASSOCIATED]: '731', // Gastos Asociados a la Producción
+    [MappingType.FIXED_ASSET_DEPRECIATION_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
+    [MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION]: '375', // Depreciación Acumulada AFT
+    [MappingType.FIXED_ASSET_TRANSFER]: '699', // Transitoria del Sistema Automatizado (entre entidades)
+    [MappingType.FIXED_ASSET_DISPOSAL_GAIN]: '980', // Otros Ingresos / Superávit por baja/venta AFT
+    [MappingType.FIXED_ASSET_DISPOSAL_LOSS]: '845', // Faltantes y Pérdidas de AFT
+    [MappingType.FIXED_ASSET_SALE_PROCEEDS]: '135', // Cuentas por Cobrar a Corto Plazo (venta a crédito)
+    [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción (default)
+    [MappingType.PAYROLL_PROCESSING_PRODUCTION]: '730', // Gastos de Producción
+    [MappingType.PAYROLL_PROCESSING_ASSOCIATED]: '731', // Gastos Asociados a la Producción
+    [MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
     [MappingType.PAYROLL_PAYMENT]: '455-0040', // Nóminas por Pagar - Obreros
     [MappingType.PAYROLL_RETENTION]: '440', // Retenciones y Descuentos por Pagar
     [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
@@ -232,12 +243,15 @@ export class AccountMappingService {
       '189': 'Mercancías para la Venta',
       '240': 'Activos Fijos Tangibles',
       '375': 'Depreciación de Activos Fijos Tangibles',
+      '845': 'Faltantes y Pérdidas de Activos Fijos Tangibles',
+      '980': 'Otros Ingresos',
       '410': 'Cuentas por Pagar a Corto Plazo',
       '410-0020': 'Cuentas por Pagar - Fuera del Órgano u Organismo',
       '440': 'Retenciones y Descuentos por Pagar',
       '455': 'Nóminas por Pagar',
       '455-0040': 'Nóminas por Pagar - Obreros',
       '699': 'Transitoria del Sistema Automatizado',
+      '730': 'Gastos de Producción',
       '731': 'Gastos Asociados a la Producción',
       '810': 'Costo de Ventas de la Producción',
       '814': 'Costo de Ventas de Mercancías',

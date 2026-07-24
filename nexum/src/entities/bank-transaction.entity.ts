@@ -91,6 +91,7 @@ export class BankTransaction {
   companyId: number;
 
   @ManyToOne(() => Company)
+  @JoinColumn({ name: 'company_id' })
   company: Company;
 
   @ManyToOne(() => BankAccount)

@@ -20,6 +20,9 @@ export class Employee {
   @Column()
   lastName: string;
 
+  @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
+  costCenterId: string | null;
+
   @Column({ type: 'varchar', nullable: true })
   email: string | null;
 
