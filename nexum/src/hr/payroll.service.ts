@@ -20,6 +20,8 @@ import { FinanceService } from '../finance/finance.service';
 
 // Contribución Especial a la Seguridad Social del trabajador (Cuba): 5% del salario.
 const EMPLOYEE_SOCIAL_SECURITY_RATE = 0.05;
+// Cuota patronal de Seguridad Social (Cuba): 14,5% del salario.
+const EMPLOYER_SOCIAL_SECURITY_RATE = 0.145;
 // Jornada legal mensual promedio en Cuba (horas) para el cálculo del salario/hora.
 const MONTHLY_LEGAL_HOURS = 190.6;
 // Días promedio del mes para el cálculo del salario diario (descuentos por ausencia).
@@ -493,6 +495,7 @@ export class PayrollService {
         ]);
 
         const expenseByAccount = new Map<string, number>();
+        let employerSocialSecurityTotal = 0;
         for (const item of payroll.items) {
           const costCenterType = item.costCenter?.type;
           let accountCode: string;
@@ -503,11 +506,15 @@ export class PayrollService {
           } else {
             accountCode = adminExpenseAccount || '822';
           }
+          const gross = Number(item.grossSalary);
+          const employerSS = Math.round(gross * EMPLOYER_SOCIAL_SECURITY_RATE * 100) / 100;
+          employerSocialSecurityTotal += employerSS;
           expenseByAccount.set(
             accountCode,
-            (expenseByAccount.get(accountCode) || 0) + Number(item.grossSalary),
+            (expenseByAccount.get(accountCode) || 0) + gross + employerSS,
           );
         }
+        employerSocialSecurityTotal = Math.round(employerSocialSecurityTotal * 100) / 100;
 
         const lines: any[] = [];
         for (const [accountCode, amount] of expenseByAccount.entries()) {
@@ -515,7 +522,7 @@ export class PayrollService {
             accountCode,
             debit: amount,
             credit: 0,
-            description: `Salarios brutos ${payroll.period}`,
+            description: `Salarios y Seguridad Social patronal ${payroll.period}`,
           });
         }
 
@@ -526,12 +533,13 @@ export class PayrollService {
           description: `Nómina neta por pagar ${payroll.period}`,
         });
 
-        if (totalDeductions > 0) {
+        const totalSocialSecurityLiability = Math.round((totalDeductions + employerSocialSecurityTotal) * 100) / 100;
+        if (totalSocialSecurityLiability > 0) {
           lines.push({
-            accountCode: retentionAccount, // Retenciones por Pagar
+            accountCode: retentionAccount, // Retenciones y Seguridad Social por Pagar
             debit: 0,
-            credit: totalDeductions,
-            description: `Retenciones y deducciones ${payroll.period}`,
+            credit: totalSocialSecurityLiability,
+            description: `Retenciones y Seguridad Social ${payroll.period}`,
           });
         }
 

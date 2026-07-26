@@ -17,6 +17,7 @@ import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
 import { AccountReceivable } from '../entities/account-receivable.entity';
+import { Company } from '../entities/company.entity';
 import { PaginationService } from '../common/pagination/pagination.service';
 import {
   PaginationDto,
@@ -43,6 +44,8 @@ export class InvoicesService {
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(AccountReceivable)
     private readonly arRepo: Repository<AccountReceivable>,
+    @InjectRepository(Company)
+    private readonly companyRepo: Repository<Company>,
   ) {}
 
   async findAll(
@@ -135,6 +138,11 @@ export class InvoicesService {
       }
     }
 
+    const company = await this.companyRepo.findOne({ where: { id: companyId } });
+    if (!company) {
+      throw new NotFoundException(`Company ${companyId} not found`);
+    }
+
     const count = await this.invoiceRepo.count({ where: { companyId } });
     const now = new Date().toISOString();
 
@@ -142,10 +150,11 @@ export class InvoicesService {
       (sum, i) => sum + i.quantity * i.unitPrice,
       0,
     );
-    const taxRate = data.taxRate ?? 16;
-    const taxAmount = Math.round(subtotal * (taxRate / 100) * 100) / 100;
     const discount = data.discount ?? 0;
-    const total = Math.round((subtotal + taxAmount - discount) * 100) / 100;
+    const taxable = Math.round((subtotal - discount) * 100) / 100;
+    const taxRate = data.taxRate ?? company.salesTaxRate ?? 0;
+    const taxAmount = Math.round(taxable * (taxRate / 100) * 100) / 100;
+    const total = Math.round((taxable + taxAmount) * 100) / 100;
 
     const invoice = await this.invoiceRepo.save(
       this.invoiceRepo.create({
@@ -236,12 +245,36 @@ export class InvoicesService {
     const invoiceTotal = Number(invoice.total || 0);
     if (invoiceTotal > 0) {
       try {
-        // 1. Contabilizar venta (ingreso)
-        // Partida doble: DEBE 135 Cuentas por Cobrar / HABER 900 Ventas
+        // 1. Contabilizar venta (ingreso) con impuesto sobre ventas
+        // Partida doble: DEBE 135 Cuentas por Cobrar / HABER 900 Ventas + 440-0001 Impuesto sobre Ventas
         const receivableAccount =
           (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
         const salesAccount =
           (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE)) || '900';
+
+        const salesLines: any[] = [
+          {
+            accountCode: receivableAccount,
+            debit: invoiceTotal,
+            credit: 0,
+            description: `Cobro pendiente ${invoice.invoiceNumber}`,
+          },
+          {
+            accountCode: salesAccount,
+            debit: 0,
+            credit: taxable,
+            description: `Venta ${invoice.invoiceNumber}`,
+          },
+        ];
+
+        if (taxAmount > 0) {
+          salesLines.push({
+            accountCode: '440-0001', // Impuesto sobre Ventas
+            debit: 0,
+            credit: taxAmount,
+            description: `Impuesto sobre Ventas ${invoice.invoiceNumber}`,
+          });
+        }
 
         await this.voucherService.createVoucherFromModule(
           companyId,
@@ -253,20 +286,7 @@ export class InvoicesService {
             type: 'sales',
             reference: `FAC-${invoice.invoiceNumber}`,
             createdBy: data.createdByName || 'Sistema',
-            lines: [
-              {
-                accountCode: receivableAccount,
-                debit: invoiceTotal,
-                credit: 0,
-                description: `Cobro pendiente ${invoice.invoiceNumber}`,
-              },
-              {
-                accountCode: salesAccount,
-                debit: 0,
-                credit: invoiceTotal,
-                description: `Venta ${invoice.invoiceNumber}`,
-              },
-            ],
+            lines: salesLines,
           },
         );
 

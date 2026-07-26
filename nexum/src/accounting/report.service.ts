@@ -12,6 +12,7 @@ import { Voucher } from '../entities/voucher.entity';
 import { Account } from '../entities/account.entity';
 import { GeneratedReport } from '../entities/generated-report.entity';
 import { FiscalYear } from '../entities/fiscal-year.entity';
+import { Company } from '../entities/company.entity';
 import { CacheService } from '../cache/cache.service';
 import { Efe5920Data, Efe5921Data, Efe5922Data, Efe5923Data, Efe5924Data, FlujoEfectivoData } from './pdf.service';
 
@@ -30,6 +31,8 @@ export class ReportService {
     private readonly generatedReportRepo: Repository<GeneratedReport>,
     @InjectRepository(FiscalYear)
     private readonly fiscalYearRepo: Repository<FiscalYear>,
+    @InjectRepository(Company)
+    private readonly companyRepo: Repository<Company>,
     private readonly cacheService: CacheService,
   ) {}
 
@@ -1865,8 +1868,8 @@ export class ReportService {
     const totalInventarios = materiasPrimas + utilesHerramientas + alimentos;
     const activosCirculantes = efectivoCaja + efectivoBanco + cxcCorto + pagosAnticipadosSumin + adeudosPresupuesto + totalInventarios;
     const activosFijos = aftTangibles - depreciacionAft;
-    const otrosActivos = gastosDeficit + cxcDiversas;
-    const totalActivo = activosCirculantes + activosFijos + gastosDeficit + otrosActivos;
+    const activosDiferidos = gastosDeficit + cxcDiversas;
+    const totalActivo = activosCirculantes + activosFijos + gastosDeficit + activosDiferidos;
     
     const pasivosCirculantes = cxpCorto + dividendosXPagar + obligacionesPresupuesto + nominasXPagar + gastosAcumuladosXPagar + provisionVacaciones + provisionSeguridadSocial;
     const otrosPasivos = cuentasXPagarDiversas;
@@ -1898,9 +1901,9 @@ export class ReportService {
         activosFijos: { planAnual: 0, apertura: 0, real: activosFijos },
         activosFijosTangibles: { planAnual: 0, apertura: 0, real: aftTangibles },
         depreciacionAFT: { planAnual: 0, apertura: 0, real: depreciacionAft },
-        activosDiferidos: { planAnual: 0, apertura: 0, real: 0 },
+        activosDiferidos: { planAnual: 0, apertura: 0, real: activosDiferidos },
         gastosFaltantesDiferidos: { planAnual: 0, apertura: 0, real: gastosDeficit },
-        otrosActivos: { planAnual: 0, apertura: 0, real: otrosActivos },
+        otrosActivos: { planAnual: 0, apertura: 0, real: 0 },
         cuentasXCobrarDiversas: { planAnual: 0, apertura: 0, real: cxcDiversas },
         totalActivo: { planAnual: 0, apertura: 0, real: totalActivo },
       },
@@ -2159,27 +2162,27 @@ export class ReportService {
 
     // ACTIVOS CORRIENTES
     const efectivo = await this.getAccountRangeBalance(companyId, ['101-119'], date);
-    const cuentasXCobrar = await this.getAccountRangeBalance(companyId, ['135-139', '154', '334-341'], date);
-    const inventarios = await this.getAccountRangeBalance(companyId, ['183', '187', '193'], date);
-    const pagosAnticipados = await this.getAccountRangeBalance(companyId, ['146-149', '164-166'], date);
+    const cuentasXCobrar = await this.getAccountRangeBalance(companyId, ['135-139', '154', '164-166', '173-180', '334-341'], date);
+    const inventarios = await this.getAccountRangeBalance(companyId, ['183-195'], date);
+    const pagosAnticipados = await this.getAccountRangeBalance(companyId, ['146-149'], date);
     const totalActivosCorrientes = efectivo + cuentasXCobrar + inventarios + pagosAnticipados;
 
     // ACTIVOS NO CORRIENTES
     const activosFijos = await this.getAccountRangeBalance(companyId, ['240-251'], date);
     const depreciacionAcumulada = await this.getAccountRangeBalanceCredit(companyId, ['375-388'], date);
     const activosIntangibles = await this.getAccountRangeBalance(companyId, ['260-270'], date);
-    const otrosActivos = await this.getAccountRangeBalance(companyId, ['312'], date);
+    const otrosActivos = await this.getAccountRangeBalance(companyId, ['300-312'], date);
     const totalActivosNoCorrientes = activosFijos - depreciacionAcumulada + activosIntangibles + otrosActivos;
 
     // PASIVOS CORRIENTES
     const cuentasXPagar = await this.getAccountRangeBalanceCredit(companyId, ['405-415', '565-569'], date);
     const prestamosCP = await this.getAccountRangeBalanceCredit(companyId, ['420-430'], date);
-    const acumulaciones = await this.getAccountRangeBalanceCredit(companyId, ['480-489', '492', '500'], date);
+    const acumulaciones = await this.getAccountRangeBalanceCredit(companyId, ['455-469', '480-489', '500'], date);
     const totalPasivosCorrientes = cuentasXPagar + prestamosCP + acumulaciones;
 
     // PASIVOS NO CORRIENTES
-    const prestamosLP = await this.getAccountRangeBalanceCredit(companyId, ['431-440'], date);
-    const provisionesLP = await this.getAccountRangeBalanceCredit(companyId, ['440-449'], date);
+    const prestamosLP = await this.getAccountRangeBalanceCredit(companyId, ['510-540'], date);
+    const provisionesLP = 0;
     const totalPasivosNoCorrientes = prestamosLP + provisionesLP;
 
     // PATRIMONIO
@@ -2256,35 +2259,38 @@ export class ReportService {
     const fd = fromDate || today;
     const td = toDate || today;
 
-    // INGRESOS
-    const ventasNetas = await this.getAccountRangePeriodAmount(companyId, ['700-705'], fd, td);
-    const otrosIngresos = await this.getAccountRangePeriodAmount(companyId, ['710-720'], fd, td);
+    const company = await this.companyRepo.findOne({ where: { id: companyId } });
+    const incomeTaxRate = (company?.incomeTaxRate ?? 35) / 100;
+
+    // INGRESOS (grupo 50.2 - cuentas nominales acreedoras: 900-913 ventas, 920-953 otros ingresos)
+    const ventasNetas = await this.getAccountRangePeriodAmount(companyId, ['900-913'], fd, td);
+    const otrosIngresos = await this.getAccountRangePeriodAmount(companyId, ['920-953'], fd, td);
     const totalIngresos = ventasNetas.credit + otrosIngresos.credit;
 
-    // COSTO DE VENTAS
-    const costoMercancias = await this.getAccountRangePeriodAmount(companyId, ['800-805'], fd, td);
-    const costoServicios = await this.getAccountRangePeriodAmount(companyId, ['810-815'], fd, td);
+    // COSTO DE VENTAS (810-815: costo de ventas de producción/mercancías)
+    const costoMercancias = await this.getAccountRangePeriodAmount(companyId, ['814-815'], fd, td);
+    const costoServicios = await this.getAccountRangePeriodAmount(companyId, ['810-813'], fd, td);
     const totalCostoVentas = costoMercancias.debit + costoServicios.debit;
 
     const utilidadBruta = totalIngresos - totalCostoVentas;
 
-    // GASTOS OPERATIVOS
-    const gastosVentas = await this.getAccountRangePeriodAmount(companyId, ['505-508'], fd, td);
-    const gastosAdministrativos = await this.getAccountRangePeriodAmount(companyId, ['510-520'], fd, td);
-    const gastosFinancieros = await this.getAccountRangePeriodAmount(companyId, ['530-540'], fd, td);
+    // GASTOS OPERATIVOS (50.1 - nominales deudoras)
+    const gastosVentas = await this.getAccountRangePeriodAmount(companyId, ['820-824'], fd, td);
+    const gastosAdministrativos = await this.getAccountRangePeriodAmount(companyId, ['826-834'], fd, td);
+    const gastosFinancieros = await this.getAccountRangePeriodAmount(companyId, ['835-839'], fd, td);
     const totalGastosOperativos = gastosVentas.debit + gastosAdministrativos.debit + gastosFinancieros.debit;
 
     const utilidadOperativa = utilidadBruta - totalGastosOperativos;
 
     // OTROS INGRESOS/GASTOS
-    const ingresosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['731-740'], fd, td);
-    const gastosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['550-560'], fd, td);
+    const ingresosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['950-953'], fd, td);
+    const gastosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['845-849'], fd, td);
     const totalOtros = ingresosExtraordinarios.credit - gastosExtraordinarios.debit;
 
     const utilidadAntesImpuestos = utilidadOperativa + totalOtros;
 
-    // IMPUESTO RENTA (35%)
-    const impuestoRenta = utilidadAntesImpuestos > 0 ? utilidadAntesImpuestos * 0.35 : 0;
+    // IMPUESTO RENTA (parametrizable, default 35%)
+    const impuestoRenta = utilidadAntesImpuestos > 0 ? utilidadAntesImpuestos * incomeTaxRate : 0;
     const utilidadNeta = utilidadAntesImpuestos - impuestoRenta;
 
     const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];

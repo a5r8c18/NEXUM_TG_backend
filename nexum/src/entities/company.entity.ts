@@ -47,6 +47,12 @@ export class Company {
   })
   tenantType: string | null;
 
+  @Column({ name: 'sales_tax_rate', type: 'decimal', precision: 5, scale: 2, default: 0, nullable: true })
+  salesTaxRate: number | null;
+
+  @Column({ name: 'income_tax_rate', type: 'decimal', precision: 5, scale: 2, default: 35, nullable: true })
+  incomeTaxRate: number | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
