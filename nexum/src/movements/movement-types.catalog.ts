@@ -175,12 +175,12 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
     };
   }
 
-  // Sobrante (105, 205, 305): Débito Inventario / Crédito Sobrantes de Bienes
+  // Sobrante (105, 205, 305): Débito Inventario / Crédito Sobrantes en Investigación
   if (['105', '205', '305'].includes(code)) {
     const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
       debitAccountCode: inventoryAccount,
-      creditAccountCode: '495',  // Sobrantes de Bienes en Investigación
+      creditAccountCode: '555',  // Sobrantes en Investigación
       description: type.description,
     };
   }
@@ -273,11 +273,11 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
     };
   }
 
-  // Faltante en inventario (1104, 2104, 3104): Débito Faltantes / Crédito Inventario
+  // Faltante en inventario (1104, 2104, 3104): Débito Gastos por Faltantes / Crédito Inventario
   if (['1104', '2104', '3104'].includes(code)) {
     const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
-      debitAccountCode: '496',  // Faltantes de Bienes en Investigación
+      debitAccountCode: '850',  // Gastos por Faltantes de Bienes
       creditAccountCode: inventoryAccount,
       description: type.description,
     };

@@ -418,7 +418,7 @@ export class FixedAssetsService {
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
                 MappingType.FIXED_ASSET_DISPOSAL_GAIN,
-              )) || '980';
+              )) || '950';
             lines.push({
               accountCode: gainAccount,
               debit: 0,

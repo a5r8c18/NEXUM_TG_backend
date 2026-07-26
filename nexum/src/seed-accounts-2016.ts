@@ -1554,8 +1554,15 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
     }
 
     // 4.d Ingresos Acumulados por Cobrar (173-180) y Sobrantes en Investigación (555-564)
-    // El Anexo 1 no establece subcuentas obligatorias para estos rangos;
-    // se mantienen como cuentas de nivel 3 con análisis libre.
+    // El Anexo 1 no establece subcuentas obligatorias; se mantiene análisis libre.
+    // Se genera una subcuenta analítica predeterminada para los sobrantes (555)
+    // porque el catálogo de movimientos de inventario requiere una cuenta posteable.
+    if (code === '555') {
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, {
+        '0010': 'Sobrantes en Investigación',
+      });
+      allWithSubs.push(...subs);
+    }
 
     // 4.f Cuentas por Pagar Diversas (565-568)
     if (!isNaN(codeNum) && codeNum >= 565 && codeNum <= 568) {
@@ -1563,9 +1570,14 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
       allWithSubs.push(...subs);
     }
 
-    // 4.g Nóminas por Pagar (455-459), Retenciones por Pagar (460-469)
-    // y Gastos Acumulados por Pagar (480-489) se mantienen como cuentas de
-    // nivel 3 sin subcuentas obligatorias, conforme al Anexo 1.
+    // 4.g Nóminas por Pagar (455-459) y Gastos Acumulados por Pagar (480-489)
+    // se mantienen como cuentas de nivel 3 sin subcuentas obligatorias.
+    // Retenciones por Pagar (460-469) sí generan subcuentas para identificar
+    // cada tipo de retención (0020 = Contribución a la Seguridad Social, etc.)
+    if (!isNaN(codeNum) && codeNum >= 460 && codeNum <= 469) {
+      const subs = generateWithholdingSubaccounts(code, parentName, type, nature);
+      allWithSubs.push(...subs);
+    }
 
     // 5. Activos Fijos Intangibles en Proceso (264)
     if (code === '264') {

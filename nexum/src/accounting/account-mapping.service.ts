@@ -43,7 +43,7 @@ export class AccountMappingService {
     [MappingType.PAYROLL_PROCESSING_ASSOCIATED]: '731', // Gastos Asociados a la Producción
     [MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
     [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
-    [MappingType.PAYROLL_RETENTION]: '460', // Retenciones por Pagar
+    [MappingType.PAYROLL_RETENTION]: '460-0020', // Retenciones por Pagar - Contribución a la Seguridad Social
     [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
     [MappingType.PURCHASE_ORDER]: '410-0020',  // Cuentas por Pagar - Fuera del Órgano (proveedores)
     [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
@@ -251,6 +251,7 @@ export class AccountMappingService {
       '440': 'Obligaciones con el Presupuesto del Estado',
       '455': 'Nóminas por Pagar',
       '460': 'Retenciones por Pagar',
+      '460-0020': 'Contribución a la Seguridad Social - Retenciones por Pagar',
       '696': 'Operaciones entre Dependencias',
       '699': 'Transitoria del Sistema Automatizado',
       '700-0020': 'Gastos del Período — Producción en Proceso',

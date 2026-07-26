@@ -1056,14 +1056,16 @@ export class MovementsService {
 
     // Validar que las cuentas existan en la empresa; si no, usar defaults resilientes
     try {
-      await this.voucherService['accountRepo'].findOneBy({ code: debitAccount, companyId });
+      const debitAcc = await this.voucherService['accountRepo'].findOneBy({ code: debitAccount, companyId });
+      if (!debitAcc) throw new Error('debit account not found');
     } catch {
       this.logger.warn(`Cuenta débito ${debitAccount} no existe para la empresa. Usando cuenta de inventario por categoría.`);
       debitAccount = getInventoryAccountByCategory(movType.category);
     }
 
     try {
-      await this.voucherService['accountRepo'].findOneBy({ code: creditAccount, companyId });
+      const creditAcc = await this.voucherService['accountRepo'].findOneBy({ code: creditAccount, companyId });
+      if (!creditAcc) throw new Error('credit account not found');
     } catch {
       this.logger.warn(`Cuenta crédito ${creditAccount} no existe para la empresa. Usando cuenta por defecto según tipo.`);
       // Defaults resilientes según tipo de movimiento

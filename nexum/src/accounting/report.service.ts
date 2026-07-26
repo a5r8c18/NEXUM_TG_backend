@@ -2277,7 +2277,7 @@ export class ReportService {
     const utilidadOperativa = utilidadBruta - totalGastosOperativos;
 
     // OTROS INGRESOS/GASTOS
-    const ingresosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['730-740'], fd, td);
+    const ingresosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['731-740'], fd, td);
     const gastosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['550-560'], fd, td);
     const totalOtros = ingresosExtraordinarios.credit - gastosExtraordinarios.debit;
 
@@ -2358,7 +2358,7 @@ export class ReportService {
 
     // ACTIVIDADES DE INVERSIÓN
     const compraActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['240-251'], fd, td);
-    const ventaActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['730-740'], fd, td);
+    const ventaActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['731-740'], fd, td);
     const inversionesFinancieras = await this.getAccountRangePeriodAmount(companyId, ['109-119'], fd, td);
     const flujoNetoInversion = ventaActivosFijos.credit - compraActivosFijos.debit - inversionesFinancieras.debit;
 
