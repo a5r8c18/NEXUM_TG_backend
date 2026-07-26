@@ -5,6 +5,34 @@ import { Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
 
 // ──────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Determina el grupo contable (10, 20, 30, 40, 50, 60) a partir de un código.
+ * Se usa para que las subcuentas hereden el groupNumber correcto del padre.
+ */
+function getGroupNumber(code: string): string {
+  const root = code.split('-')[0];
+  const num = parseInt(root, 10);
+  if (isNaN(num)) {
+    if (root.startsWith('10')) return '10';
+    if (root.startsWith('20')) return '20';
+    if (root.startsWith('30')) return '30';
+    if (root.startsWith('40')) return '40';
+    if (root.startsWith('50')) return '50';
+    if (root.startsWith('60')) return '60';
+    return root;
+  }
+  if (num >= 10 && num <= 399) return '10';
+  if (num >= 400 && num <= 599) return '20';
+  if (num >= 600 && num <= 699) return '30';
+  if (num >= 700 && num <= 799) return '40';
+  if (num >= 800 && num <= 999) return '50';
+  return root;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // HELPERS PARA GENERAR SUBCUENTAS SEGÚN EL NOMENCLADOR
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -28,17 +56,20 @@ function generateCounterpartySubaccounts(parentCode: string, parentName: string,
     type,
     nature,
     level: 4,
-    groupNumber: parentCode.split('-')[0], // aproximación, se ajusta luego
+    groupNumber: getGroupNumber(parentCode),
     parentCode,
     allowsMovements: true,
   }));
 }
 
 /**
- * Genera subcuentas para Adeudos del Presupuesto (164-166) y Obligaciones con el Presupuesto (440-449)
- * según el Clasificador de Recursos Financieros (0001-0016, 0020-0090)
+ * Genera subcuentas de Adeudos del Presupuesto (164-166) y Obligaciones con el Presupuesto (440-449).
+ * 164-166 incluyen 0001-0016 + 0020-0040 y 0090.
+ * 440-449 incluyen únicamente 0001-0016.
  */
 function generateBudgetSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const num = parseInt(parentCode.split('-')[0], 10);
+  const isReceivable = num >= 164 && num <= 166;
   const items: Record<string, string> = {
     '0001': 'Impuesto sobre Ventas',
     '0002': 'Impuesto sobre los Servicios Públicos',
@@ -56,10 +87,12 @@ function generateBudgetSubaccounts(parentCode: string, parentName: string, type:
     '0014': 'Recursos Propios de Capital',
     '0015': 'Transferencias de Capital',
     '0016': 'Otros Recursos Financieros',
-    '0020': 'Invalidez Parcial',
-    '0030': 'Licencias de Maternidad',
-    '0040': 'Reintegro Aporte de Microbrigada',
-    '0090': 'Otros',
+    ...(isReceivable ? {
+      '0020': 'Invalidez Parcial',
+      '0030': 'Licencias de Maternidad',
+      '0040': 'Reintegro Aporte de Microbrigada',
+      '0090': 'Otros',
+    } : {}),
   };
   return Object.entries(items).map(([sub, name]) => ({
     code: `${parentCode}-${sub}`,
@@ -68,7 +101,7 @@ function generateBudgetSubaccounts(parentCode: string, parentName: string, type:
     type,
     nature,
     level: 4,
-    groupNumber: parentCode.split('-')[0],
+    groupNumber: getGroupNumber(parentCode),
     parentCode,
     allowsMovements: true,
   }));
@@ -94,7 +127,7 @@ function generatePayrollSubaccounts(parentCode: string, parentName: string, type
     type,
     nature,
     level: 4,
-    groupNumber: parentCode,
+    groupNumber: getGroupNumber(parentCode),
     parentCode,
     allowsMovements: true,
   }));
@@ -119,7 +152,7 @@ function generateWithholdingSubaccounts(parentCode: string, parentName: string, 
     type,
     nature,
     level: 4,
-    groupNumber: parentCode,
+    groupNumber: getGroupNumber(parentCode),
     parentCode,
     allowsMovements: true,
   }));
@@ -147,47 +180,246 @@ function generateAccruedExpenseSubaccounts(parentCode: string, parentName: strin
     type,
     nature,
     level: 4,
-    groupNumber: parentCode,
+    groupNumber: getGroupNumber(parentCode),
     parentCode,
     allowsMovements: true,
   }));
 }
 
 /**
- * Genera subcuentas de inversión con medios propios (0010, 0020, 0050)
- * para cuentas del grupo 700-729 según el Anexo 1 del Nomenclador 2016.
+ * Genera subcuentas para Inversiones con Medios Propios (726-728).
  * 0010 Saldo al Inicio del Año — misma naturaleza que la cuenta
  * 0020 Gastos del Período — misma naturaleza que la cuenta
  * 0050 Traspaso a Inversiones en Proceso — naturaleza opuesta (acreedora)
  */
 function generateInvestmentSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
   return [
-    { code: `${parentCode}-0010`, name: 'Saldo al Inicio del Año', description: `Saldo al Inicio del Año — ${parentName}`, type, nature, level: 4, groupNumber: parentCode, parentCode, allowsMovements: true },
-    { code: `${parentCode}-0020`, name: 'Gastos del Período', description: `Gastos del Período — ${parentName}`, type, nature, level: 4, groupNumber: parentCode, parentCode, allowsMovements: true },
-    { code: `${parentCode}-0050`, name: 'Traspaso a Inversiones en Proceso', description: `Traspaso a Inversiones en Proceso — ${parentName}`, type, nature: 'acreedora', level: 4, groupNumber: parentCode, parentCode, allowsMovements: true },
+    { code: `${parentCode}-0010`, name: 'Saldo al Inicio del Año', description: `Saldo al Inicio del Año — ${parentName}`, type, nature, level: 4, groupNumber: getGroupNumber(parentCode), parentCode, allowsMovements: true },
+    { code: `${parentCode}-0020`, name: 'Gastos del Período', description: `Gastos del Período — ${parentName}`, type, nature, level: 4, groupNumber: getGroupNumber(parentCode), parentCode, allowsMovements: true },
+    { code: `${parentCode}-0050`, name: 'Traspaso a Inversiones en Proceso', description: `Traspaso a Inversiones en Proceso — ${parentName}`, type, nature: 'acreedora', level: 4, groupNumber: getGroupNumber(parentCode), parentCode, allowsMovements: true },
   ];
 }
 
 /**
- * Genera subcuentas para Producción Terminada (188) y Producción para Insumo (196)
- * que tienen subcuentas específicas (0020, 0040, 0050, 0099)
+ * Genera subcuentas para Producción Terminada (188) y Producción para Insumo (196).
+ * Anexo 1 define subcuentas específicas con nombres y naturalezas propias.
  */
 function generateProductionInventorySubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const isProductionForInput = parentCode === '196';
   const items: Record<string, string> = {
-    '0020': 'Producción y Ventas',
+    '0020': isProductionForInput ? 'Producción' : 'Producción y Ventas',
+    ...(isProductionForInput ? { '0030': 'Traspaso a Producciones en Proceso' } : {}),
     '0040': 'Otros Aumentos',
     '0050': 'Otras Disminuciones',
     '0099': 'Contrapartida (Opcional)',
   };
-  // Nota: la subcuenta 0099 tiene naturaleza mixta (según el documento)
+  const subNatures: Record<string, string> = {
+    '0020': nature,
+    ...(isProductionForInput ? { '0030': 'acreedora' } : {}),
+    '0040': nature,
+    '0050': 'acreedora',
+    '0099': 'mixta',
+  };
   return Object.entries(items).map(([sub, name]) => ({
     code: `${parentCode}-${sub}`,
     name,
     description: `Subcuenta ${sub} de ${parentName}`,
     type,
-    nature: sub === '0099' ? 'mixta' : nature,
+    nature: subNatures[sub],
     level: 4,
-    groupNumber: parentCode.split('-')[0],
+    groupNumber: getGroupNumber(parentCode),
+    parentCode,
+    allowsMovements: true,
+  }));
+}
+
+/**
+ * Genera subcuentas para Pérdidas en Investigación (330-331).
+ */
+function generateLossInInvestigationSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const items: Record<string, string> = {
+    '0010': 'Pérdidas por Deterioro',
+    '0020': 'Pérdidas Cosecha',
+    '0030': 'Pérdidas Cuentas por Cobrar',
+    '0040': 'Pérdidas por Siniestros',
+    '0050': 'Otros',
+  };
+  return Object.entries(items).map(([sub, name]) => ({
+    code: `${parentCode}-${sub}`,
+    name,
+    description: `${name} — ${parentName}`,
+    type,
+    nature,
+    level: 4,
+    groupNumber: getGroupNumber(parentCode),
+    parentCode,
+    allowsMovements: true,
+  }));
+}
+
+/**
+ * Genera subcuentas para Faltantes de Bienes en Investigación (332-333).
+ */
+function generateShortageSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const items: Record<string, string> = {
+    '0010': 'Medios Monetarios',
+    '0020': 'Medios Materiales',
+    '0030': 'Activos Fijos',
+    '0040': 'Equipos por Instalar y Materiales de Construcción',
+    '0050': 'Otros',
+  };
+  return Object.entries(items).map(([sub, name]) => ({
+    code: `${parentCode}-${sub}`,
+    name,
+    description: `${name} — ${parentName}`,
+    type,
+    nature,
+    level: 4,
+    groupNumber: getGroupNumber(parentCode),
+    parentCode,
+    allowsMovements: true,
+  }));
+}
+
+/**
+ * Genera subcuentas para Cuentas por Cobrar Diversas (334-341).
+ */
+function generateReceivableDiverseSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const items: Record<string, string> = {
+    '0010': 'Ventas a Entidades',
+    '0020': 'Deudas a Trabajadores',
+    '0030': 'Reclamaciones',
+    '0040': 'Responsabilidad Material',
+    '0050': 'Sector Cooperativo',
+    '0060': 'Personas Naturales',
+    '0099': 'Otros',
+  };
+  return Object.entries(items).map(([sub, name]) => ({
+    code: `${parentCode}-${sub}`,
+    name,
+    description: `${name} — ${parentName}`,
+    type,
+    nature,
+    level: 4,
+    groupNumber: getGroupNumber(parentCode),
+    parentCode,
+    allowsMovements: true,
+  }));
+}
+
+/**
+ * Genera subcuentas para Cuentas por Pagar Diversas (565-568).
+ */
+function generatePayableDiverseSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const items: Record<string, string> = {
+    '0010': 'Dentro del Órgano u Organismo',
+    '0020': 'Fuera del Órgano u Organismo',
+    '0030': 'En el Extranjero',
+    '0040': 'Dentro del Grupo Empresarial',
+    '0050': 'Sector Cooperativo',
+    '0060': 'Personas Naturales',
+    '0070': 'A Trabajadores',
+    '0999': 'Otros',
+  };
+  return Object.entries(items).map(([sub, name]) => ({
+    code: `${parentCode}-${sub}`,
+    name,
+    description: `${name} — ${parentName}`,
+    type,
+    nature,
+    level: 4,
+    groupNumber: getGroupNumber(parentCode),
+    parentCode,
+    allowsMovements: true,
+  }));
+}
+
+/**
+ * Genera subcuentas para Producción en Proceso (700-724).
+ */
+function generateProductionProcessSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const items: Record<string, string> = {
+    '0010': 'Saldo al Inicio del Año',
+    '0020': 'Gastos del Período',
+    '0030': 'Aumento',
+    '0040': 'Disminución',
+    '0050': 'Traspaso a Producción Terminada',
+    '0099': 'Contrapartida (Opcional)',
+  };
+  const subNatures: Record<string, string> = {
+    '0010': nature,
+    '0020': nature,
+    '0030': nature,
+    '0040': 'acreedora',
+    '0050': 'acreedora',
+    '0099': 'mixta',
+  };
+  return Object.entries(items).map(([sub, name]) => ({
+    code: `${parentCode}-${sub}`,
+    name,
+    description: `${name} — ${parentName}`,
+    type,
+    nature: subNatures[sub],
+    level: 4,
+    groupNumber: getGroupNumber(parentCode),
+    parentCode,
+    allowsMovements: true,
+  }));
+}
+
+/**
+ * Genera subcuentas para Producción Propia para Insumos (725).
+ */
+function generateOwnProductionForInputSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
+  const items: Record<string, string> = {
+    '0010': 'Saldo al Inicio del Año',
+    '0020': 'Gastos del Período',
+    '0030': 'Aumento',
+    '0040': 'Disminución',
+    '0050': 'Traspaso a Producción en Proceso',
+    '0060': 'Traspaso a Inventario de Producción Propia para insumo',
+  };
+  const subNatures: Record<string, string> = {
+    '0010': nature,
+    '0020': nature,
+    '0030': nature,
+    '0040': 'acreedora',
+    '0050': 'acreedora',
+    '0060': 'acreedora',
+  };
+  return Object.entries(items).map(([sub, name]) => ({
+    code: `${parentCode}-${sub}`,
+    name,
+    description: `${name} — ${parentName}`,
+    type,
+    nature: subNatures[sub],
+    level: 4,
+    groupNumber: getGroupNumber(parentCode),
+    parentCode,
+    allowsMovements: true,
+  }));
+}
+
+/**
+ * Genera subcuentas a partir de una especificación de códigos y nombres,
+ * permitiendo naturalezas personalizadas por subcuenta.
+ */
+function generateAccountSubaccounts(
+  parentCode: string,
+  parentName: string,
+  type: string,
+  nature: string,
+  items: Record<string, string>,
+  customNatures?: Record<string, string>,
+) {
+  return Object.entries(items).map(([sub, name]) => ({
+    code: `${parentCode}-${sub}`,
+    name,
+    description: `${name} — ${parentName}`,
+    type,
+    nature: customNatures?.[sub] ?? nature,
+    level: 4,
+    groupNumber: getGroupNumber(parentCode),
     parentCode,
     allowsMovements: true,
   }));
@@ -311,7 +543,6 @@ const baseAccounts = [
   { code: '187', name: 'Útiles, Herramientas y Otros', description: 'Útiles, Herramientas y Otros', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
   { code: '188', name: 'Producción Terminada', description: 'Producción Terminada', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: false }, // tiene subcuentas
   { code: '189', name: 'Mercancías para la Venta', description: 'Mercancías para la Venta', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
-  { code: '189-01', name: 'Mercancías en Tránsito / Recepción no Facturada', description: 'Cuenta puente para mercancías recibidas pero no facturadas', type: 'asset', nature: 'deudora', level: 4, groupNumber: '10', parentCode: '189', allowsMovements: true },
   { code: '190', name: 'Medicamentos', description: 'Medicamentos', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
   { code: '191', name: 'Base Material de Estudio', description: 'Base Material de Estudio', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
   { code: '192', name: 'Vestuario y Lencería', description: 'Vestuario y Lencería', type: 'asset', nature: 'deudora', level: 3, groupNumber: '10', parentCode: '10.1', allowsMovements: true },
@@ -751,8 +982,6 @@ const stateEquityAccounts = [
   { code: '613', name: 'Revalorización de Activos Fijos Tangibles', description: 'Revalorización de Activos Fijos Tangibles', type: 'equity', nature: 'mixta', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
   { code: '614', name: 'Revalorización de Activos Fijos Tangibles', description: 'Revalorización de Activos Fijos Tangibles', type: 'equity', nature: 'mixta', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
   { code: '615', name: 'Revalorización de Activos Fijos Tangibles', description: 'Revalorización de Activos Fijos Tangibles', type: 'equity', nature: 'mixta', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
-  // 616 Otras Operaciones de Capital (mixta)
-  { code: '616', name: 'Otras Operaciones de Capital', description: 'Otras Operaciones de Capital', type: 'equity', nature: 'mixta', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: false },
   // 617-618 Recursos Recibidos
   { code: '617', name: 'Recursos Recibidos', description: 'Recursos Recibidos', type: 'equity', nature: 'acreedora', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
   { code: '618', name: 'Recursos Recibidos', description: 'Recursos Recibidos', type: 'equity', nature: 'acreedora', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
@@ -804,8 +1033,6 @@ const stateEquityAccounts = [
   { code: '690', name: 'Pago a Cuenta de las Utilidades', description: 'Pago a Cuenta de las Utilidades', type: 'equity', nature: 'deudora', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
   // 691 Pago a Cuenta de los Dividendos (deudora)
   { code: '691', name: 'Pago a Cuenta de los Dividendos', description: 'Pago a Cuenta de los Dividendos', type: 'equity', nature: 'deudora', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
-  // 693 Pago a Cuenta de Utilidades Sector Cooperativo (deudora)
-  { code: '693', name: 'Pago a Cuenta de Utilidades Sector Cooperativo', description: 'Pago a Cuenta de Utilidades Sector Cooperativo', type: 'equity', nature: 'deudora', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
   // 696 Operaciones entre Dependencias (mixta)
   { code: '696', name: 'Operaciones entre Dependencias', description: 'Operaciones entre Dependencias', type: 'equity', nature: 'mixta', level: 2, groupNumber: '30', parentCode: '30', allowsMovements: true },
   // 697 Revaluación de Inventarios (mixta)
@@ -1202,8 +1429,51 @@ const nominalAccounts = [
   // 953 Ingresos por Donaciones Recibidas
   { code: '953', name: 'Ingresos por Donaciones Recibidas', description: 'Ingresos por Donaciones Recibidas', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.2', allowsMovements: true },
 
-  // 50.3 Cuentas Nominales Deudoras (Empresas de Seguro) - omitido por brevedad, pero se puede agregar similar
-  // 50.4 Cuentas Nominales Acreedoras (Empresas de Seguro) - omitido
+  // 50.3 Cuentas Nominales Deudoras (Empresas de Seguro)
+  { code: '50.3', name: 'CUENTAS NOMINALES DEUDORAS (Empresas de Seguro)', description: 'Subgrupo 50.3 - Cuentas Nominales Deudoras de Seguro', type: 'expense', nature: 'deudora', level: 2, groupNumber: '50', parentCode: '50', allowsMovements: false },
+  { code: '800', name: 'Devoluciones de Primas', description: 'Devoluciones de Primas', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  { code: '801', name: 'Bonificaciones', description: 'Bonificaciones', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  { code: '802', name: 'Gastos por Cesión de Primas', description: 'Gastos por Cesión de Primas', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  ...Array.from({ length: 2 }, (_, i) => ({ code: `${803 + i}`, name: 'Gastos por Comisiones de Agentes y Corredores', description: `Gastos por Comisiones de Agentes y Corredores (${803 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  ...Array.from({ length: 2 }, (_, i) => ({ code: `${810 + i}`, name: 'Gastos por Indemnizaciones', description: `Gastos por Indemnizaciones (${810 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  { code: '812', name: 'Gastos de Reaseguros Aceptados', description: 'Gastos de Reaseguros Aceptados', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  ...Array.from({ length: 5 }, (_, i) => ({ code: `${813 + i}`, name: 'Otros Gastos de la Actividad del Seguro', description: `Otros Gastos de la Actividad del Seguro (${813 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  { code: '818', name: 'Costo por Exportación de Servicios', description: 'Costo por Exportación de Servicios', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  ...Array.from({ length: 2 }, (_, i) => ({ code: `${819 + i}`, name: 'Gastos por Creación de la Provisión Técnica de Riesgos en Curso', description: `Gastos por Creación de la Provisión Técnica de Riesgos en Curso (${819 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  ...Array.from({ length: 5 }, (_, i) => ({ code: `${821 + i}`, name: 'Gastos por Creación de Otras Provisiones Técnicas del Seguro', description: `Gastos por Creación de Otras Provisiones Técnicas del Seguro (${821 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  ...Array.from({ length: 4 }, (_, i) => ({ code: `${826 + i}`, name: 'Gastos de Operación', description: `Gastos de Operación (${826 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  ...Array.from({ length: 4 }, (_, i) => ({ code: `${830 + i}`, name: 'Gastos Generales y de Administración', description: `Gastos Generales y de Administración (${830 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  { code: '834', name: 'Gastos de Administración de la OSDE', description: 'Gastos de Administración de la OSDE', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  ...Array.from({ length: 4 }, (_, i) => ({ code: `${835 + i}`, name: 'Gastos Financieros', description: `Gastos Financieros (${835 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  { code: '839', name: 'Gastos por Pérdidas en Tasas de Cambio', description: 'Gastos por Pérdidas en Tasas de Cambio', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  { code: '840', name: 'Financiamiento Entregado a la OSDE', description: 'Financiamiento Entregado a la OSDE', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  { code: '843', name: 'Gastos por Estadía – Otras Entidades', description: 'Gastos por Estadía – Otras Entidades', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  ...Array.from({ length: 4 }, (_, i) => ({ code: `${845 + i}`, name: 'Gastos por Pérdidas', description: `Gastos por Pérdidas (${845 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  { code: '849', name: 'Gastos por Pérdidas - Desastres', description: 'Gastos por Pérdidas - Desastres', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  ...Array.from({ length: 5 }, (_, i) => ({ code: `${850 + i}`, name: 'Gastos por Faltantes de Bienes', description: `Gastos por Faltantes de Bienes (${850 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  ...Array.from({ length: 10 }, (_, i) => ({ code: `${855 + i}`, name: 'Otros Impuestos, Tasas y Contribuciones', description: `Otros Impuestos, Tasas y Contribuciones (${855 + i})`, type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true })),
+  { code: '865', name: 'Otros Gastos', description: 'Otros Gastos', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  { code: '866', name: 'Otros Gastos', description: 'Otros Gastos', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  { code: '867', name: 'Gastos de Eventos', description: 'Gastos de Eventos', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+  { code: '873', name: 'Gastos de Recuperación de Desastres', description: 'Gastos de Recuperación de Desastres', type: 'expense', nature: 'deudora', level: 3, groupNumber: '50', parentCode: '50.3', allowsMovements: true },
+
+  // 50.4 Cuentas Nominales Acreedoras (Empresas de Seguro)
+  { code: '50.4', name: 'CUENTAS NOMINALES ACREEDORAS (Empresas de Seguro)', description: 'Subgrupo 50.4 - Cuentas Nominales Acreedoras de Seguro', type: 'income', nature: 'acreedora', level: 2, groupNumber: '50', parentCode: '50', allowsMovements: false },
+  ...Array.from({ length: 6 }, (_, i) => ({ code: `${900 + i}`, name: 'Ingresos de la Actividad de Seguro y Reaseguros', description: `Ingresos de la Actividad de Seguro y Reaseguros (${900 + i})`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  ...Array.from({ length: 4 }, (_, i) => ({ code: `${906 + i}`, name: 'Otros Ingresos de la Actividad de Seguro y Reaseguros', description: `Otros Ingresos de la Actividad de Seguro y Reaseguros (${906 + i})`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  ...Array.from({ length: 2 }, (_, i) => ({ code: `${910 + i}`, name: 'Recobro a Terceros', description: `Recobro a Terceros (${910 + i})`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  ...Array.from({ length: 2 }, (_, i) => ({ code: `${912 + i}`, name: 'Liberación de la Provisión de Riesgos en Curso', description: `Liberación de la Provisión de Riesgos en Curso (${912 + i})`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  { code: '914', name: 'Ventas de Bienes con destino a la Exportación', description: 'Ventas de Bienes con destino a la Exportación', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true },
+  { code: '915', name: 'Ventas por Exportación de Servicios', description: 'Ventas por Exportación de Servicios', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true },
+  ...Array.from({ length: 6 }, (_, i) => ({ code: `${916 + i}`, name: 'Liberación de Otras Provisiones Técnicas del Seguro', description: `Liberación de Otras Provisiones Técnicas del Seguro (${916 + i})`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  { code: '922', name: 'Ingresos Financieros', description: 'Ingresos Financieros', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true },
+  { code: '923', name: 'Financiamiento Recibido de las Empresas (OSDE)', description: 'Financiamiento Recibido de las Empresas (OSDE)', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true },
+  { code: '924', name: 'Ingresos por Variación de Tasas de Cambio', description: 'Ingresos por Variación de Tasas de Cambio', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true },
+  { code: '925', name: 'Ingresos por Dividendos Ganados', description: 'Ingresos por Dividendos Ganados', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true },
+  ...Array.from({ length: 2 }, (_, i) => ({ code: `${928 + i}`, name: 'Ingresos por Recobro de Estadía (importadores y otras entidades)', description: `Ingresos por Recobro de Estadía`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  ...Array.from({ length: 10 }, (_, i) => ({ code: `${930 + i}`, name: 'Ingresos por Sobrantes', description: `Ingresos por Sobrantes (${930 + i})`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  ...Array.from({ length: 3 }, (_, i) => ({ code: `${950 + i}`, name: 'Otros Ingresos', description: `Otros Ingresos (${950 + i})`, type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true })),
+  { code: '953', name: 'Ingresos por Donaciones Recibidas', description: 'Ingresos por Donaciones Recibidas', type: 'income', nature: 'acreedora', level: 3, groupNumber: '50', parentCode: '50.4', allowsMovements: true },
 
   // ────────────────────────────────────────────────────────────────────────────
   // GRUPO 60 - CUENTA DE CIERRE
@@ -1230,9 +1500,10 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
 
   // Función para agregar una cuenta y sus subcuentas si las tiene
   function addAccount(account: any) {
+    const startIdx = allWithSubs.length;
     allWithSubs.push(account);
-    // Si la cuenta es de las que tienen subcuentas, generarlas
     const code = account.code;
+    const codeNum = parseInt(code, 10);
     const parentName = account.name;
     const type = account.type;
     const nature = account.nature;
@@ -1245,8 +1516,7 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
                                '421', '422', '423', '424', '425', '426', '427', '428', '429',
                                '510', '511', '512', '513', '514', '515', '516', '517', '518',
                                '525', '526', '527', '528', '529', '530', '531', '532',
-                               '343', '344', '345', '346', '347', '348', '349',
-                               '565', '566', '567', '568'];
+                               '343', '344', '345', '346', '347', '348', '349'];
     if (counterpartyCodes.includes(code)) {
       const subs = generateCounterpartySubaccounts(code, parentName, type, nature);
       allWithSubs.push(...subs);
@@ -1265,47 +1535,155 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
       allWithSubs.push(...subs);
     }
 
-    // 4.a Ingresos Acumulados por Cobrar (173-180) — subcuentas de contraparte
-    const accrRevCodes = ['173', '174', '175', '176', '177', '178', '179', '180'];
-    if (accrRevCodes.includes(code)) {
-      const subs = generateCounterpartySubaccounts(code, parentName, type, nature);
+    // 4.a Pérdidas en Investigación (330-331)
+    if (code === '330' || code === '331') {
+      const subs = generateLossInInvestigationSubaccounts(code, parentName, type, nature);
       allWithSubs.push(...subs);
     }
 
-    // 4.b Sobrantes en Investigación (555-564) — subcuentas de contraparte
-    const surplusCodes = ['555', '556', '557', '558', '559', '560', '561', '562', '563', '564'];
-    if (surplusCodes.includes(code)) {
-      const subs = generateCounterpartySubaccounts(code, parentName, type, nature);
+    // 4.b Faltantes de Bienes en Investigación (332-333)
+    if (code === '332' || code === '333') {
+      const subs = generateShortageSubaccounts(code, parentName, type, nature);
       allWithSubs.push(...subs);
     }
 
-    // 4.c Nóminas por Pagar (455-459) — subcuentas por categoría ocupacional
-    const payrollCodes = ['455', '456', '457', '458', '459'];
-    if (payrollCodes.includes(code)) {
-      const subs = generatePayrollSubaccounts(code, parentName, type, nature);
+    // 4.c Cuentas por Cobrar Diversas (334-341)
+    if (!isNaN(codeNum) && codeNum >= 334 && codeNum <= 341) {
+      const subs = generateReceivableDiverseSubaccounts(code, parentName, type, nature);
       allWithSubs.push(...subs);
     }
 
-    // 4.d Retenciones por Pagar (460-469) — subcuentas por tipo de retención
-    const withholdingNum = parseInt(code, 10);
-    if (!isNaN(withholdingNum) && withholdingNum >= 460 && withholdingNum <= 469) {
-      const subs = generateWithholdingSubaccounts(code, parentName, type, nature);
+    // 4.d Ingresos Acumulados por Cobrar (173-180) y Sobrantes en Investigación (555-564)
+    // El Anexo 1 no establece subcuentas obligatorias para estos rangos;
+    // se mantienen como cuentas de nivel 3 con análisis libre.
+
+    // 4.f Cuentas por Pagar Diversas (565-568)
+    if (!isNaN(codeNum) && codeNum >= 565 && codeNum <= 568) {
+      const subs = generatePayableDiverseSubaccounts(code, parentName, type, nature);
       allWithSubs.push(...subs);
     }
 
-    // 4.e Gastos Acumulados por Pagar (480-489) — subcuentas por elemento de gasto
-    const accruedExpNum = parseInt(code, 10);
-    if (!isNaN(accruedExpNum) && accruedExpNum >= 480 && accruedExpNum <= 489) {
-      const subs = generateAccruedExpenseSubaccounts(code, parentName, type, nature);
+    // 4.g Nóminas por Pagar (455-459), Retenciones por Pagar (460-469)
+    // y Gastos Acumulados por Pagar (480-489) se mantienen como cuentas de
+    // nivel 3 sin subcuentas obligatorias, conforme al Anexo 1.
+
+    // 5. Activos Fijos Intangibles en Proceso (264)
+    if (code === '264') {
+      const items = {
+        '0001': 'Saldo al Inicio del Año',
+        '0010': 'Operaciones del Año',
+      };
+      const customNatures = { '0998': 'acreedora', '0999': 'acreedora' };
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, items, customNatures);
       allWithSubs.push(...subs);
     }
 
-    // 5. Cuentas de inversión con medios propios (700-729)
-    // Subcuentas obligatorias según Anexo 1: 0010 Saldo Inicio, 0020 Gastos Período, 0050 Traspaso
-    const investmentCodeNums = parseInt(code, 10);
-    if (!isNaN(investmentCodeNums) && investmentCodeNums >= 700 && investmentCodeNums <= 729) {
+    // 6. Inversiones en Proceso (265-278)
+    if (!isNaN(codeNum) && codeNum >= 265 && codeNum <= 278) {
+      const items = {
+        '0001': 'Saldo al Inicio del Año',
+        '0010': 'Construcción y Montaje',
+        '0020': 'Equipos',
+        '0030': 'Otros Gastos',
+        '0050': 'Fomentos Agrícolas',
+        '0060': 'Fomentos y Desarrollo Mineros',
+        '0070': 'Fomentos y Desarrollo Forestales',
+        '0100': 'Otros no Especificados',
+        '0200': 'Fondo de Fomento Desarrollo Ganadero',
+      };
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, items, { '0999': 'acreedora' });
+      allWithSubs.push(...subs);
+    }
+
+    // 7. Plan de Preparación de Inversiones (279)
+    if (code === '279') {
+      const items = {
+        '0001': 'Saldo al Inicio del Año',
+        '0010': 'Construcción y Montaje',
+        '0020': 'Equipos',
+        '0030': 'Otros',
+      };
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, items, { '0998': 'acreedora' });
+      allWithSubs.push(...subs);
+    }
+
+    // 8. Adquisición/Compra de Activos Fijos (290-292)
+    if (!isNaN(codeNum) && codeNum >= 290 && codeNum <= 292) {
+      const items = {
+        '0100': 'Compras del Período',
+        '0300': 'Adquisición del Período por Donaciones',
+      };
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, items, { '0999': 'acreedora' });
+      allWithSubs.push(...subs);
+    }
+
+    // 9. Activos Diferidos (300-312)
+    if (!isNaN(codeNum) && codeNum >= 300 && codeNum <= 312) {
+      let items: Record<string, string>;
+      if (codeNum >= 300 && codeNum <= 305) {
+        items = {
+          '0010': 'Saldo al Inicio del Año',
+          '0020': 'Gastos por Elementos del Período',
+          '0030': 'Amortización de Gastos',
+        };
+      } else if (codeNum === 312) {
+        items = {
+          '0010': 'Saldo al Inicio del Año',
+          '0020': 'Gastos del Período',
+          '0030': 'Amortización de Gastos a las Cuentas de Gastos por Faltantes y Pérdidas',
+        };
+      } else {
+        items = {
+          '0010': 'Saldo al Inicio del Año',
+          '0020': 'Gastos del Período',
+          '0030': 'Amortización de Gastos',
+        };
+      }
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, items, { '0030': 'acreedora' });
+      allWithSubs.push(...subs);
+    }
+
+    // 10. Patrimonio Neto — Recursos y Donaciones (619-627)
+    if ((!isNaN(codeNum) && codeNum >= 619 && codeNum <= 621) || (!isNaN(codeNum) && codeNum >= 626 && codeNum <= 627)) {
+      let items: Record<string, string>;
+      if (code === '619') {
+        items = { '0010': 'Minoración de Fondos' };
+      } else {
+        items = {
+          '0010': 'Activos Fijos Tangibles',
+          '0020': 'Activos Fijos Intangibles',
+          '0030': 'Medios Monetarios',
+          '0040': 'Insumos',
+          '0050': 'Otros',
+        };
+      }
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, items);
+      allWithSubs.push(...subs);
+    }
+
+    // 11. Producción en Proceso (700-724) y Producción Propia para Insumos (725)
+    if (!isNaN(codeNum) && codeNum >= 700 && codeNum <= 724) {
+      const subs = generateProductionProcessSubaccounts(code, parentName, type, nature);
+      allWithSubs.push(...subs);
+    }
+    if (code === '725') {
+      const subs = generateOwnProductionForInputSubaccounts(code, parentName, type, nature);
+      allWithSubs.push(...subs);
+    }
+
+    // 6. Inversiones con Medios Propios (726-728)
+    if (!isNaN(codeNum) && codeNum >= 726 && codeNum <= 728) {
       const subs = generateInvestmentSubaccounts(code, parentName, type, nature);
       allWithSubs.push(...subs);
+    }
+
+    // Ajustar allowsMovements del padre: si generó subcuentas, es agrupadora;
+    // si no, y es de nivel >= 3, permite movimiento directo.
+    const generatedSubs = allWithSubs.length - startIdx - 1;
+    if (generatedSubs > 0) {
+      account.allowsMovements = false;
+    } else if (account.level >= 3) {
+      account.allowsMovements = true;
     }
   }
 

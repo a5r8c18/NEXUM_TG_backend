@@ -27,23 +27,23 @@ export class AccountMappingService {
     [MappingType.INVENTORY_ENTRY]: '189',   // Mercancías para la Venta
     [MappingType.INVENTORY_EXIT]: '810',    // Costo de Ventas de la Producción (mercancías: 814)
     [MappingType.INVENTORY_RETURN]: '189',  // Mercancías (reverso)
-    [MappingType.INVENTORY_TRANSIT]: '699', // Transitoria del Sistema Automatizado
+    [MappingType.INVENTORY_TRANSIT]: '434', // Materiales Recibidos de Forma Anticipada
     [MappingType.FIXED_ASSET_ACQUISITION]: '240', // Activos Fijos Tangibles
     [MappingType.FIXED_ASSET_DEPRECIATION]: '822', // Gastos Generales y de Administración (gasto de depreciación)
-    [MappingType.FIXED_ASSET_DEPRECIATION_PRODUCTION]: '730', // Gastos de Producción
+    [MappingType.FIXED_ASSET_DEPRECIATION_PRODUCTION]: '700-0020', // Gastos del Período — Producción en Proceso
     [MappingType.FIXED_ASSET_DEPRECIATION_ASSOCIATED]: '731', // Gastos Asociados a la Producción
     [MappingType.FIXED_ASSET_DEPRECIATION_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
     [MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION]: '375', // Depreciación Acumulada AFT
-    [MappingType.FIXED_ASSET_TRANSFER]: '699', // Transitoria del Sistema Automatizado (entre entidades)
-    [MappingType.FIXED_ASSET_DISPOSAL_GAIN]: '980', // Otros Ingresos / Superávit por baja/venta AFT
+    [MappingType.FIXED_ASSET_TRANSFER]: '696', // Operaciones entre Dependencias
+    [MappingType.FIXED_ASSET_DISPOSAL_GAIN]: '950', // Otros Ingresos / Superávit por baja/venta AFT
     [MappingType.FIXED_ASSET_DISPOSAL_LOSS]: '845', // Faltantes y Pérdidas de AFT
-    [MappingType.FIXED_ASSET_SALE_PROCEEDS]: '135', // Cuentas por Cobrar a Corto Plazo (venta a crédito)
+    [MappingType.FIXED_ASSET_SALE_PROCEEDS]: '135-0020', // Cuentas por Cobrar - Fuera del Órgano (venta a crédito)
     [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción (default)
-    [MappingType.PAYROLL_PROCESSING_PRODUCTION]: '730', // Gastos de Producción
+    [MappingType.PAYROLL_PROCESSING_PRODUCTION]: '700-0020', // Gastos del Período — Producción en Proceso
     [MappingType.PAYROLL_PROCESSING_ASSOCIATED]: '731', // Gastos Asociados a la Producción
     [MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
-    [MappingType.PAYROLL_PAYMENT]: '455-0040', // Nóminas por Pagar - Obreros
-    [MappingType.PAYROLL_RETENTION]: '440', // Retenciones y Descuentos por Pagar
+    [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
+    [MappingType.PAYROLL_RETENTION]: '460', // Retenciones por Pagar
     [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
     [MappingType.PURCHASE_ORDER]: '410-0020',  // Cuentas por Pagar - Fuera del Órgano (proveedores)
     [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
@@ -244,14 +244,16 @@ export class AccountMappingService {
       '240': 'Activos Fijos Tangibles',
       '375': 'Depreciación de Activos Fijos Tangibles',
       '845': 'Faltantes y Pérdidas de Activos Fijos Tangibles',
-      '980': 'Otros Ingresos',
+      '950': 'Otros Ingresos',
       '410': 'Cuentas por Pagar a Corto Plazo',
       '410-0020': 'Cuentas por Pagar - Fuera del Órgano u Organismo',
-      '440': 'Retenciones y Descuentos por Pagar',
+      '434': 'Materiales Recibidos de Forma Anticipada',
+      '440': 'Obligaciones con el Presupuesto del Estado',
       '455': 'Nóminas por Pagar',
-      '455-0040': 'Nóminas por Pagar - Obreros',
+      '460': 'Retenciones por Pagar',
+      '696': 'Operaciones entre Dependencias',
       '699': 'Transitoria del Sistema Automatizado',
-      '730': 'Gastos de Producción',
+      '700-0020': 'Gastos del Período — Producción en Proceso',
       '731': 'Gastos Asociados a la Producción',
       '810': 'Costo de Ventas de la Producción',
       '814': 'Costo de Ventas de Mercancías',

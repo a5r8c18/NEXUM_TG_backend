@@ -402,7 +402,7 @@ export class PurchasesService {
 
   /**
    * Registra la factura del proveedor para una compra existente.
-   * Genera el asiento contable: Débito 699 (Transitoria) / Crédito 410 (Proveedores)
+   * Genera el asiento contable: Débito 434 (Materiales Recibidos de Forma Anticipada) / Crédito 410 (Proveedores)
    */
   async registerSupplierInvoice(
     companyId: number,
@@ -410,7 +410,7 @@ export class PurchasesService {
     data: {
       invoiceNumber: string;
       invoiceDate: string;
-      debitAccountCode?: string;  // Override: cuenta transitoria (default 699)
+      debitAccountCode?: string;  // Override: cuenta transitoria (default 434)
       creditAccountCode?: string; // Override: cuenta proveedor (default 410)
     },
     userName?: string,
@@ -441,7 +441,7 @@ export class PurchasesService {
     // Generar asiento contable: liquida cuenta transitoria, crea CxP
     const debitAccount = data.debitAccountCode
       ? data.debitAccountCode
-      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '699';
+      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '434';
     const creditAccount = data.creditAccountCode
       ? data.creditAccountCode
       : await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410';

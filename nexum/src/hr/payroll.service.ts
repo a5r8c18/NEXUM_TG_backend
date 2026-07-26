@@ -497,7 +497,7 @@ export class PayrollService {
           const costCenterType = item.costCenter?.type;
           let accountCode: string;
           if (costCenterType === 'production') {
-            accountCode = prodExpenseAccount || '730';
+            accountCode = prodExpenseAccount || '700-0020';
           } else if (costCenterType === 'associated') {
             accountCode = assocExpenseAccount || '731';
           } else {

@@ -4,16 +4,11 @@ export class AddInventoryTransitAccount1700000000005 implements MigrationInterfa
   name = 'AddInventoryTransitAccount1700000000005';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`
-      INSERT INTO accounts (code, name, description, type, nature, level, group_number, parent_code, allows_movements, created_at, updated_at)
-      VALUES ('189-01', 'Mercancías en Tránsito / Recepción no Facturada', 'Cuenta puente para mercancías recibidas pero no facturadas', 'asset', 'deudora', 4, '10', '189', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT (code) DO NOTHING
-    `);
+    // No-op: la cuenta 189-01 no forma parte del Nomenclador Cubano 2016.
+    // La recepción sin factura se contabiliza mediante la cuenta 434 del pasivo.
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`
-      DELETE FROM accounts WHERE code = '189-01'
-    `);
+    // No-op revert.
   }
 }

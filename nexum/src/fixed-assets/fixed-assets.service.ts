@@ -1213,7 +1213,7 @@ export class FixedAssetsService {
           const costCenterType = asset?.costCenter?.type;
           let accountCode: string;
           if (costCenterType === 'production') {
-            accountCode = prodDepAccount || '730';
+            accountCode = prodDepAccount || '700-0020';
           } else if (costCenterType === 'associated') {
             accountCode = assocDepAccount || '731';
           } else {
