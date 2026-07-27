@@ -494,7 +494,7 @@ export class PayrollService {
           ),
         ]);
 
-        const expenseByAccount = new Map<string, number>();
+        const expenseByAccountAndCC = new Map<string, { amount: number; costCenterId?: string }>();
         let employerSocialSecurityTotal = 0;
         for (const item of payroll.items) {
           const costCenterType = item.costCenter?.type;
@@ -509,20 +509,22 @@ export class PayrollService {
           const gross = Number(item.grossSalary);
           const employerSS = Math.round(gross * EMPLOYER_SOCIAL_SECURITY_RATE * 100) / 100;
           employerSocialSecurityTotal += employerSS;
-          expenseByAccount.set(
-            accountCode,
-            (expenseByAccount.get(accountCode) || 0) + gross + employerSS,
-          );
+          const costCenterId = item.costCenterId || undefined;
+          const key = `${accountCode}#${costCenterId || ''}`;
+          const existing = expenseByAccountAndCC.get(key) || { amount: 0, costCenterId };
+          existing.amount += gross + employerSS;
+          expenseByAccountAndCC.set(key, existing);
         }
         employerSocialSecurityTotal = Math.round(employerSocialSecurityTotal * 100) / 100;
 
         const lines: any[] = [];
-        for (const [accountCode, amount] of expenseByAccount.entries()) {
+        for (const [accountCode, { amount, costCenterId }] of expenseByAccountAndCC.entries()) {
           lines.push({
             accountCode,
             debit: amount,
             credit: 0,
             description: `Salarios y Seguridad Social patronal ${payroll.period}`,
+            costCenterId,
           });
         }
 

@@ -204,19 +204,35 @@ export class VoucherService {
         data.lines,
       );
 
-      // Generar número de comprobante con bloqueo pesimista para evitar colisiones
+      // Generar número de comprobante con serie por tipo
+      const typePrefix: Record<string, string> = {
+        factura: 'FAC',
+        recibo: 'REC',
+        nota_debito: 'NDB',
+        nota_credito: 'NCR',
+        nomina: 'NOM',
+        depreciacion: 'DEP',
+        ajuste: 'AJU',
+        apertura: 'APE',
+        cierre: 'CIE',
+        otro: 'COP',
+      };
+      const prefix = typePrefix[data.type] || 'COP';
+
       const maxVoucher = await manager
         .getRepository(Voucher)
         .createQueryBuilder('v')
         .where('v.company_id = :companyId', { companyId })
+        .andWhere('v.type = :type', { type: data.type || 'otro' })
         .setLock('pessimistic_write')
         .orderBy('v.voucher_number', 'DESC')
         .getOne();
 
-      const nextNumber = maxVoucher
-        ? parseInt(maxVoucher.voucherNumber.replace('COP-', ''), 10) + 1
+      const maxSuffix = maxVoucher?.voucherNumber?.replace(`${prefix}-`, '');
+      const nextNumber = maxVoucher && maxSuffix && !isNaN(parseInt(maxSuffix, 10))
+        ? parseInt(maxSuffix, 10) + 1
         : 1;
-      const voucherNumber = `COP-${String(nextNumber).padStart(5, '0')}`;
+      const voucherNumber = `${prefix}-${String(nextNumber).padStart(5, '0')}`;
 
       // Crear voucher
       const voucher = manager.getRepository(Voucher).create({

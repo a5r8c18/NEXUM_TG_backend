@@ -1207,7 +1207,7 @@ export class FixedAssetsService {
             ),
           ]);
 
-        const expenseByAccount = new Map<string, number>();
+        const expenseByAccountAndCC = new Map<string, { amount: number; costCenterId?: string }>();
         for (const record of newRecords) {
           const asset = assetCostCenterMap.get(record.assetId);
           const costCenterType = asset?.costCenter?.type;
@@ -1219,20 +1219,21 @@ export class FixedAssetsService {
           } else {
             accountCode = adminDepAccount || '822';
           }
-          expenseByAccount.set(
-            accountCode,
-            (expenseByAccount.get(accountCode) || 0) +
-              Number(record.monthlyDepreciation),
-          );
+          const costCenterId = asset?.costCenterId || undefined;
+          const key = `${accountCode}#${costCenterId || ''}`;
+          const existing = expenseByAccountAndCC.get(key) || { amount: 0, costCenterId };
+          existing.amount += Number(record.monthlyDepreciation);
+          expenseByAccountAndCC.set(key, existing);
         }
 
         const lines: any[] = [];
-        for (const [accountCode, amount] of expenseByAccount.entries()) {
+        for (const [accountCode, { amount, costCenterId }] of expenseByAccountAndCC.entries()) {
           lines.push({
             accountCode,
             debit: amount,
             credit: 0,
             description: `Depreciación ${month}/${year}`,
+            costCenterId,
           });
         }
 
