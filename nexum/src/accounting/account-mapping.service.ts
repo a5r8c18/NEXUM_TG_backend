@@ -2,6 +2,7 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
+import { Account } from '../entities/account.entity';
 import {
   AccountMapping,
   MappingType,
@@ -14,6 +15,8 @@ export class AccountMappingService {
   constructor(
     @InjectRepository(AccountMapping)
     private readonly mappingRepo: Repository<AccountMapping>,
+    @InjectRepository(Account)
+    private readonly accountRepo: Repository<Account>,
   ) {}
 
   // Default account mappings — Nomenclador Cubano Resolución 2016.
@@ -229,6 +232,37 @@ export class AccountMappingService {
     );
 
     return await this.bulkCreate(companyId, defaultMappingsData);
+  }
+
+  /**
+   * Valida que las cuentas predeterminadas de mapeo existan para la empresa
+   * y que permitan movimientos (allowsMovements=true).
+   */
+  async validateDefaultMappings(companyId: number): Promise<{ ok: boolean; errors: string[] }> {
+    const accountCodes = Array.from(new Set(Object.values(this.defaultMappings)));
+    const accounts = await this.accountRepo.find({
+      where: { companyId, code: In(accountCodes) },
+      select: ['code', 'allowsMovements'],
+    });
+    const accountMap = new Map(accounts.map((a) => [a.code, a]));
+
+    const errors: string[] = [];
+    for (const [type, code] of Object.entries(this.defaultMappings)) {
+      const account = accountMap.get(code);
+      if (!account) {
+        errors.push(`Mapping ${type} -> ${code}: cuenta no existe`);
+      } else if (!account.allowsMovements) {
+        errors.push(`Mapping ${type} -> ${code}: cuenta no permite movimientos`);
+      }
+    }
+
+    if (errors.length > 0) {
+      this.logger.warn(`Validación de mapeos fallida para companyId=${companyId}: ${errors.join('; ')}`);
+    } else {
+      this.logger.log(`Mapeos por defecto validados correctamente para companyId=${companyId}`);
+    }
+
+    return { ok: errors.length === 0, errors };
   }
 
   private getAccountName(accountCode: string): string {

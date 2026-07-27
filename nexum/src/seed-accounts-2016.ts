@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { Account } from './entities/account.entity';
 import { Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
+import { AccountMappingService } from './accounting/account-mapping.service';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -1713,6 +1714,7 @@ async function seedAccounts2016() {
   const app = await NestFactory.createApplicationContext(AppModule);
   const accountRepo = app.get('AccountRepository') as Repository<Account>;
   const companyRepo = app.get('CompanyRepository') as Repository<Company>;
+  const mappingService = app.get(AccountMappingService);
 
   try {
     console.log('🌱 Seeding Cuban Chart of Accounts 2016 (GOC-2016-EX39)');
@@ -1780,6 +1782,17 @@ async function seedAccounts2016() {
       }
 
       console.log(`✅ Inserted ${inserted} new | Updated ${updated} names for company ${company.name}`);
+
+      // Validar mapeos por defecto contra el plan de cuentas recién sembrado
+      const validation = await mappingService.validateDefaultMappings(company.id);
+      if (!validation.ok) {
+        console.warn(`⚠️ Mapeos inválidos para ${company.name}:`);
+        for (const error of validation.errors) {
+          console.warn(`   - ${error}`);
+        }
+      } else {
+        console.log(`✅ Mapeos por defecto validados para ${company.name}`);
+      }
     }
 
     console.log('🎉 Seeding completed successfully!');
