@@ -71,6 +71,14 @@ export class AccountPayable {
   @Column({ name: 'status', type: 'varchar', length: 20, default: 'pending' })
   status: 'pending' | 'partial' | 'paid' | 'overdue' | 'disputed' | 'cancelled';
 
+  /**
+   * Cuenta del Nomenclador en la que está registrada la obligación
+   * (410 proveedores, 455 nóminas, 460 retenciones, 440 tributos…).
+   * Determina la cuenta que se debita al pagar; si es nula se asume proveedores.
+   */
+  @Column({ name: 'account_code', type: 'varchar', length: 20, nullable: true })
+  accountCode: string | null;
+
   @Column({ name: 'priority', type: 'varchar', length: 20, default: 'normal' })
   priority: 'low' | 'normal' | 'high' | 'urgent';
 

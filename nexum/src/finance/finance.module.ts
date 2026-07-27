@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { FinanceService } from './finance.service';
@@ -11,6 +11,7 @@ import { Payment } from '../entities/payment.entity';
 import { CashRegister } from '../entities/cash-register.entity';
 import { CashMovement } from '../entities/cash-movement.entity';
 import { BankReconciliation } from '../entities/bank-reconciliation.entity';
+import { Invoice } from '../entities/invoice.entity';
 import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
@@ -24,9 +25,10 @@ import { AccountingModule } from '../accounting/accounting.module';
       CashRegister,
       CashMovement,
       BankReconciliation,
+      Invoice,
     ]),
     AuthModule,
-    AccountingModule,
+    forwardRef(() => AccountingModule),
   ],
   controllers: [FinanceController],
   providers: [FinanceService],

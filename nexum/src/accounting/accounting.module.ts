@@ -11,6 +11,7 @@ import { PdfReportService } from './pdf-report.service';
 import { AccountService } from './account.service';
 import { CostCenterService } from './cost-center.service';
 import { FiscalYearService } from './fiscal-year.service';
+import { YearEndClosingService } from './year-end-closing.service';
 import { ElementoService } from './elemento.service';
 import { ExpenseTypeService } from './expense-type.service';
 import { AccountMappingService } from './account-mapping.service';
@@ -57,6 +58,7 @@ import { PaginationModule } from '../common/pagination/pagination.module';
     AccountService,
     CostCenterService,
     FiscalYearService,
+    YearEndClosingService,
     SubelementsService,
     ElementoService,
     ExpenseTypeService,
@@ -68,6 +70,7 @@ import { PaginationModule } from '../common/pagination/pagination.module';
     AccountService,
     CostCenterService,
     FiscalYearService,
+    YearEndClosingService,
     PdfReportService,
     AccountMappingService,
   ],

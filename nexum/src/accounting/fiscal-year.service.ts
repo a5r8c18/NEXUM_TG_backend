@@ -13,6 +13,7 @@ import { Voucher } from '../entities/voucher.entity';
 import { GeneratedReport } from '../entities/generated-report.entity';
 import { ReportService } from './report.service';
 import { PdfReportService } from './pdf-report.service';
+import { YearEndClosingService } from './year-end-closing.service';
 
 @Injectable()
 export class FiscalYearService {
@@ -29,6 +30,7 @@ export class FiscalYearService {
     private readonly generatedReportRepo: Repository<GeneratedReport>,
     private readonly reportService: ReportService,
     private readonly pdfReportService: PdfReportService,
+    private readonly yearEndClosingService: YearEndClosingService,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -103,6 +105,31 @@ export class FiscalYearService {
 
     // Crear períodos mensuales automáticamente
     await this.createMonthlyPeriods(savedFy.id, companyId, start, end);
+
+    // Asiento de apertura: si el ejercicio continúa a uno ya cerrado, se
+    // arrastran los saldos de las cuentas reales como primer documento del
+    // Libro Diario del nuevo año (Res. 235/2005 MFP).
+    const previous = await this.fiscalYearRepo
+      .createQueryBuilder('fy')
+      .where('fy.companyId = :companyId', { companyId })
+      .andWhere('fy.status = :status', { status: 'closed' })
+      .andWhere('fy.endDate < :startDate', { startDate: data.startDate })
+      .orderBy('fy.endDate', 'DESC')
+      .getOne();
+
+    if (previous) {
+      try {
+        await this.yearEndClosingService.generateOpeningEntry(
+          companyId,
+          savedFy,
+          previous,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Error generando asiento de apertura de ${savedFy.name}: ${error.message}`,
+        );
+      }
+    }
 
     return this.findOneFiscalYear(companyId, savedFy.id);
   }
@@ -205,18 +232,29 @@ export class FiscalYearService {
       );
     }
 
-    // 2. Cerrar todos los períodos abiertos
+    // 2. Asientos de cierre del ejercicio (Res. 235/2005 MFP):
+    //    cancelación de las cuentas nominales contra la 999 "Resultado" y
+    //    traslado del resultado a Utilidades Retenidas.
+    //    Debe hacerse ANTES de cerrar los períodos, porque el comprobante se
+    //    registra con fecha del último día del ejercicio.
+    const closingResult = await this.yearEndClosingService.generateClosingEntries(
+      companyId,
+      fy,
+      closedBy,
+    );
+
+    // 3. Cerrar todos los períodos abiertos
     await this.periodRepo.update(
       { fiscalYearId: id, status: 'open' },
       { status: 'closed', closedAt: new Date(), closedBy: closedBy || 'Sistema' },
     );
 
-    // 3. Generar datos del Libro Diario y Libro Mayor
+    // 4. Generar datos del Libro Diario y Libro Mayor
     try {
       const journalData = await this.reportService.exportGeneralJournalByFiscalYear(companyId, id);
       const ledgerData = await this.reportService.exportGeneralLedgerByFiscalYear(companyId, id);
 
-      // 4. Generar PDFs
+      // 5. Generar PDFs
       const journalPdf = await this.pdfReportService.generateLibroDiario(
         companyId,
         new Date(fy.startDate),
@@ -228,7 +266,7 @@ export class FiscalYearService {
         new Date(fy.endDate),
       );
 
-      // 5. Almacenar reportes generados
+      // 6. Almacenar reportes generados
       await this.generatedReportRepo.save([
         {
           companyId,
@@ -268,11 +306,16 @@ export class FiscalYearService {
       // No bloquear cierre si falla generación de PDF
     }
 
-    // 6. Cerrar el año fiscal
+    // 7. Cerrar el año fiscal
     fy.status = 'closed';
     fy.closedAt = new Date();
     fy.closedBy = closedBy || 'Sistema';
-    return this.fiscalYearRepo.save(fy);
+    const saved = await this.fiscalYearRepo.save(fy);
+
+    return {
+      ...saved,
+      closing: closingResult,
+    } as FiscalYear & { closing: typeof closingResult };
   }
 
   // ══════════════════════════════════════════════════════════

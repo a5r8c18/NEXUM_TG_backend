@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Voucher, SourceModule } from '../entities/voucher.entity';
+import { Voucher, SourceModule, VoucherType } from '../entities/voucher.entity';
 import { VoucherLine } from '../entities/voucher-line.entity';
 import { Account } from '../entities/account.entity';
 import { Subelement } from '../entities/subelement.entity';
@@ -18,10 +18,53 @@ import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 import { PaginationService } from '../common/pagination/pagination.service';
 import { PaginationResult, SearchPaginationDto } from '../common/pagination/pagination.dto';
 import { CacheService } from '../cache/cache.service';
+import { DocumentSequenceService } from '../common/sequence/document-sequence.service';
 
 @Injectable()
 export class VoucherService {
   private readonly logger = new Logger(VoucherService.name);
+
+  /** Prefijo de la serie de comprobantes por tipo normalizado. */
+  static readonly TYPE_PREFIX: Record<VoucherType, string> = {
+    factura: 'FAC',
+    recibo: 'REC',
+    nota_debito: 'NDB',
+    nota_credito: 'NCR',
+    nomina: 'NOM',
+    depreciacion: 'DEP',
+    ajuste: 'AJU',
+    apertura: 'APE',
+    cierre: 'CIE',
+    otro: 'COP',
+  };
+
+  /**
+   * Traduce las denominaciones que usan los módulos a los tipos oficiales de
+   * comprobante. Sin esta tabla, 'sales', 'payroll', 'inventory', etc. se
+   * consideraban tipos distintos entre sí pero compartían el prefijo 'COP',
+   * produciendo números de comprobante duplicados.
+   */
+  private static readonly TYPE_ALIASES: Record<string, VoucherType> = {
+    sales: 'factura',
+    invoice: 'factura',
+    cost_of_sales: 'ajuste',
+    inventory: 'ajuste',
+    adjustment: 'ajuste',
+    payroll: 'nomina',
+    depreciation: 'depreciacion',
+    receipt: 'recibo',
+    payment: 'recibo',
+    finance: 'recibo',
+    purchase: 'ajuste',
+    opening: 'apertura',
+    closing: 'cierre',
+  };
+
+  static normalizeVoucherType(type?: string): VoucherType {
+    if (!type) return 'otro';
+    if (type in VoucherService.TYPE_PREFIX) return type as VoucherType;
+    return VoucherService.TYPE_ALIASES[type] || 'otro';
+  }
 
   constructor(
     @InjectRepository(Voucher)
@@ -38,6 +81,7 @@ export class VoucherService {
     private readonly auditService: AuditService,
     private readonly paginationService: PaginationService,
     private readonly cacheService: CacheService,
+    private readonly sequenceService: DocumentSequenceService,
   ) {}
 
   private async invalidateReportCache(companyId: number): Promise<void> {
@@ -204,34 +248,21 @@ export class VoucherService {
         data.lines,
       );
 
-      // Generar número de comprobante con serie por tipo
-      const typePrefix: Record<string, string> = {
-        factura: 'FAC',
-        recibo: 'REC',
-        nota_debito: 'NDB',
-        nota_credito: 'NCR',
-        nomina: 'NOM',
-        depreciacion: 'DEP',
-        ajuste: 'AJU',
-        apertura: 'APE',
-        cierre: 'CIE',
-        otro: 'COP',
-      };
-      const prefix = typePrefix[data.type] || 'COP';
+      // Serie del comprobante. El tipo se normaliza porque los módulos envían
+      // denominaciones propias ('sales', 'payroll', 'inventory'…): sin esta
+      // normalización todas caían en el prefijo genérico y varias series
+      // paralelas emitían el mismo número.
+      const normalizedType = VoucherService.normalizeVoucherType(data.type);
+      const prefix = VoucherService.TYPE_PREFIX[normalizedType];
 
-      const maxVoucher = await manager
-        .getRepository(Voucher)
-        .createQueryBuilder('v')
-        .where('v.company_id = :companyId', { companyId })
-        .andWhere('v.type = :type', { type: data.type || 'otro' })
-        .setLock('pessimistic_write')
-        .orderBy('v.voucher_number', 'DESC')
-        .getOne();
-
-      const maxSuffix = maxVoucher?.voucherNumber?.replace(`${prefix}-`, '');
-      const nextNumber = maxVoucher && maxSuffix && !isNaN(parseInt(maxSuffix, 10))
-        ? parseInt(maxSuffix, 10) + 1
-        : 1;
+      // Consecutivo atómico por empresa y serie (no reutiliza números tras
+      // anulaciones ni colisiona bajo concurrencia).
+      const nextNumber = await this.sequenceService.next(
+        companyId,
+        `voucher:${prefix}`,
+        0,
+        manager,
+      );
       const voucherNumber = `${prefix}-${String(nextNumber).padStart(5, '0')}`;
 
       // Crear voucher
@@ -240,7 +271,7 @@ export class VoucherService {
         voucherNumber,
         date: data.date,
         description: data.description,
-        type: (data.type as any) || 'otro',
+        type: normalizedType,
         status: 'draft',
         totalAmount: totalDebit,
         sourceModule: (data.sourceModule as SourceModule) || 'manual',
@@ -288,9 +319,21 @@ export class VoucherService {
         },
       });
 
-      // Publicar automáticamente si es de apertura
-      if (data.type === 'apertura') {
-        await this.postVoucherInTransaction(manager, companyId, saved.id);
+      // Publicar automáticamente los comprobantes de apertura y cierre del
+      // ejercicio: son asientos obligatorios generados por el sistema y no
+      // están sujetos a aprobación manual.
+      //
+      // skipBalanceUpdate se usa en el asiento de apertura generado al abrir un
+      // ejercicio a continuación de otro ya cerrado: los saldos de balance ya
+      // vienen arrastrados en las cuentas, de modo que el asiento se registra
+      // como documento del Libro Diario del nuevo año sin volver a sumarlos.
+      if (data.type === 'apertura' || data.type === 'cierre') {
+        await this.postVoucherInTransaction(
+          manager,
+          companyId,
+          saved.id,
+          data.skipBalanceUpdate === true,
+        );
       }
 
       return saved;
@@ -319,6 +362,12 @@ export class VoucherService {
         credit: number;
         description?: string;
         costCenterId?: string;
+        /** Elemento de gasto (clasificador cubano) — requerido en cuentas de gasto */
+        element?: string | null;
+        /** Subelemento de gasto (clasificador cubano) */
+        subelement?: string | null;
+        /** Identificación del tercero (cliente/proveedor/trabajador) para el submayor */
+        reference?: string | null;
       }[];
     },
   ) {
@@ -331,6 +380,14 @@ export class VoucherService {
         companyId,
         line.accountCode,
       );
+      // El elemento/subelemento de gasto solo es aplicable a cuentas de gasto.
+      // Si se recibe un subelemento sin elemento, se deriva el elemento del
+      // propio subelemento (los códigos siguen el patrón "elemento.subelemento").
+      const subelement = line.subelement || null;
+      let element = line.element || null;
+      if (!element && subelement) {
+        element = this.deriveElementFromSubelement(subelement);
+      }
       resolvedLines.push({
         accountId: account.id,
         accountCode: account.code,
@@ -339,6 +396,9 @@ export class VoucherService {
         credit: line.credit,
         description: line.description,
         costCenterId: line.costCenterId,
+        element: account.type === 'expense' ? element : null,
+        subelement: account.type === 'expense' ? subelement : null,
+        reference: line.reference || null,
       });
     }
 
@@ -670,6 +730,7 @@ export class VoucherService {
     manager: EntityManager,
     companyId: number,
     id: string,
+    skipBalanceUpdate = false,
   ) {
     const voucher = await manager.getRepository(Voucher).findOne({
       where: { id, companyId },
@@ -678,6 +739,11 @@ export class VoucherService {
 
     if (!voucher) {
       throw new NotFoundException(`Voucher #${id} no encontrado`);
+    }
+
+    if (skipBalanceUpdate) {
+      voucher.status = 'posted';
+      return await manager.getRepository(Voucher).save(voucher);
     }
 
     // Actualizar saldos de cuentas
@@ -740,6 +806,21 @@ export class VoucherService {
   // ══════════════════════════════════════════════════════════
   // ── HELPER METHODS ──
   // ══════════════════════════════════════════════════════════
+
+  /**
+   * Deriva el código de elemento de gasto a partir del subelemento.
+   *
+   * El clasificador cubano de gastos agrupa los subelementos (5 dígitos) bajo
+   * elementos de un dígito seguido de dos ceros: 100 Materias Primas y
+   * Materiales, 300 Combustibles, 400 Energía, 500 Salarios, 600 Otros Gastos
+   * de la Fuerza de Trabajo, 700 Depreciación, 800 Otros Gastos Monetarios,
+   * 900 Transferencias. Ej.: 11101 → 100; 50100 → 500; 70100 → 700.
+   */
+  private deriveElementFromSubelement(subelement: string): string | null {
+    const digits = subelement.replace(/\D/g, '');
+    if (!digits.length) return null;
+    return `${digits[0]}00`;
+  }
 
   /**
    * Resuelve una cuenta contable "asentable" a partir de un código.

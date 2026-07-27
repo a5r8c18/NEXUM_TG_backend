@@ -7,6 +7,7 @@ import { ProductsModule } from '../products/products.module';
 import { AuthModule } from '../auth/auth.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { PaginationModule } from '../common/pagination/pagination.module';
+import { FinanceModule } from '../finance/finance.module';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
@@ -19,9 +20,11 @@ import { AccountReceivable } from '../entities/account-receivable.entity';
     ProductsModule,
     AuthModule,
     forwardRef(() => AccountingModule),
+    forwardRef(() => FinanceModule),
     PaginationModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService],
+  exports: [InvoicesService],
 })
 export class InvoicesModule {}

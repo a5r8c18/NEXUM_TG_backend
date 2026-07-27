@@ -33,10 +33,24 @@ export enum MappingType {
   PAYROLL_PROCESSING_ASSOCIATED = 'payroll_processing_associated',
   PAYROLL_PROCESSING_ADMINISTRATIVE = 'payroll_processing_administrative',
   PAYROLL_PAYMENT = 'payroll_payment',
-  PAYROLL_RETENTION = 'payroll_retention', // Crédito: Retenciones y deducciones por pagar
+  PAYROLL_RETENTION = 'payroll_retention', // Crédito: Contribución Especial a la Seguridad Social
+  PAYROLL_RETENTION_INCOME_TAX = 'payroll_retention_income_tax', // Impuesto sobre Ingresos Personales
+  PAYROLL_RETENTION_UNION = 'payroll_retention_union', // Cuotas Sindicales
+  PAYROLL_RETENTION_OTHER = 'payroll_retention_other', // Otras Retenciones
+  PAYROLL_VACATION_PROVISION = 'payroll_vacation_provision', // Provisión para Vacaciones acumuladas
   PAYROLL_CASH = 'payroll_cash', // Crédito: cuenta de tesorería para el pago de nómina
   PURCHASE_ORDER = 'purchase_order',
   PURCHASE_PAYMENT = 'purchase_payment',
+  // ── Tesorería (parametrización de las cuentas de efectivo) ──
+  TREASURY_CASH = 'treasury_cash', // Efectivo en Caja
+  TREASURY_BANK = 'treasury_bank', // Efectivo en Banco
+  TREASURY_CARD = 'treasury_card', // Efectivo en Banco - operaciones con tarjeta
+  // ── Faltantes y sobrantes de inventario sujetos a investigación ──
+  INVENTORY_SHORTAGE_INVESTIGATION = 'inventory_shortage_investigation', // 332 Faltantes de Bienes en Investigación
+  INVENTORY_SURPLUS_INVESTIGATION = 'inventory_surplus_investigation', // 555 Sobrantes en Investigación
+  INVENTORY_SHORTAGE_LOSS = 'inventory_shortage_loss', // 850 Gastos por Faltantes de Bienes
+  INVENTORY_SHORTAGE_RECEIVABLE = 'inventory_shortage_receivable', // 335 Cuentas por Cobrar Diversas (responsable)
+  INVENTORY_SURPLUS_INCOME = 'inventory_surplus_income', // 950 Otros Ingresos (sobrante no reclamado)
 }
 
 @Entity('account_mappings')

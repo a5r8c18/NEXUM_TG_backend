@@ -89,6 +89,26 @@ export class AccountingController {
     });
   }
 
+  /**
+   * Panel de asientos pendientes (T-01): comprobantes automáticos que aún no
+   * han sido publicados y deben ser revisados antes de impactar contabilidad.
+   */
+  @Get('pending')
+  async getPendingVouchers(
+    @Req() req: Request,
+    @Query('sourceModule') sourceModule?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.voucherService.findAllVouchers(companyId, {
+      status: 'draft',
+      sourceModule,
+      fromDate,
+      toDate,
+    });
+  }
+
   @Get('vouchers/statistics')
   getVoucherStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);

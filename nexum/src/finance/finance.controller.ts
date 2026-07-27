@@ -30,6 +30,15 @@ export class FinanceController {
     return this.financeService.getFinanceDashboard(getCompanyId(req));
   }
 
+  /**
+   * Recalcula la antigüedad de saldos (días de mora, tramo y estado 'overdue')
+   * de todas las cuentas por cobrar y por pagar pendientes de la empresa.
+   */
+  @Post('aging/recalculate')
+  recalculateAging(@Req() req: Request) {
+    return this.financeService.recalculateAging(getCompanyId(req));
+  }
+
   // ── Cuentas por Cobrar ──
   @Get('receivables')
   findAllReceivables(

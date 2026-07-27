@@ -273,11 +273,17 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
     };
   }
 
-  // Faltante en inventario (1104, 2104, 3104): Débito Gastos por Faltantes / Crédito Inventario
+  // Faltante en inventario (1104, 2104, 3104):
+  //   Débito 332 Faltantes de Bienes en Investigación / Crédito Inventario
+  //
+  // El faltante NO se reconoce como gasto al detectarse: conforme a la
+  // Res. 13/2006 MFP debe permanecer en investigación hasta que concluya el
+  // expediente, y solo entonces se traslada a gasto (850) o al responsable
+  // (335). Ese traslado lo realiza MovementsService.resolveShortage().
   if (['1104', '2104', '3104'].includes(code)) {
     const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
-      debitAccountCode: '850',  // Gastos por Faltantes de Bienes
+      debitAccountCode: '332',  // Faltantes de Bienes en Investigación
       creditAccountCode: inventoryAccount,
       description: type.description,
     };

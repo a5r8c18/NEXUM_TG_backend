@@ -47,9 +47,21 @@ export class AccountMappingService {
     [MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
     [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
     [MappingType.PAYROLL_RETENTION]: '460-0020', // Retenciones por Pagar - Contribución a la Seguridad Social
+    [MappingType.PAYROLL_RETENTION_INCOME_TAX]: '460-0010', // Impuesto sobre Ingresos Personales
+    [MappingType.PAYROLL_RETENTION_UNION]: '460-0030', // Cuotas Sindicales
+    [MappingType.PAYROLL_RETENTION_OTHER]: '460-0050', // Otras Retenciones
+    [MappingType.PAYROLL_VACATION_PROVISION]: '480', // Gastos Acumulados por Pagar - Vacaciones
     [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
     [MappingType.PURCHASE_ORDER]: '410-0020',  // Cuentas por Pagar - Fuera del Órgano (proveedores)
     [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
+    [MappingType.TREASURY_CASH]: '101', // Efectivo en Caja
+    [MappingType.TREASURY_BANK]: '110', // Efectivo en Banco y en Otras Instituciones
+    [MappingType.TREASURY_CARD]: '112', // Efectivo en Banco - operaciones con tarjeta
+    [MappingType.INVENTORY_SHORTAGE_INVESTIGATION]: '332', // Faltantes de Bienes en Investigación
+    [MappingType.INVENTORY_SURPLUS_INVESTIGATION]: '555', // Sobrantes en Investigación
+    [MappingType.INVENTORY_SHORTAGE_LOSS]: '850', // Gastos por Faltantes de Bienes
+    [MappingType.INVENTORY_SHORTAGE_RECEIVABLE]: '335', // Cuentas por Cobrar Diversas
+    [MappingType.INVENTORY_SURPLUS_INCOME]: '950', // Otros Ingresos
   };
 
   async findAll(companyId: number) {
@@ -285,7 +297,16 @@ export class AccountMappingService {
       '440': 'Obligaciones con el Presupuesto del Estado',
       '455': 'Nóminas por Pagar',
       '460': 'Retenciones por Pagar',
+      '460-0010': 'Impuesto sobre Ingresos Personales - Retenciones por Pagar',
       '460-0020': 'Contribución a la Seguridad Social - Retenciones por Pagar',
+      '460-0030': 'Cuotas Sindicales - Retenciones por Pagar',
+      '460-0050': 'Otras Retenciones por Pagar',
+      '480': 'Gastos Acumulados por Pagar',
+      '112': 'Efectivo en Banco y en Otras Instituciones',
+      '332': 'Faltantes de Bienes en Investigación',
+      '335': 'Cuentas por Cobrar Diversas - Operaciones Corrientes',
+      '555': 'Sobrantes en Investigación',
+      '850': 'Gastos por Faltantes de Bienes',
       '696': 'Operaciones entre Dependencias',
       '699': 'Transitoria del Sistema Automatizado',
       '700-0020': 'Gastos del Período — Producción en Proceso',

@@ -47,6 +47,7 @@ export { PhysicalCount, PhysicalCountStatus } from './physical-count.entity';
 export { PhysicalCountItem } from './physical-count-item.entity';
 export { LoginAttempt } from './login-attempt.entity';
 export { UserMFA } from './user-mfa.entity';
+export { DocumentSequence } from './document-sequence.entity';
 
 // Modelos Oficiales Cubanos
 export { BinCard } from './bin-card.entity';

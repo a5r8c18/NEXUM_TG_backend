@@ -91,6 +91,10 @@ export class PayrollItem {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   netSalary: number;
 
+  /** Provisión mensual de vacaciones: 1/12 del gasto salarial acumulado del trabajador. */
+  @Column({ name: 'vacation_provision', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  vacationProvision: number;
+
   @Column({ type: 'varchar', length: 20, default: 'active' })
   status: 'active' | 'inactive' | 'terminated';
 

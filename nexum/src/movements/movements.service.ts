@@ -19,6 +19,13 @@ import { StockLimitsService, StockWarning } from '../stock-limits/stock-limits.s
 import { AuditService } from '../audit/audit.service';
 import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { AccountMappingService } from '../accounting/account-mapping.service';
+import { MappingType } from '../entities/account-mapping.entity';
+
+/** Códigos de movimiento que registran un faltante sujeto a investigación. */
+const SHORTAGE_CODES = ['1104', '2104', '3104'];
+/** Códigos de movimiento que registran un sobrante sujeto a investigación. */
+const SURPLUS_CODES = ['105', '205', '305'];
 
 @Injectable()
 export class MovementsService {
@@ -36,6 +43,7 @@ export class MovementsService {
     private readonly stockLimitsService: StockLimitsService,
     private readonly auditService: AuditService,
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly accountMappingService: AccountMappingService,
   ) {}
 
   // ── Post-movimiento: verificar stock limits + notificar + auditar ──
@@ -1012,6 +1020,264 @@ export class MovementsService {
   }
 
   // ══════════════════════════════════════════════════════════
+  // ── EXPEDIENTES DE FALTANTES Y SOBRANTES ──
+  // ══════════════════════════════════════════════════════════
+
+  /**
+   * Movimientos de faltante o sobrante cuyo expediente sigue abierto, es decir
+   * cuyo importe permanece en las cuentas 332 "Faltantes de Bienes en
+   * Investigación" o 555 "Sobrantes en Investigación".
+   */
+  async findOpenInvestigations(companyId: number) {
+    const movements = await this.movementRepo
+      .createQueryBuilder('m')
+      .where('m.companyId = :companyId', { companyId })
+      .andWhere('m.movementCode IN (:...codes)', {
+        codes: [...SHORTAGE_CODES, ...SURPLUS_CODES],
+      })
+      .andWhere('m.investigationStatus = :status', { status: 'open' })
+      .orderBy('m.createdAt', 'DESC')
+      .getMany();
+
+    return {
+      movements,
+      totalShortage: movements
+        .filter((m) => SHORTAGE_CODES.includes(m.movementCode || ''))
+        .reduce((sum, m) => sum + Number(m.totalAmount || 0), 0),
+      totalSurplus: movements
+        .filter((m) => SURPLUS_CODES.includes(m.movementCode || ''))
+        .reduce((sum, m) => sum + Number(m.totalAmount || 0), 0),
+    };
+  }
+
+  /**
+   * Cierra el expediente de un FALTANTE trasladando su importe fuera de la
+   * cuenta 332 "Faltantes de Bienes en Investigación":
+   *
+   *  - resolution 'loss'        → Débito 850 Gastos por Faltantes de Bienes
+   *  - resolution 'responsible' → Débito 335 Cuentas por Cobrar Diversas
+   *
+   * en ambos casos con crédito a la 332. Conforme a la Res. 13/2006 MFP, el
+   * gasto o el cobro al responsable solo se reconoce al concluir la
+   * investigación, nunca al detectarse el faltante.
+   */
+  async resolveShortage(
+    companyId: number,
+    movementId: string,
+    data: {
+      resolution: 'loss' | 'responsible';
+      responsibleName?: string;
+      resolutionDate?: string;
+      notes?: string;
+    },
+    userName?: string,
+  ) {
+    const movement = await this.movementRepo.findOne({
+      where: { id: movementId, companyId },
+    });
+    if (!movement) {
+      throw new NotFoundException(`Movimiento ${movementId} no encontrado`);
+    }
+    if (!SHORTAGE_CODES.includes(movement.movementCode || '')) {
+      throw new BadRequestException(
+        `El movimiento ${movement.movementCode} no es un faltante en investigación`,
+      );
+    }
+    if (movement.investigationStatus === 'resolved') {
+      throw new BadRequestException(
+        'El expediente de este faltante ya fue resuelto',
+      );
+    }
+    if (data.resolution === 'responsible' && !data.responsibleName) {
+      throw new BadRequestException(
+        'Debe indicar el responsable al que se carga el faltante',
+      );
+    }
+
+    const amount = Number(movement.totalAmount || 0);
+    if (amount <= 0) {
+      throw new BadRequestException(
+        'El faltante no tiene importe: no procede asiento de resolución',
+      );
+    }
+
+    const date = data.resolutionDate || new Date().toISOString().split('T')[0];
+
+    const investigationAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVENTORY_SHORTAGE_INVESTIGATION,
+      )) || '332';
+    const destinationAccount =
+      data.resolution === 'loss'
+        ? (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.INVENTORY_SHORTAGE_LOSS,
+          )) || '850'
+        : (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.INVENTORY_SHORTAGE_RECEIVABLE,
+          )) || '335';
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'inventory',
+      `${movement.id}-shortage-resolution`,
+      {
+        date,
+        description:
+          data.resolution === 'loss'
+            ? `Resolución faltante ${movement.productCode}: pérdida asumida por la entidad`
+            : `Resolución faltante ${movement.productCode}: cargo al responsable ${data.responsibleName}`,
+        type: 'ajuste',
+        reference: `RES-FALT-${movement.id.substring(0, 8)}`,
+        createdBy: userName || 'Sistema',
+        lines: [
+          {
+            accountCode: destinationAccount,
+            debit: amount,
+            credit: 0,
+            description:
+              data.resolution === 'loss'
+                ? `Pérdida por faltante ${movement.productCode}`
+                : `Faltante a cargo de ${data.responsibleName}`,
+            costCenterId: movement.costCenterId || undefined,
+            reference: data.responsibleName || null,
+          },
+          {
+            accountCode: investigationAccount,
+            debit: 0,
+            credit: amount,
+            description: `Cancelación faltante en investigación ${movement.productCode}`,
+          },
+        ],
+      },
+    );
+
+    movement.investigationStatus = 'resolved';
+    movement.investigationResolution = data.resolution;
+    movement.investigationResolvedAt = date;
+    movement.investigationResponsible = data.responsibleName || null;
+    if (data.notes) {
+      movement.reason = `${movement.reason || ''} | Resolución: ${data.notes}`;
+    }
+    await this.movementRepo.save(movement);
+
+    this.logger.log(
+      `Expediente de faltante ${movement.id} resuelto como '${data.resolution}' por ${amount}`,
+    );
+
+    return this.enrichMovement(companyId, movement);
+  }
+
+  /**
+   * Cierra el expediente de un SOBRANTE trasladando su importe desde la cuenta
+   * 555 "Sobrantes en Investigación" a Otros Ingresos (950) cuando nadie lo
+   * reclama, o cancelándolo contra el inventario si se localiza su origen.
+   */
+  async resolveSurplus(
+    companyId: number,
+    movementId: string,
+    data: {
+      resolution: 'income' | 'owner_found';
+      resolutionDate?: string;
+      notes?: string;
+    },
+    userName?: string,
+  ) {
+    const movement = await this.movementRepo.findOne({
+      where: { id: movementId, companyId },
+    });
+    if (!movement) {
+      throw new NotFoundException(`Movimiento ${movementId} no encontrado`);
+    }
+    if (!SURPLUS_CODES.includes(movement.movementCode || '')) {
+      throw new BadRequestException(
+        `El movimiento ${movement.movementCode} no es un sobrante en investigación`,
+      );
+    }
+    if (movement.investigationStatus === 'resolved') {
+      throw new BadRequestException(
+        'El expediente de este sobrante ya fue resuelto',
+      );
+    }
+
+    const amount = Number(movement.totalAmount || 0);
+    if (amount <= 0) {
+      throw new BadRequestException(
+        'El sobrante no tiene importe: no procede asiento de resolución',
+      );
+    }
+
+    const date = data.resolutionDate || new Date().toISOString().split('T')[0];
+    const movType = getMovementType(movement.movementCode || '');
+
+    const investigationAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVENTORY_SURPLUS_INVESTIGATION,
+      )) || '555';
+
+    // Si nadie reclama el sobrante se reconoce como ingreso; si aparece su
+    // origen (p. ej. una entrada no registrada) se cancela contra el inventario.
+    const destinationAccount =
+      data.resolution === 'income'
+        ? (await this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.INVENTORY_SURPLUS_INCOME,
+          )) || '950'
+        : getInventoryAccountByCategory(movType?.category || 'mercancia');
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'inventory',
+      `${movement.id}-surplus-resolution`,
+      {
+        date,
+        description:
+          data.resolution === 'income'
+            ? `Resolución sobrante ${movement.productCode}: reconocido como ingreso`
+            : `Resolución sobrante ${movement.productCode}: localizado su origen`,
+        type: 'ajuste',
+        reference: `RES-SOBR-${movement.id.substring(0, 8)}`,
+        createdBy: userName || 'Sistema',
+        lines: [
+          {
+            accountCode: investigationAccount,
+            debit: amount,
+            credit: 0,
+            description: `Cancelación sobrante en investigación ${movement.productCode}`,
+          },
+          {
+            accountCode: destinationAccount,
+            debit: 0,
+            credit: amount,
+            description:
+              data.resolution === 'income'
+                ? `Ingreso por sobrante ${movement.productCode}`
+                : `Regularización sobrante ${movement.productCode}`,
+            costCenterId: movement.costCenterId || undefined,
+          },
+        ],
+      },
+    );
+
+    movement.investigationStatus = 'resolved';
+    movement.investigationResolution = data.resolution;
+    movement.investigationResolvedAt = date;
+    if (data.notes) {
+      movement.reason = `${movement.reason || ''} | Resolución: ${data.notes}`;
+    }
+    await this.movementRepo.save(movement);
+
+    this.logger.log(
+      `Expediente de sobrante ${movement.id} resuelto como '${data.resolution}' por ${amount}`,
+    );
+
+    return this.enrichMovement(companyId, movement);
+  }
+
+  // ══════════════════════════════════════════════════════════
   // ── CONTABILIZACIÓN AUTOMÁTICA ──
   // ══════════════════════════════════════════════════════════
 
@@ -1054,53 +1320,66 @@ export class MovementsService {
     if (!debitAccount) debitAccount = accountingEntry.debitAccountCode || '';
     if (!creditAccount) creditAccount = accountingEntry.creditAccountCode || '';
 
+    // Los faltantes y sobrantes se registran contra cuentas de investigación
+    // (Res. 13/2006 MFP), parametrizables por empresa.
+    if (['1104', '2104', '3104'].includes(movement.movementCode)) {
+      debitAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.INVENTORY_SHORTAGE_INVESTIGATION,
+        )) || debitAccount;
+    } else if (['105', '205', '305'].includes(movement.movementCode)) {
+      creditAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.INVENTORY_SURPLUS_INVESTIGATION,
+        )) || creditAccount;
+    }
+
     // Validar que las cuentas existan en la empresa; si no, usar defaults resilientes
-    try {
-      const debitAcc = await this.voucherService['accountRepo'].findOneBy({ code: debitAccount, companyId });
-      if (!debitAcc) throw new Error('debit account not found');
-    } catch {
+    const debitAcc = await this.voucherService['accountRepo'].findOneBy({ code: debitAccount, companyId });
+    if (!debitAcc) {
       this.logger.warn(`Cuenta débito ${debitAccount} no existe para la empresa. Usando cuenta de inventario por categoría.`);
       debitAccount = getInventoryAccountByCategory(movType.category);
     }
 
-    try {
-      const creditAcc = await this.voucherService['accountRepo'].findOneBy({ code: creditAccount, companyId });
-      if (!creditAcc) throw new Error('credit account not found');
-    } catch {
+    const creditAcc = await this.voucherService['accountRepo'].findOneBy({ code: creditAccount, companyId });
+    if (!creditAcc) {
       this.logger.warn(`Cuenta crédito ${creditAccount} no existe para la empresa. Usando cuenta por defecto según tipo.`);
       // Defaults resilientes según tipo de movimiento
-      if (['102', '202', '402'].includes(movement.movementCode!)) {
+      if (['102', '202', '402'].includes(movement.movementCode)) {
         creditAccount = '406'; // Cuentas por Pagar - Fuera del Órgano (proveedores)
-      } else if (['1107', '2107'].includes(movement.movementCode!)) {
+      } else if (['1107', '2107'].includes(movement.movementCode)) {
         creditAccount = '406'; // Devolución compra a proveedores
-      } else if (['106', '206', '306', '107', '207', '307'].includes(movement.movementCode!)) {
+      } else if (['106', '206', '306', '107', '207', '307'].includes(movement.movementCode)) {
         // Devolución de ventas: contra Costo de Ventas en lugar de Ventas
         creditAccount = movType.category === 'mercancia' ? '814' : '810';
-      } else if (['105', '205', '305'].includes(movement.movementCode!)) {
-        creditAccount = '932'; // Sobrantes de Inventarios (ingreso)
-      } else if (['1104', '2104', '3104'].includes(movement.movementCode!)) {
-        // Faltantes: usar cuenta de pérdidas si existe, sino dejar sin generar
-        this.logger.warn(`No existe cuenta de faltantes. No se genera comprobante para movimiento ${movement.id}.`);
-        return;
       } else {
         creditAccount = accountingEntry.creditAccountCode; // fallback
       }
     }
 
-    // Validación final: asegurar que ambas cuentas tengan valores válidos
+    // Validación final: asegurar que ambas cuentas tengan valores válidos.
+    // Nunca se registra un movimiento de inventario sin su asiento: si no hay
+    // cuentas válidas se aborta la operación en lugar de dejar el inventario
+    // descuadrado respecto de la contabilidad.
     if (!debitAccount || !creditAccount) {
-      this.logger.error(
-        `No se pudieron determinar cuentas contables válidas para movimiento ${movement.id}. Débito: ${debitAccount}, Crédito: ${creditAccount}`
+      throw new BadRequestException(
+        `No se pudieron determinar cuentas contables válidas para el movimiento ${movement.movementCode}. ` +
+          `Débito: ${debitAccount || '(vacío)'}, Crédito: ${creditAccount || '(vacío)'}. ` +
+          `Configure el mapeo de cuentas antes de registrar este movimiento.`,
       );
-      return;
     }
 
     try {
-      // Códigos de centro de costo donde el elemento de gasto es relevante
-      const costCenterCodes = ['108', '208', '308', '1105', '2105', '3105'];
-      const isCostCenterMovement = costCenterCodes.includes(movement.movementCode!);
-      
-      // Preparar líneas del comprobante con centro de costo y subelemento si aplica
+      // El subelemento de gasto (clasificador cubano) debe viajar en la línea
+      // del comprobante, no en el texto de la descripción: es la única forma de
+      // que el Modelo 5924 (Desglose de Gastos por Elementos) pueda construirse.
+      // Solo se aplica a la línea de gasto, es decir a la del débito en las
+      // salidas hacia consumo (1105/2105/3105) y centros de costo.
+      const subelement = movement.subelementId || null;
+      const element = movement.expenseElement || null;
+
       const voucherLines = [
         {
           accountCode: debitAccount,
@@ -1108,6 +1387,8 @@ export class MovementsService {
           credit: 0,
           description: `${movType.description} - Débito`,
           costCenterId: movement.costCenterId || undefined,
+          element,
+          subelement,
         },
         {
           accountCode: creditAccount,
@@ -1115,15 +1396,10 @@ export class MovementsService {
           credit: totalAmount,
           description: `${movType.description} - Crédito`,
           costCenterId: movement.costCenterId || undefined,
+          element,
+          subelement,
         },
       ];
-
-      // Agregar elemento de gasto a la descripción si aplica
-      if (movement.expenseElement && isCostCenterMovement) {
-        voucherLines.forEach(line => {
-          line.description += ` [Elem. Gasto: ${movement.expenseElement}]`;
-        });
-      }
 
       const voucher = await this.voucherService.createVoucherFromModule(
         companyId,

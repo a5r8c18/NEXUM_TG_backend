@@ -289,6 +289,10 @@ export class PayrollService {
       const totalDeductionsItem = socialSecurity + unpaidDeduction;
       const netSalary = grossSalary - totalDeductionsItem;
 
+      // ── Provisión mensual de vacaciones (RH-01) ──
+      // 1/12 del salario más la cuota patronal que se devenga por el trabajador.
+      const vacationProvision = Math.round((grossSalary * (1 + EMPLOYER_SOCIAL_SECURITY_RATE)) / 12 * 100) / 100;
+
       totalGross += grossSalary;
       totalDeductions += totalDeductionsItem;
       totalNet += netSalary;
@@ -314,6 +318,7 @@ export class PayrollService {
         otherDeductions: unpaidDeduction,
         totalDeductions: totalDeductionsItem,
         netSalary,
+        vacationProvision,
         notes: unpaidDays > 0 ? `${unpaidDays} día(s) sin sueldo descontados` : undefined,
       });
     }
@@ -467,7 +472,11 @@ export class PayrollService {
       try {
         const [
           payableAccount,
-          retentionAccount,
+          socialSecurityAccount,
+          incomeTaxAccount,
+          unionAccount,
+          otherRetentionAccount,
+          vacationProvisionAccount,
           prodExpenseAccount,
           assocExpenseAccount,
           adminExpenseAccount,
@@ -479,6 +488,22 @@ export class PayrollService {
           this.accountMappingService.getAccountForMapping(
             companyId,
             MappingType.PAYROLL_RETENTION,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_RETENTION_INCOME_TAX,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_RETENTION_UNION,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_RETENTION_OTHER,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_VACATION_PROVISION,
           ),
           this.accountMappingService.getAccountForMapping(
             companyId,
@@ -495,7 +520,14 @@ export class PayrollService {
         ]);
 
         const expenseByAccountAndCC = new Map<string, { amount: number; costCenterId?: string }>();
+        const vacationByAccountAndCC = new Map<string, { amount: number; costCenterId?: string }>();
         let employerSocialSecurityTotal = 0;
+        let totalVacationProvision = 0;
+        let totalSocialSecurity = 0;
+        let totalIncomeTax = 0;
+        let totalUnion = 0;
+        let totalOtherRetention = 0;
+
         for (const item of payroll.items) {
           const costCenterType = item.costCenter?.type;
           let accountCode: string;
@@ -509,11 +541,28 @@ export class PayrollService {
           const gross = Number(item.grossSalary);
           const employerSS = Math.round(gross * EMPLOYER_SOCIAL_SECURITY_RATE * 100) / 100;
           employerSocialSecurityTotal += employerSS;
+
           const costCenterId = item.costCenterId || undefined;
           const key = `${accountCode}#${costCenterId || ''}`;
           const existing = expenseByAccountAndCC.get(key) || { amount: 0, costCenterId };
           existing.amount += gross + employerSS;
           expenseByAccountAndCC.set(key, existing);
+
+          // ── Provisión de vacaciones (RH-01) ──
+          const vacation = Number(item.vacationProvision || 0);
+          if (vacation > 0) {
+            totalVacationProvision += vacation;
+            const vacKey = `${accountCode}#${costCenterId || ''}`;
+            const vacExisting = vacationByAccountAndCC.get(vacKey) || { amount: 0, costCenterId };
+            vacExisting.amount += vacation;
+            vacationByAccountAndCC.set(vacKey, vacExisting);
+          }
+
+          // ── Retenciones por subcuenta (RH-02) ──
+          totalSocialSecurity += Number(item.socialSecurity || 0);
+          totalIncomeTax += Number(item.taxWithholding || 0);
+          totalUnion += Number(item.healthInsurance || 0); // Reutilizamos healthInsurance como sindicato por ahora
+          totalOtherRetention += Number(item.otherDeductions || 0);
         }
         employerSocialSecurityTotal = Math.round(employerSocialSecurityTotal * 100) / 100;
 
@@ -528,6 +577,18 @@ export class PayrollService {
           });
         }
 
+        // La provisión de vacaciones se acumula en la misma cuenta de gasto del
+        // trabajador por centro de costo, pero con contrapartida en la pasiva 455.
+        for (const [accountCode, { amount, costCenterId }] of vacationByAccountAndCC.entries()) {
+          lines.push({
+            accountCode,
+            debit: amount,
+            credit: 0,
+            description: `Provisión mensual de vacaciones ${payroll.period}`,
+            costCenterId,
+          });
+        }
+
         lines.push({
           accountCode: payableAccount, // Nóminas por Pagar
           debit: 0,
@@ -535,13 +596,47 @@ export class PayrollService {
           description: `Nómina neta por pagar ${payroll.period}`,
         });
 
-        const totalSocialSecurityLiability = Math.round((totalDeductions + employerSocialSecurityTotal) * 100) / 100;
-        if (totalSocialSecurityLiability > 0) {
+        if (totalVacationProvision > 0) {
           lines.push({
-            accountCode: retentionAccount, // Retenciones y Seguridad Social por Pagar
+            accountCode: vacationProvisionAccount || '455', // Provisión para Vacaciones
             debit: 0,
-            credit: totalSocialSecurityLiability,
-            description: `Retenciones y Seguridad Social ${payroll.period}`,
+            credit: Math.round(totalVacationProvision * 100) / 100,
+            description: `Provisión para vacaciones ${payroll.period}`,
+          });
+        }
+
+        // ── Retenciones separadas por subcuenta (RH-02) ──
+        const ssLiability = Math.round((totalSocialSecurity + employerSocialSecurityTotal) * 100) / 100;
+        if (ssLiability > 0) {
+          lines.push({
+            accountCode: socialSecurityAccount || '459', // Seguridad Social por Pagar
+            debit: 0,
+            credit: ssLiability,
+            description: `Contribución Especial y cuota patronal SS ${payroll.period}`,
+          });
+        }
+        if (totalIncomeTax > 0) {
+          lines.push({
+            accountCode: incomeTaxAccount || '458', // Impuesto sobre Ingresos Personales por Pagar
+            debit: 0,
+            credit: Math.round(totalIncomeTax * 100) / 100,
+            description: `Retención Impuesto sobre Ingresos Personales ${payroll.period}`,
+          });
+        }
+        if (totalUnion > 0) {
+          lines.push({
+            accountCode: unionAccount || '460', // Cuotas Sindicales por Pagar
+            debit: 0,
+            credit: Math.round(totalUnion * 100) / 100,
+            description: `Cuotas Sindicales retenidas ${payroll.period}`,
+          });
+        }
+        if (totalOtherRetention > 0) {
+          lines.push({
+            accountCode: otherRetentionAccount || '461', // Otras Retenciones por Pagar
+            debit: 0,
+            credit: Math.round(totalOtherRetention * 100) / 100,
+            description: `Otras deducciones retenidas ${payroll.period}`,
           });
         }
 

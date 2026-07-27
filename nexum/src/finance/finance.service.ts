@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
+import { Invoice } from '../entities/invoice.entity';
 import { AccountReceivable } from '../entities/account-receivable.entity';
 import { AccountPayable } from '../entities/account-payable.entity';
 import { BankAccount } from '../entities/bank-account.entity';
@@ -12,6 +13,7 @@ import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
+import { DocumentSequenceService } from '../common/sequence/document-sequence.service';
 
 @Injectable()
 export class FinanceService {
@@ -34,9 +36,80 @@ export class FinanceService {
     private readonly cashMovementRepo: Repository<CashMovement>,
     @InjectRepository(BankReconciliation)
     private readonly reconciliationRepo: Repository<BankReconciliation>,
+    @InjectRepository(Invoice)
+    private readonly invoiceRepo: Repository<Invoice>,
     private readonly voucherService: VoucherService,
     private readonly accountMappingService: AccountMappingService,
+    private readonly sequenceService: DocumentSequenceService,
+    private readonly entityManager: EntityManager,
   ) {}
+
+  // ════════════════════════════════════════════════════════
+  // ── ANTIGÜEDAD DE SALDOS ──
+  // ════════════════════════════════════════════════════════
+
+  /** Clasifica los días de mora en los tramos del reporte de antigüedad. */
+  private static agingCategoryFor(
+    days: number,
+  ): 'current' | '1-30' | '31-60' | '61-90' | '91-120' | 'over-120' {
+    if (days <= 0) return 'current';
+    if (days <= 30) return '1-30';
+    if (days <= 60) return '31-60';
+    if (days <= 90) return '61-90';
+    if (days <= 120) return '91-120';
+    return 'over-120';
+  }
+
+  /**
+   * Recalcula días de mora, tramo de antigüedad y estado 'overdue' de todas las
+   * cuentas por cobrar y por pagar pendientes.
+   *
+   * Sin este recálculo, los reportes de antigüedad quedan congelados en el
+   * momento de emisión del documento.
+   */
+  async recalculateAging(companyId?: number) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    let updated = 0;
+
+    for (const repo of [this.arRepo, this.apRepo] as Array<
+      Repository<AccountReceivable | AccountPayable>
+    >) {
+      const where: any = { };
+      if (companyId) where.companyId = companyId;
+      const records = await repo.find({ where });
+
+      for (const record of records as Array<AccountReceivable | AccountPayable>) {
+        if (['paid', 'written_off'].includes(record.status)) continue;
+        if (Number(record.balanceAmount) <= 0) continue;
+
+        const due = new Date(record.dueDate);
+        due.setHours(0, 0, 0, 0);
+        const days = Math.floor((today.getTime() - due.getTime()) / dayMs);
+        const agingDays = days > 0 ? days : 0;
+        const agingCategory = FinanceService.agingCategoryFor(days);
+        const status =
+          days > 0 && record.status === 'pending' ? 'overdue' : record.status;
+
+        if (
+          record.agingDays !== agingDays ||
+          record.agingCategory !== agingCategory ||
+          record.status !== status
+        ) {
+          record.agingDays = agingDays;
+          record.agingCategory = agingCategory as any;
+          record.status = status as any;
+          await repo.save(record as any);
+          updated++;
+        }
+      }
+    }
+
+    this.logger.log(`Antigüedad de saldos recalculada: ${updated} documento(s)`);
+    return { updated };
+  }
 
   // ══════════════════════════════════════════════════════════
   // ── CUENTAS POR COBRAR (CxC) ──
@@ -66,11 +139,15 @@ export class FinanceService {
   }
 
   async createReceivable(companyId: number, data: any) {
-    const count = await this.arRepo.count({ where: { companyId } });
+    const arNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'account-receivable-manual',
+      'CXC',
+    );
     const ar = this.arRepo.create({
       ...data,
       companyId,
-      arNumber: `CXC-${String(count + 1).padStart(6, '0')}`,
+      arNumber,
       balanceAmount: data.originalAmount,
     });
     return this.arRepo.save(ar);
@@ -118,11 +195,15 @@ export class FinanceService {
   }
 
   async createPayable(companyId: number, data: any) {
-    const count = await this.apRepo.count({ where: { companyId } });
+    const apNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'account-payable',
+      'CXP',
+    );
     const ap = this.apRepo.create({
       ...data,
       companyId,
-      apNumber: `CXP-${String(count + 1).padStart(6, '0')}`,
+      apNumber,
       balanceAmount: data.originalAmount,
     });
     return this.apRepo.save(ap);
@@ -197,20 +278,38 @@ export class FinanceService {
     return qb.getMany();
   }
 
+  /**
+   * Aplica una variación al saldo bancario en una única sentencia SQL.
+   * Evita las condiciones de carrera del patrón leer → sumar → guardar.
+   */
+  private async applyBankBalanceDelta(
+    companyId: number,
+    bankAccountId: string,
+    delta: number,
+  ): Promise<void> {
+    await this.bankRepo.query(
+      `UPDATE bank_accounts
+          SET balance = balance + $1,
+              available_balance = balance + $1
+        WHERE id = $2 AND company_id = $3`,
+      [delta, bankAccountId, companyId],
+    );
+  }
+
   async createBankTransaction(companyId: number, data: any) {
     const ba = await this.findOneBankAccount(companyId, data.bankAccountId);
 
     const tx = this.txRepo.create({ ...data });
     const saved = await this.txRepo.save(tx);
 
-    // Actualizar saldo de la cuenta
-    if (data.transactionType === 'credit') {
-      ba.balance = Number(ba.balance) + Number(data.amount);
-    } else {
-      ba.balance = Number(ba.balance) - Number(data.amount);
-    }
-    ba.availableBalance = ba.balance;
-    await this.bankRepo.save(ba);
+    // Actualizar saldo de la cuenta de forma atómica
+    await this.applyBankBalanceDelta(
+      companyId,
+      ba.id,
+      data.transactionType === 'credit'
+        ? Number(data.amount)
+        : -Number(data.amount),
+    );
 
     return saved;
   }
@@ -244,12 +343,76 @@ export class FinanceService {
   }
 
   async createPayment(companyId: number, data: any) {
-    const count = await this.paymentRepo.count({ where: { companyId } });
+    const amount = Number(data.amount);
+    if (!(amount > 0)) {
+      throw new BadRequestException('El importe del pago debe ser mayor que cero');
+    }
+
+    // Cuenta de contrapartida del asiento: se determina según la naturaleza de
+    // la obligación que se cancela, no siempre "Cuentas por Pagar a Proveedores".
+    let counterpartAccount: string | undefined;
+    let counterpartReference: string | undefined;
+
+    // ── Validación contra el saldo pendiente y actualización del submayor ──
+    if (data.accountReceivableId) {
+      const ar = await this.arRepo.findOne({
+        where: { id: data.accountReceivableId, companyId },
+      });
+      if (!ar) {
+        throw new NotFoundException(
+          `CxC ${data.accountReceivableId} no encontrada`,
+        );
+      }
+      if (['paid', 'written_off'].includes(ar.status)) {
+        throw new BadRequestException(
+          `La cuenta por cobrar ${ar.arNumber} ya está ${ar.status === 'paid' ? 'cobrada' : 'dada de baja'}`,
+        );
+      }
+      if (amount - Number(ar.balanceAmount) > 0.01) {
+        throw new BadRequestException(
+          `El cobro (${amount.toFixed(2)}) excede el saldo pendiente de la CxC ${ar.arNumber} ` +
+            `(${Number(ar.balanceAmount).toFixed(2)}). Registre un anticipo si corresponde.`,
+        );
+      }
+      counterpartReference = ar.customerNit || ar.customerId || ar.customerName;
+    }
+
+    if (data.accountPayableId) {
+      const ap = await this.apRepo.findOne({
+        where: { id: data.accountPayableId, companyId },
+      });
+      if (!ap) {
+        throw new NotFoundException(
+          `CxP ${data.accountPayableId} no encontrada`,
+        );
+      }
+      if (['paid', 'cancelled'].includes(ap.status)) {
+        throw new BadRequestException(
+          `La cuenta por pagar ${ap.apNumber} ya está ${ap.status === 'paid' ? 'saldada' : 'anulada'}`,
+        );
+      }
+      if (amount - Number(ap.balanceAmount) > 0.01) {
+        throw new BadRequestException(
+          `El pago (${amount.toFixed(2)}) excede el saldo pendiente de la CxP ${ap.apNumber} ` +
+            `(${Number(ap.balanceAmount).toFixed(2)}).`,
+        );
+      }
+      // La cuenta de contrapartida la fija la propia obligación si la conoce
+      // (nóminas 455, retenciones 460, tributos 440…); en su defecto, proveedores.
+      counterpartAccount = ap.accountCode || undefined;
+      counterpartReference = ap.supplierNit || ap.supplierName;
+    }
+
+    const paymentNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'payment',
+      'PAG',
+    );
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const paymentData: Partial<Payment> = {
       ...data,
       companyId,
-      paymentNumber: `PAG-${String(count + 1).padStart(6, '0')}`,
+      paymentNumber,
       status: 'completed',
     };
     const payment = this.paymentRepo.create(paymentData as Payment);
@@ -259,28 +422,38 @@ export class FinanceService {
     if (data.accountReceivableId) {
       const ar = await this.arRepo.findOne({ where: { id: data.accountReceivableId, companyId } });
       if (ar) {
-        ar.paidAmount = Number(ar.paidAmount) + Number(data.amount);
-        ar.balanceAmount = Number(ar.originalAmount) - Number(ar.paidAmount);
+        ar.paidAmount = Math.round((Number(ar.paidAmount) + amount) * 100) / 100;
+        ar.balanceAmount =
+          Math.round((Number(ar.originalAmount) - Number(ar.paidAmount)) * 100) / 100;
         ar.lastPaymentDate = data.paymentDate;
-        ar.lastPaymentAmount = data.amount;
-        ar.status = ar.balanceAmount <= 0 ? 'paid' : 'partial';
+        ar.lastPaymentAmount = amount;
+        ar.status = ar.balanceAmount <= 0.009 ? 'paid' : 'partial';
         await this.arRepo.save(ar);
+
+        // Sincronizar el estado del documento de origen: la factura y su
+        // cuenta por cobrar deben reflejar siempre la misma realidad.
+        await this.syncInvoiceStatusFromReceivable(companyId, ar);
       }
     }
     if (data.accountPayableId) {
       const ap = await this.apRepo.findOne({ where: { id: data.accountPayableId, companyId } });
       if (ap) {
-        ap.paidAmount = Number(ap.paidAmount) + Number(data.amount);
-        ap.balanceAmount = Number(ap.originalAmount) - Number(ap.paidAmount);
+        ap.paidAmount = Math.round((Number(ap.paidAmount) + amount) * 100) / 100;
+        ap.balanceAmount =
+          Math.round((Number(ap.originalAmount) - Number(ap.paidAmount)) * 100) / 100;
         ap.lastPaymentDate = data.paymentDate;
-        ap.lastPaymentAmount = data.amount;
-        ap.status = ap.balanceAmount <= 0 ? 'paid' : 'partial';
+        ap.lastPaymentAmount = amount;
+        ap.status = ap.balanceAmount <= 0.009 ? 'paid' : 'partial';
         await this.apRepo.save(ap);
       }
     }
 
     // ── Generar comprobante contable ──
-    await this.createPaymentVoucher(companyId, saved, data);
+    await this.createPaymentVoucher(companyId, saved, {
+      ...data,
+      counterpartAccount,
+      counterpartReference,
+    });
 
     // ── Registrar movimiento según método de pago ──
     if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'check' ||
@@ -297,15 +470,51 @@ export class FinanceService {
     return saved;
   }
 
+  /**
+   * Refleja en la factura el estado real de su cuenta por cobrar.
+   * Es el único punto donde la factura pasa a 'paid', de modo que el cobro se
+   * contabiliza una sola vez (aquí) y ambos documentos nunca divergen.
+   */
+  private async syncInvoiceStatusFromReceivable(
+    companyId: number,
+    ar: AccountReceivable,
+  ) {
+    if (!ar.invoiceId) return;
+
+    const invoice = await this.invoiceRepo.findOne({
+      where: { id: ar.invoiceId, companyId },
+    });
+    if (!invoice || invoice.status === 'cancelled') return;
+
+    const newStatus =
+      ar.status === 'paid'
+        ? 'paid'
+        : Number(ar.paidAmount) > 0
+          ? 'partial'
+          : invoice.status;
+
+    if (invoice.status !== newStatus) {
+      invoice.status = newStatus;
+      await this.invoiceRepo.save(invoice);
+      this.logger.log(
+        `Factura ${invoice.invoiceNumber} sincronizada a estado '${newStatus}' desde la CxC ${ar.arNumber}`,
+      );
+    }
+  }
+
   private async registerBankMovementFromPayment(companyId: number, payment: Payment, data: any) {
     const ba = await this.bankRepo.findOne({ where: { id: data.bankAccountId, companyId } });
     if (!ba) return;
 
     const isIncome = data.paymentType === 'receivable';
-    const txCount = await this.txRepo.count({ where: { companyId } });
+    const transactionNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'bank-transaction',
+      'TXB',
+    );
 
     const tx = this.txRepo.create({
-      transactionNumber: `TXB-${String(txCount + 1).padStart(6, '0')}`,
+      transactionNumber,
       transactionDate: data.paymentDate,
       transactionType: isIncome ? 'credit' : 'debit',
       amount: data.amount,
@@ -319,14 +528,13 @@ export class FinanceService {
     });
     await this.txRepo.save(tx);
 
-    // Actualizar saldo bancario
-    if (isIncome) {
-      ba.balance = Number(ba.balance) + Number(data.amount);
-    } else {
-      ba.balance = Number(ba.balance) - Number(data.amount);
-    }
-    ba.availableBalance = ba.balance;
-    await this.bankRepo.save(ba);
+    // Actualizar saldo bancario de forma atómica: la lectura-modificación-
+    // escritura en memoria pierde operaciones concurrentes.
+    await this.applyBankBalanceDelta(
+      companyId,
+      ba.id,
+      isIncome ? Number(data.amount) : -Number(data.amount),
+    );
 
     this.logger.log(`BankTransaction ${tx.transactionNumber} creada desde Payment ${payment.paymentNumber}`);
   }
@@ -347,14 +555,18 @@ export class FinanceService {
     }
 
     const isIncome = data.paymentType === 'receivable';
-    const cmCount = await this.cashMovementRepo.count({ where: { companyId } });
+    const movementNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'cash-movement',
+      'CAJ',
+    );
 
     const newBalance = isIncome
       ? Number(cashRegister.currentBalance) + Number(data.amount)
       : Number(cashRegister.currentBalance) - Number(data.amount);
 
     const cm = this.cashMovementRepo.create({
-      movementNumber: `CAJ-${String(cmCount + 1).padStart(6, '0')}`,
+      movementNumber,
       movementDate: new Date(data.paymentDate),
       movementType: isIncome ? 'income' : 'expense',
       amount: data.amount,
@@ -387,17 +599,30 @@ export class FinanceService {
     const isIncome = data.paymentType === 'receivable';
     const amount = Number(data.amount);
 
-    // Determinar cuenta de efectivo/banco según método de pago
-    let cashAccountCode: string;
+    // Cuenta de tesorería según el método de pago, tomada del mapeo de cuentas
+    // de la empresa (nunca codificada en duro).
+    let treasuryMapping: MappingType;
     if (data.paymentMethod === 'cash') {
-      cashAccountCode = '101'; // Efectivo en Caja
-    } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'check') {
-      cashAccountCode = '110'; // Efectivo en Banco
-    } else if (data.paymentMethod === 'credit_card' || data.paymentMethod === 'debit_card') {
-      cashAccountCode = '112'; // Tarjetas de Crédito
+      treasuryMapping = MappingType.TREASURY_CASH;
+    } else if (
+      data.paymentMethod === 'bank_transfer' ||
+      data.paymentMethod === 'check'
+    ) {
+      treasuryMapping = MappingType.TREASURY_BANK;
+    } else if (
+      data.paymentMethod === 'credit_card' ||
+      data.paymentMethod === 'debit_card'
+    ) {
+      treasuryMapping = MappingType.TREASURY_CARD;
     } else {
-      cashAccountCode = '101'; // Default a caja
+      treasuryMapping = MappingType.TREASURY_CASH;
     }
+
+    const cashAccountCode =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        treasuryMapping,
+      )) || '101';
 
     // Líneas del comprobante
     const lines: any[] = [];
@@ -405,7 +630,9 @@ export class FinanceService {
     if (isIncome) {
       // Cobro de cliente: entra efectivo (DEBE) y se cancela la CxC (HABER)
       const receivableAccount =
-        (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
+        data.counterpartAccount ||
+        (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) ||
+        '135';
       lines.push({
         accountCode: cashAccountCode,
         debit: amount,
@@ -417,16 +644,22 @@ export class FinanceService {
         debit: 0,
         credit: amount,
         description: `Cobro ${payment.paymentNumber} - ${data.description || ''}`,
+        reference: data.counterpartReference || data.counterpartyName || null,
       });
     } else {
-      // Pago a proveedor: se cancela la CxP (DEBE) y sale efectivo (HABER)
+      // Pago de una obligación: se debita la cuenta donde está registrada
+      // (proveedores 410, nóminas 455, retenciones 460, tributos 440…) y sale
+      // el efectivo (HABER).
       const payableAccount =
-        (await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER)) || '410';
+        data.counterpartAccount ||
+        (await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER)) ||
+        '410';
       lines.push({
-        accountCode: payableAccount, // Cuentas por Pagar a Proveedores
+        accountCode: payableAccount,
         debit: amount,
         credit: 0,
         description: `Pago ${payment.paymentNumber} - ${data.description || ''}`,
+        reference: data.counterpartReference || data.counterpartyName || null,
       });
       lines.push({
         accountCode: cashAccountCode,

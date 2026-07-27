@@ -5,9 +5,10 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { PhysicalCount, PhysicalCountStatus } from '../entities/physical-count.entity';
 import { PhysicalCountItem } from '../entities/physical-count-item.entity';
+import { Product } from '../entities/product.entity';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { MovementsService } from '../movements/movements.service';
 
@@ -20,6 +21,8 @@ export class PhysicalCountService {
     private readonly physicalCountRepo: Repository<PhysicalCount>,
     @InjectRepository(PhysicalCountItem)
     private readonly physicalCountItemRepo: Repository<PhysicalCountItem>,
+    @InjectRepository(Product)
+    private readonly productRepo: Repository<Product>,
     private readonly inventoryWarehouseService: InventoryWarehouseService,
     private readonly movementsService: MovementsService,
     private readonly dataSource: DataSource,
@@ -278,18 +281,32 @@ export class PhysicalCountService {
         where: { physicalCountId: id },
       });
 
+      // Cargar categorías reales de los productos para aplicar los códigos
+      // de movimiento correspondientes (INV-04/05).
+      const productCodes = items.map((i) => i.productCode);
+      const products = await this.productRepo.find({
+        where: { companyId, productCode: In(productCodes) },
+      });
+      const productCategoryByCode = new Map(products.map((p) => [p.productCode, p.category]));
+
       for (const item of items) {
         if (item.difference === 0) continue;
+
+        const category = productCategoryByCode.get(item.productCode) || 'mercancia';
+
+        // Códigos de ajuste por categoría: insumo (105/1104), mercancía (205/2104), producción (305/3104)
+        const entryCode = category === 'insumo' ? '105' : category === 'produccion' ? '305' : '205';
+        const exitCode = category === 'insumo' ? '1104' : category === 'produccion' ? '3104' : '2104';
 
         let adjustmentMovement: { id: string };
 
         if (item.difference > 0) {
-          // Sobrante: entrada de inventario (código 205 - mercancía)
+          // Sobrante: entrada de inventario según la categoría real del producto
           adjustmentMovement = await this.movementsService.createDirectEntry(
             companyId,
             {
-              movementCode: '205',
-              category: 'mercancia', // Por defecto, podría obtenerse del producto
+              movementCode: entryCode,
+              category,
               label: `Ajuste por conteo físico - ${count.countNumber}`,
               entity: 'Ajuste Inventario',
               warehouseId: count.warehouseId,
@@ -306,12 +323,12 @@ export class PhysicalCountService {
             userName || 'System',
           );
         } else {
-          // Faltante: salida de inventario (código 2104 - mercancía)
+          // Faltante: salida de inventario según la categoría real del producto
           adjustmentMovement = await this.movementsService.createExit(
             companyId,
             {
-              movementCode: '2104',
-              category: 'mercancia',
+              movementCode: exitCode,
+              category,
               reason: `Ajuste por conteo físico - ${count.countNumber}`,
               entity: 'Ajuste Inventario',
               warehouseId: count.warehouseId,

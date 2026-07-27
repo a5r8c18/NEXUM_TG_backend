@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { InventoryWarehouse } from '../entities/inventory-warehouse.entity';
+import { Movement } from '../entities/movement.entity';
 import { WarehousesService } from '../warehouses/warehouses.service';
 
 @Injectable()
@@ -9,6 +10,8 @@ export class InventoryWarehouseService {
   constructor(
     @InjectRepository(InventoryWarehouse)
     private readonly inventoryWarehouseRepo: Repository<InventoryWarehouse>,
+    @InjectRepository(Movement)
+    private readonly movementRepo: Repository<Movement>,
     private readonly warehousesService: WarehousesService,
   ) {}
 
@@ -202,7 +205,16 @@ export class InventoryWarehouseService {
       totalValue += Number(inv.stock) * Number(inv.unitPrice);
     }
 
-    if (totalStock <= 0) return { unitCost: 0, totalStock: 0 };
+    if (totalStock <= 0) {
+      // Sin existencias no hay promedio que calcular, pero devolver 0 haría que
+      // una venta que agota el inventario se contabilizara con costo cero.
+      // Se conserva el último costo unitario conocido de los almacenes.
+      const lastKnownCost = inventories.reduce(
+        (max, inv) => Math.max(max, Number(inv.unitPrice) || 0),
+        0,
+      );
+      return { unitCost: lastKnownCost, totalStock: 0 };
+    }
     return {
       unitCost: Math.round((totalValue / totalStock) * 100) / 100,
       totalStock,
@@ -230,6 +242,22 @@ export class InventoryWarehouseService {
       );
     }
 
+    // Costo unitario del almacén origen ANTES de la salida: la transferencia
+    // interna no puede alterar el valor total del inventario de la entidad
+    // (NCC 3). El destino debe recibir la mercancía al costo con que sale del
+    // origen y recalcular su propio promedio ponderado con ese costo.
+    const source = await this.findByCompanyProductAndWarehouse(
+      companyId,
+      data.productCode,
+      data.sourceWarehouseId,
+    );
+    if (!source) {
+      throw new NotFoundException(
+        `Producto ${data.productCode} no encontrado en almacén origen ${data.sourceWarehouseId}`,
+      );
+    }
+    const transferUnitCost = Number(source.unitPrice) || 0;
+
     // Reducir stock del almacén origen
     const sourceInventory = await this.updateStock(
       companyId,
@@ -239,13 +267,14 @@ export class InventoryWarehouseService {
       'exit',
     );
 
-    // Aumentar stock en almacén destino (sin cambiar precio en transferencias)
+    // Aumentar stock en almacén destino al costo del origen
     const destinationInventory = await this.updateStock(
       companyId,
       data.productCode,
       data.destinationWarehouseId,
       data.quantity,
       'entry',
+      transferUnitCost,
     );
 
     return {
@@ -305,6 +334,93 @@ export class InventoryWarehouseService {
 
     inventory.stockLimit = stockLimit;
     return this.inventoryWarehouseRepo.save(inventory);
+  }
+
+  /**
+   * INV-03: Submayor / Tarjeta de estiba de un producto en un almacén.
+   * Reconstruye el kárdex desde los movimientos registrados, mostrando
+   * entradas, salidas y saldo acumulado con costo promedio en cada línea.
+   */
+  async getSubledger(
+    companyId: number,
+    productCode: string,
+    warehouseId: string,
+    options?: { fromDate?: string; toDate?: string },
+  ) {
+    const inventory = await this.findByCompanyProductAndWarehouse(
+      companyId,
+      productCode,
+      warehouseId,
+    );
+    if (!inventory) {
+      throw new NotFoundException(
+        `Producto ${productCode} no existe en almacén ${warehouseId}`,
+      );
+    }
+
+    const qb = this.movementRepo
+      .createQueryBuilder('m')
+      .where('m.companyId = :companyId', { companyId })
+      .andWhere('m.productCode = :productCode', { productCode })
+      .andWhere(
+        '(m.sourceWarehouse = :warehouseId OR m.destinationWarehouse = :warehouseId)',
+        { warehouseId },
+      )
+      .orderBy('m.createdAt', 'ASC');
+
+    if (options?.fromDate) {
+      qb.andWhere('m.createdAt >= :fromDate', { fromDate: options.fromDate });
+    }
+    if (options?.toDate) {
+      qb.andWhere('m.createdAt <= :toDate', { toDate: options.toDate });
+    }
+
+    const movements = await qb.getMany();
+
+    let balance = 0;
+    const rows = movements.map((m) => {
+      const isIncoming =
+        (['entry', 'return'].includes(m.movementType) &&
+          m.destinationWarehouse === warehouseId) ||
+        (m.movementType === 'transfer' && m.destinationWarehouse === warehouseId);
+      const isOutgoing =
+        (m.movementType === 'exit' && m.sourceWarehouse === warehouseId) ||
+        (m.movementType === 'transfer' && m.sourceWarehouse === warehouseId);
+
+      const qty = Number(m.quantity || 0);
+      const quantityIn = isIncoming ? qty : 0;
+      const quantityOut = isOutgoing ? qty : 0;
+      balance += quantityIn - quantityOut;
+
+      return {
+        id: m.id,
+        date: m.createdAt ? m.createdAt.toISOString().split('T')[0] : null,
+        movementType: m.movementType,
+        movementCode: m.movementCode,
+        movementDescription: m.movementDescription,
+        referenceNumber: m.label,
+        documentNumber: m.purchaseId || m.relatedMovementId,
+        quantityIn,
+        quantityOut,
+        balance,
+        unitPrice: Number(m.unitPrice || 0),
+        totalValue: Number(m.totalAmount || 0),
+        entityName: m.entityName,
+        notes: m.reason,
+      };
+    });
+
+    return {
+      productCode: inventory.productCode,
+      productName: inventory.productName,
+      productUnit: inventory.productUnit,
+      warehouseId,
+      warehouseName: inventory.warehouseName,
+      currentBalance: inventory.stock,
+      unitPrice: inventory.unitPrice,
+      movements: rows,
+      initialBalance: rows.length ? rows[0].balance - rows[0].quantityIn + rows[0].quantityOut : inventory.stock,
+    };
   }
 
   // Desactivar registro de inventario

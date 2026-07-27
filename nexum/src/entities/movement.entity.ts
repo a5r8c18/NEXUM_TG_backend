@@ -138,6 +138,36 @@ export class Movement {
   @JoinColumn({ name: 'voucher_id' })
   voucher: Voucher;
 
+  /** open | resolved — seguimiento del expediente de faltante/sobrante. */
+  @Column({
+    name: 'investigation_status',
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: 'open',
+  })
+  investigationStatus: 'open' | 'resolved';
+
+  /** 'loss' | 'responsible' para faltantes; 'income' | 'owner_found' para sobrantes. */
+  @Column({
+    name: 'investigation_resolution',
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+  })
+  investigationResolution: string | null;
+
+  @Column({ name: 'investigation_resolved_at', type: 'date', nullable: true })
+  investigationResolvedAt: string | null;
+
+  @Column({
+    name: 'investigation_responsible',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  investigationResponsible: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

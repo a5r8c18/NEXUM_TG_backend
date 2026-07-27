@@ -163,6 +163,26 @@ export class InventoryWarehouseController {
     );
   }
 
+  // Submayor / Tarjeta de estiba de un producto en un almacén (INV-03)
+  @Get('subledger/:warehouseId/:productCode')
+  async getSubledger(
+    @Query('companyId') companyId: string,
+    @Param('warehouseId') warehouseId: string,
+    @Param('productCode') productCode: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    if (!companyId) {
+      throw new BadRequestException('CompanyId es requerido');
+    }
+    return this.inventoryWarehouseService.getSubledger(
+      parseInt(companyId),
+      productCode,
+      warehouseId,
+      { fromDate, toDate },
+    );
+  }
+
   // Desactivar producto de inventario
   @Delete('deactivate')
   async deactivate(

@@ -25,8 +25,11 @@ import { MessagesModule } from './messages/messages.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { ProductsModule } from './products/products.module';
 import { PhysicalCountModule } from './physical-count/physical-count.module';
+import { MaterialRequestsModule } from './material-requests/material-requests.module';
+import { WarehouseReturnsModule } from './warehouse-returns/warehouse-returns.module';
 import { LoggerModule } from './logger/logger.module';
 import { CommonModule } from './common/common.module';
+import { DocumentSequenceModule } from './common/sequence/document-sequence.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { RedisCacheModule } from './cache';
 import { FinanceModule } from './finance/finance.module';
@@ -105,11 +108,13 @@ import { FixedAssetInventory } from './entities/fixed-asset-inventory.entity';
 import { LoginAttempt } from './entities/login-attempt.entity';
 import { Subaccount } from './entities/subaccount.entity';
 import { UserMFA } from './entities/user-mfa.entity';
+import { DocumentSequence } from './entities/document-sequence.entity';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     CommonModule,
+    DocumentSequenceModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -191,6 +196,7 @@ import { UserMFA } from './entities/user-mfa.entity';
           LoginAttempt,
           Subaccount,
           UserMFA,
+          DocumentSequence,
         ],
         synchronize:
           configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
@@ -224,6 +230,8 @@ import { UserMFA } from './entities/user-mfa.entity';
     SubscriptionsModule,
     ProductsModule,
     PhysicalCountModule,
+    MaterialRequestsModule,
+    WarehouseReturnsModule,
     FinanceModule,
     SuppliersModule,
     PurchaseOrdersModule,

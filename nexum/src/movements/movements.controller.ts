@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import { Controller, Get, Post, Body, Query, Req, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Query, Req, Param, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { MovementsService } from './movements.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -53,6 +53,16 @@ export class MovementsController {
     return this.movementsService.createExit(companyId, body);
   }
 
+  /**
+   * INVRH: Venta de inventario a trabajador con descuento por nómina.
+   * Utiliza los códigos 1101 (insumo), 2101 (mercancía) o 3101 (producción).
+   */
+  @Post('worker-sale')
+  createWorkerSale(@Req() req: Request, @Body() body: CreateExitDto & { employeeId: string; employeeName: string }) {
+    const companyId = getCompanyId(req);
+    return this.movementsService.createExit(companyId, body);
+  }
+
   @Post('transfer')
   createTransfer(@Req() req: Request, @Body() body: CreateTransferDto) {
     const companyId = getCompanyId(req);
@@ -74,6 +84,31 @@ export class MovementsController {
     if (direction === 'exit') return getExitTypes(category);
     if (category) return MOVEMENT_TYPES_CATALOG.filter((t) => t.category === category);
     return MOVEMENT_TYPES_CATALOG;
+  }
+
+  @Get('investigations')
+  getOpenInvestigations(@Req() req: Request) {
+    return this.movementsService.findOpenInvestigations(getCompanyId(req));
+  }
+
+  @Put('investigations/:id/resolve-shortage')
+  resolveShortage(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { resolution: 'loss' | 'responsible'; responsibleName?: string; resolutionDate?: string; notes?: string },
+  ) {
+    const userName = (req as any).user?.name;
+    return this.movementsService.resolveShortage(getCompanyId(req), id, body, userName);
+  }
+
+  @Put('investigations/:id/resolve-surplus')
+  resolveSurplus(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { resolution: 'income' | 'owner_found'; resolutionDate?: string; notes?: string },
+  ) {
+    const userName = (req as any).user?.name;
+    return this.movementsService.resolveSurplus(getCompanyId(req), id, body, userName);
   }
 
   @Get('transfers/:warehouseId')
