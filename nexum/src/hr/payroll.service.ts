@@ -13,6 +13,7 @@ import { Payroll, PayrollItem } from '../entities';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
+import { Payment } from '../entities/payment.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -56,6 +57,8 @@ export class PayrollService {
     private readonly attendanceRepo: Repository<Attendance>,
     @InjectRepository(LeaveRequest)
     private readonly leaveRepo: Repository<LeaveRequest>,
+    @InjectRepository(Payment)
+    private readonly paymentRepo: Repository<Payment>,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
     private readonly accountMappingService: AccountMappingService,
@@ -748,7 +751,26 @@ export class PayrollService {
             category: 'payroll',
             companyId,
           });
-          this.logger.log(`Movimiento bancario registrado para pago nómina ${payroll.period}`);
+
+          // ── Payment asociado para conciliación y reportes (FIN-07) ──
+          const payment = this.paymentRepo.create({
+            companyId,
+            paymentNumber: `PAG-NOM-${payroll.id}`,
+            paymentDate: payroll.paidAt || new Date().toISOString().split('T')[0],
+            paymentType: 'payable',
+            paymentMethod: 'bank_transfer',
+            amount: netAmount,
+            currency: 'CUP',
+            exchangeRate: 1,
+            description: `Pago nómina ${payroll.period}`,
+            referenceNumber: `PAGO-NOM-${payroll.period}-${payroll.id}`,
+            bankAccountId,
+            status: 'completed',
+            paidBy: 'Sistema',
+          });
+          await this.paymentRepo.save(payment);
+
+          this.logger.log(`Movimiento bancario y Payment registrados para pago nómina ${payroll.period}`);
         } catch (error) {
           this.logger.error(`Error registrando movimiento bancario de nómina: ${error.message}`);
         }
