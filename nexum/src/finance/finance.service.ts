@@ -314,6 +314,62 @@ export class FinanceService {
     return saved;
   }
 
+  /**
+   * Reversar una transacción bancaria identificada por su referenceNumber.
+   * Crea una nueva transacción del tipo opuesto con parentTransactionId
+   * apuntando al original, restaurando el saldo bancario (RH-07).
+   */
+  async reverseBankTransaction(companyId: number, referenceNumber: string, description?: string) {
+    const original = await this.txRepo.findOne({
+      where: { companyId, referenceNumber },
+    });
+    if (!original) {
+      this.logger.warn(`No se encontró BankTransaction con reference ${referenceNumber}`);
+      return null;
+    }
+
+    const existingReversal = await this.txRepo.findOne({
+      where: { companyId, parentTransactionId: original.id },
+    });
+    if (existingReversal) {
+      this.logger.warn(`Reversión ya existe para BankTransaction ${original.id}`);
+      return existingReversal;
+    }
+
+    const reverseNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'bank-transaction',
+      'REV-TXB',
+      { year: 0, padding: 6 },
+    );
+
+    const reverseType = original.transactionType === 'credit' ? 'debit' : 'credit';
+    const reversal = this.txRepo.create({
+      companyId,
+      bankAccountId: original.bankAccountId,
+      transactionNumber: reverseNumber,
+      transactionDate: new Date().toISOString().split('T')[0],
+      transactionType: reverseType,
+      amount: original.amount,
+      currency: original.currency,
+      exchangeRate: original.exchangeRate,
+      description: description || `Reverso de ${original.transactionNumber}`,
+      referenceNumber: `REV-${original.referenceNumber || original.transactionNumber}`,
+      category: original.category,
+      parentTransactionId: original.id,
+    });
+    const saved = await this.txRepo.save(reversal);
+
+    await this.applyBankBalanceDelta(
+      companyId,
+      original.bankAccountId,
+      reverseType === 'credit' ? Number(original.amount) : -Number(original.amount),
+    );
+
+    this.logger.log(`BankTransaction ${original.transactionNumber} reversada por ${saved.transactionNumber}`);
+    return saved;
+  }
+
   // ══════════════════════════════════════════════════════════
   // ── PAGOS (Cobros y Pagos) ──
   // ══════════════════════════════════════════════════════════
@@ -722,11 +778,16 @@ export class FinanceService {
   }
 
   async createCashRegister(companyId: number, data: any) {
-    const count = await this.cashRegisterRepo.count({ where: { companyId } });
+    const registerCode = data.registerCode || await this.sequenceService.nextFormatted(
+      companyId,
+      'cash-register',
+      'CAJA',
+      { year: 0, padding: 3 },
+    );
     const cr = this.cashRegisterRepo.create({
       ...data,
       companyId,
-      registerCode: data.registerCode || `CAJA-${String(count + 1).padStart(3, '0')}`,
+      registerCode,
       status: 'closed',
       currentBalance: data.openingBalance || 0,
     });
@@ -756,9 +817,9 @@ export class FinanceService {
     await this.cashRegisterRepo.save(cr);
 
     // Registrar movimiento de apertura
-    const cmCount = await this.cashMovementRepo.count({ where: { companyId } });
+    const openingNumber = await this.sequenceService.nextFormatted(companyId, 'cash-movement', 'CAJ', { year: 0, padding: 6 });
     const cm = this.cashMovementRepo.create({
-      movementNumber: `CAJ-${String(cmCount + 1).padStart(6, '0')}`,
+      movementNumber: openingNumber,
       movementDate: new Date(),
       movementType: 'opening' as const,
       amount: Number(cr.openingBalance),
@@ -785,9 +846,9 @@ export class FinanceService {
     await this.cashRegisterRepo.save(cr);
 
     // Registrar movimiento de cierre
-    const cmCount = await this.cashMovementRepo.count({ where: { companyId } });
+    const closingNumber = await this.sequenceService.nextFormatted(companyId, 'cash-movement', 'CAJ', { year: 0, padding: 6 });
     const cm = this.cashMovementRepo.create({
-      movementNumber: `CAJ-${String(cmCount + 1).padStart(6, '0')}`,
+      movementNumber: closingNumber,
       movementDate: new Date(),
       movementType: 'closing' as const,
       amount: Number(cr.currentBalance),
@@ -813,9 +874,9 @@ export class FinanceService {
 
     if (difference !== 0) {
       // Registrar ajuste
-      const cmCount = await this.cashMovementRepo.count({ where: { companyId } });
+      const auditNumber = await this.sequenceService.nextFormatted(companyId, 'cash-movement', 'CAJ', { year: 0, padding: 6 });
       const cm = this.cashMovementRepo.create({
-        movementNumber: `CAJ-${String(cmCount + 1).padStart(6, '0')}`,
+        movementNumber: auditNumber,
         movementDate: new Date(),
         movementType: 'audit_adjustment' as const,
         amount: Math.abs(difference),

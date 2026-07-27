@@ -283,11 +283,15 @@ export class PayrollService {
       const dailyRate = baseSalary / DAYS_PER_MONTH;
       const unpaidDeduction = Math.round(unpaidDays * dailyRate * 100) / 100;
 
-      const grossSalary = baseSalary + overtimePay;
+      // ── Ausencias no remuneradas: reducen el devengo, no son retención (RH-03) ──
+      const grossSalary = Math.max(
+        0,
+        Math.round((baseSalary + overtimePay - unpaidDeduction) * 100) / 100,
+      );
       const socialSecurity =
         Math.round(grossSalary * EMPLOYEE_SOCIAL_SECURITY_RATE * 100) / 100;
-      const totalDeductionsItem = socialSecurity + unpaidDeduction;
-      const netSalary = grossSalary - totalDeductionsItem;
+      const totalDeductionsItem = socialSecurity;
+      const netSalary = Math.round((grossSalary - totalDeductionsItem) * 100) / 100;
 
       // ── Provisión mensual de vacaciones (RH-01) ──
       // 1/12 del salario más la cuota patronal que se devenga por el trabajador.
@@ -315,11 +319,11 @@ export class PayrollService {
         healthInsurance: 0,
         pension: 0,
         taxWithholding: 0,
-        otherDeductions: unpaidDeduction,
+        otherDeductions: 0,
         totalDeductions: totalDeductionsItem,
         netSalary,
         vacationProvision,
-        notes: unpaidDays > 0 ? `${unpaidDays} día(s) sin sueldo descontados` : undefined,
+        notes: unpaidDays > 0 ? `${unpaidDays} día(s) sin sueldo descontados del devengo` : undefined,
       });
     }
 
@@ -792,6 +796,19 @@ export class PayrollService {
             `Error anulando comprobante ${voucher.voucherNumber}: ${error.message}`,
           );
         }
+      }
+    }
+
+    // ── Reversar el movimiento bancario si la nómina fue pagada con banco (RH-07) ──
+    if (payroll.status === 'paid') {
+      try {
+        await this.financeService.reverseBankTransaction(
+          companyId,
+          `PAGO-NOM-${payroll.period}-${payroll.id}`,
+          `Reverso por cancelación de nómina ${payroll.period}`,
+        );
+      } catch (error) {
+        this.logger.error(`Error reversando movimiento bancario: ${error.message}`);
       }
     }
 
