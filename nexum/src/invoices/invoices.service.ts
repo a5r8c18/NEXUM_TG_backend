@@ -164,14 +164,18 @@ export class InvoicesService {
       throw new BadRequestException('La factura debe tener al menos un item');
     }
 
+    // Warehouse from the invoice payload (or first available warehouse as fallback)
+    const invoiceWarehouseId = data['warehouseId'];
+
     for (const item of data.items) {
       if (item.productCode) {
         const inventories = await this.inventoryWarehouseService.findByCode(
           companyId,
           item.productCode,
         );
-        // Usar el primer almacén encontrado (o implementar lógica de selección)
-        const inv = inventories[0];
+        const inv = (invoiceWarehouseId
+          ? inventories.find(i => i.warehouseId === invoiceWarehouseId)
+          : inventories[0]) || inventories[0];
         if (inv && inv.stock < item.quantity) {
           throw new BadRequestException(
             `Stock insuficiente para ${item.description}. Disponible: ${inv.stock}, Requerido: ${item.quantity}`,
@@ -252,19 +256,18 @@ export class InvoicesService {
           // Obtener producto para determinar categoría y código de movimiento
           const product = await this.productsService.findByCode(companyId, item.productCode);
           const inventories = await this.inventoryWarehouseService.findByCode(companyId, item.productCode);
-          const inventory = inventories[0]; // Primer almacén
+          const inventory = (invoiceWarehouseId
+            ? inventories.find(i => i.warehouseId === invoiceWarehouseId)
+            : inventories[0]) || inventories[0];
+          if (!inventory) continue;
 
           // Código de movimiento según categoría y destinatario de la venta
           const category = product?.category || 'mercancia';
           const codes = SALE_MOVEMENT_CODES[category] || SALE_MOVEMENT_CODES.mercancia;
           const movCode = saleType === 'worker' ? codes.worker : codes.client;
 
-          // Costo promedio ponderado ANTES de la salida
-          const wac = await this.inventoryWarehouseService.getWeightedAverageCost(
-            companyId,
-            item.productCode,
-          );
-          const unitCost = Number(wac?.unitCost || inventory?.unitPrice || 0);
+          // Costo promedio ponderado por almacén ANTES de la salida (INV-08)
+          const unitCost = Number(inventory?.unitPrice || 0);
           const totalCost = Math.round(unitCost * item.quantity * 100) / 100;
           const previous = itemCosts.get(item.productCode);
           itemCosts.set(item.productCode, {
