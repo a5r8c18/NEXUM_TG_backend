@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { ProductsService } from '../products/products.service';
 import { VoucherService } from '../accounting/voucher.service';
@@ -82,6 +82,7 @@ export class InvoicesService {
     private readonly sequenceService: DocumentSequenceService,
     @Inject(forwardRef(() => FinanceService))
     private readonly financeService: FinanceService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findAll(
@@ -189,6 +190,7 @@ export class InvoicesService {
       throw new NotFoundException(`Company ${companyId} not found`);
     }
 
+    const result = await this.dataSource.transaction(async (manager) => {
     const now = new Date().toISOString();
     const invoiceDate = data.date || now.split('T')[0];
     const invoiceYear = new Date(invoiceDate).getFullYear();
@@ -198,7 +200,7 @@ export class InvoicesService {
       companyId,
       'invoice',
       'INV',
-      { year: invoiceYear, padding: 4, includeYear: true },
+      { year: invoiceYear, padding: 4, includeYear: true, manager },
     );
 
     const subtotal = data.items.reduce(
@@ -211,7 +213,7 @@ export class InvoicesService {
     const taxAmount = Math.round(taxable * (taxRate / 100) * 100) / 100;
     const total = Math.round((taxable + taxAmount) * 100) / 100;
 
-    const invoice = await this.invoiceRepo.save(
+    const invoice = await manager.getRepository(Invoice).save(
       this.invoiceRepo.create({
         companyId,
         invoiceNumber,
@@ -239,7 +241,7 @@ export class InvoicesService {
     const itemCosts = new Map<string, { unitCost: number; totalCost: number }>();
 
     for (const item of data.items) {
-      const ii = await this.invoiceItemRepo.save(
+      const ii = await manager.getRepository(InvoiceItem).save(
         this.invoiceItemRepo.create({
           invoiceId: invoice.id,
           productCode: item.productCode || '',
@@ -282,13 +284,15 @@ export class InvoicesService {
             inventory.warehouseId,
             item.quantity,
             'exit',
+            undefined,
+            manager,
           );
 
           // Crear movimiento con código cubano.
           // El submayor de inventario se valora SIEMPRE a costo, nunca a precio
           // de venta, para que coincida con el asiento de costo de ventas.
           const movType = getMovementType(movCode);
-          await this.movementRepo.save(
+          await manager.getRepository(Movement).save(
             this.movementRepo.create({
               companyId,
               movementType: 'exit',
@@ -362,6 +366,7 @@ export class InvoicesService {
             createdBy: data.createdByName || 'Sistema',
             lines: salesLines,
           },
+          manager,
         );
 
         // 2. Contabilizar costo de ventas con el costo capturado ANTES de la
@@ -408,6 +413,7 @@ export class InvoicesService {
               createdBy: data.createdByName || 'Sistema',
               lines: costLines,
             },
+            manager,
           );
         }
       } catch (error) {
@@ -423,10 +429,10 @@ export class InvoicesService {
       companyId,
       'account-receivable',
       'CC',
-      { year: invoiceYear, padding: 4, includeYear: true },
+      { year: invoiceYear, padding: 4, includeYear: true, manager },
     );
 
-    const accountReceivable = await this.arRepo.save(
+    const accountReceivable = await manager.getRepository(AccountReceivable).save(
       this.arRepo.create({
         arNumber,
         invoiceId: invoice.id,
@@ -456,6 +462,9 @@ export class InvoicesService {
     this.logger.log(`CxC creada para factura ${invoice.invoiceNumber}: ${arNumber}`);
 
     return { invoice };
+  });
+
+  return result;
   }
 
   /**

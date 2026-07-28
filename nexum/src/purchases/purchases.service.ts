@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { ProductsService } from '../products/products.service';
 import { WarehousesService } from '../warehouses/warehouses.service';
@@ -35,6 +35,7 @@ export class PurchasesService {
     private readonly rrRepo: Repository<ReceptionReport>,
     @InjectRepository(AccountPayable)
     private readonly apRepo: Repository<AccountPayable>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findAll(companyId: number) {
@@ -65,18 +66,20 @@ export class PurchasesService {
     purchase: Purchase,
     amount: number,
     opts: { invoiceNumber?: string | null; invoiceDate?: string | null } = {},
+    manager?: EntityManager,
   ): Promise<AccountPayable> {
-    const existing = await this.apRepo.findOne({
+    const apRepo = manager ? manager.getRepository(AccountPayable) : this.apRepo;
+    const existing = await apRepo.findOne({
       where: { purchaseId: purchase.id, companyId },
     });
     if (existing) return existing;
 
-    const apCount = await this.apRepo.count({ where: { companyId } });
+    const apCount = await apRepo.count({ where: { companyId } });
     const apNumber = `CP-${new Date().getFullYear()}-${String(apCount + 1).padStart(4, '0')}`;
     const baseDate = opts.invoiceDate || new Date().toISOString().split('T')[0];
 
-    return this.apRepo.save(
-      this.apRepo.create({
+    return apRepo.save(
+      apRepo.create({
         apNumber,
         purchaseId: purchase.id,
         purchaseNumber: purchase.document,
@@ -141,7 +144,8 @@ export class PurchasesService {
     }
 
     const arrivesInvoiced = !!data.invoiceNumber;
-    const purchase = await this.purchaseRepo.save(
+    const result = await this.dataSource.transaction(async (manager) => {
+    const purchase = await manager.getRepository(Purchase).save(
       this.purchaseRepo.create({
         companyId,
         entity: data.entity,
@@ -175,7 +179,7 @@ export class PurchasesService {
       }
 
       const totalPrice = p.amount ?? p.quantity * p.unit_price;
-      const pp = await this.ppRepo.save(
+      const pp = await manager.getRepository(PurchaseProduct).save(
         this.ppRepo.create({
           purchaseId: purchase.id,
           productCode: p.product_code,
@@ -198,7 +202,7 @@ export class PurchasesService {
         unitPrice: p.unit_price,
         warehouseId: data.warehouse,
         entity: data.entity,
-      });
+      }, manager);
 
       await this.inventoryWarehouseService.updateStock(
         companyId,
@@ -207,6 +211,7 @@ export class PurchasesService {
         p.quantity,
         'entry',
         p.unit_price, // Nuevo precio para cálculo de costo promedio
+        manager,
       );
 
       // Crear movimiento con código dinámico
@@ -215,7 +220,7 @@ export class PurchasesService {
         throw new BadRequestException(`Código de movimiento inválido: ${movCode}`);
       }
 
-      await this.movementRepo.save(
+      await manager.getRepository(Movement).save(
         this.movementRepo.create({
           companyId,
           movementType: 'entry',
@@ -263,7 +268,7 @@ export class PurchasesService {
     }
     const reportNumber = `RP-${year}-${String(sequence).padStart(4, '0')}`;
 
-    await this.rrRepo.save(
+    await manager.getRepository(ReceptionReport).save(
       this.rrRepo.create({
         reportNumber,
         reportDate: new Date().toISOString().split('T')[0],
@@ -331,6 +336,7 @@ export class PurchasesService {
                 },
               ],
             },
+            manager,
           );
           this.logger.log(`Comprobante directo (facturado) generado para compra ${purchase.id}: ${inventoryAccount} / ${payableAccount}`);
         } else {
@@ -368,6 +374,7 @@ export class PurchasesService {
                 },
               ],
             },
+            manager,
           );
           this.logger.log(`Comprobante de recepción (sin factura) generado para compra ${purchase.id}: ${inventoryAccount} / ${transitAccount}`);
         }
@@ -391,7 +398,7 @@ export class PurchasesService {
         await this.createPayableForPurchase(companyId, purchase, purchaseTotal, {
           invoiceNumber: arrivesInvoiced ? data.invoiceNumber : null,
           invoiceDate: arrivesInvoiced ? data.invoiceDate : null,
-        });
+        }, manager);
       } catch (error) {
         const msg = `No se pudo crear la Cuenta por Pagar: ${error.message}`;
         accountingWarning = accountingWarning ? `${accountingWarning}. ${msg}` : msg;
@@ -403,6 +410,9 @@ export class PurchasesService {
     }
 
     return { purchase, products, accountingWarning };
+    });
+
+    return result;
   }
 
   /**
@@ -433,12 +443,14 @@ export class PurchasesService {
       throw new BadRequestException('Esta compra ya tiene factura registrada');
     }
 
+    const result = await this.dataSource.transaction(async (manager) => {
+
     // Actualizar purchase con datos de factura
     purchase.invoiceNumber = data.invoiceNumber;
     purchase.invoiceDate = new Date(data.invoiceDate);
     purchase.isInvoiced = true;
     purchase.status = 'invoiced';
-    await this.purchaseRepo.save(purchase);
+    await manager.getRepository(Purchase).save(purchase);
 
     // Calcular total de la compra
     const purchaseTotal = purchase.products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
@@ -477,11 +489,13 @@ export class PurchasesService {
           },
         ],
       },
+      manager,
     );
 
     // Actualizar la CxP existente (creada al registrar la recepción) con los
     // datos de la factura. Si no existe (compras antiguas), se crea.
-    const existingAp = await this.apRepo.findOne({
+    const apRepo = manager ? manager.getRepository(AccountPayable) : this.apRepo;
+    const existingAp = await apRepo.findOne({
       where: { purchaseId: purchase.id, companyId },
     });
     let apNumber: string;
@@ -493,7 +507,7 @@ export class PurchasesService {
       )
         .toISOString()
         .split('T')[0];
-      await this.apRepo.save(existingAp);
+      await apRepo.save(existingAp);
       apNumber = existingAp.apNumber;
     } else {
       const ap = await this.createPayableForPurchase(
@@ -501,6 +515,7 @@ export class PurchasesService {
         purchase,
         purchaseTotal,
         { invoiceNumber: data.invoiceNumber, invoiceDate: data.invoiceDate },
+        manager,
       );
       apNumber = ap.apNumber;
     }
@@ -508,6 +523,9 @@ export class PurchasesService {
     this.logger.log(`Factura ${data.invoiceNumber} registrada para compra ${purchaseId}. Asiento: ${debitAccount} / ${creditAccount}. CxP: ${apNumber}`);
 
     return { purchase, message: 'Factura registrada correctamente' };
+    });
+
+    return result;
   }
 
   /**

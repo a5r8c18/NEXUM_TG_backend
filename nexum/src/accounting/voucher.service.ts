@@ -195,8 +195,28 @@ export class VoucherService {
     });
   }
 
-  async createVoucher(companyId: number, data: any) {
-    const result = await this.entityManager.transaction(async (manager) => {
+  async createVoucher(
+    companyId: number,
+    data: any,
+    manager?: EntityManager,
+  ) {
+    if (manager) {
+      const result = await this.createVoucherTransaction(manager, companyId, data);
+      await this.invalidateReportCache(companyId);
+      return result;
+    }
+    const result = await this.entityManager.transaction(async (m) =>
+      this.createVoucherTransaction(m, companyId, data),
+    );
+    await this.invalidateReportCache(companyId);
+    return result;
+  }
+
+  private async createVoucherTransaction(
+    manager: EntityManager,
+    companyId: number,
+    data: any,
+  ) {
       // Validar período contable abierto y obtener su ID
       const period = await this.findPeriodByDate(companyId, data.date);
       if (!period) {
@@ -337,9 +357,6 @@ export class VoucherService {
       }
 
       return saved;
-    });
-    await this.invalidateReportCache(companyId);
-    return result;
   }
 
   /**
@@ -372,13 +389,15 @@ export class VoucherService {
         reference?: string | null;
       }[];
     },
+    manager?: EntityManager,
   ) {
     // Resolver accountId y accountName desde accountCode.
     // Las cuentas agrupadoras se redirigen a su subcuenta analítica asentable.
+    const accountRepo = manager ? manager.getRepository(Account) : this.accountRepo;
     const resolvedLines: any[] = [];
     for (const line of data.lines) {
       const account = await this.resolvePostableAccount(
-        this.accountRepo,
+        accountRepo,
         companyId,
         line.accountCode,
         line.subaccountCode,
@@ -415,7 +434,7 @@ export class VoucherService {
       sourceDocumentId,
       createdBy: data.createdBy || 'Sistema',
       lines: resolvedLines,
-    });
+    }, manager);
   }
 
   async updateVoucher(companyId: number, id: string, data: any) {

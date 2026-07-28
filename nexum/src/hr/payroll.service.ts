@@ -8,7 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, Repository } from 'typeorm';
+import { Between, DataSource, EntityManager, Repository } from 'typeorm';
 import { Payroll, PayrollItem } from '../entities';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
@@ -64,6 +64,7 @@ export class PayrollService {
     private readonly accountMappingService: AccountMappingService,
     @Inject(forwardRef(() => FinanceService))
     private readonly financeService: FinanceService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findAll(
@@ -466,10 +467,12 @@ export class PayrollService {
       );
     }
 
+    const result = await this.dataSource.transaction(async (manager) => {
+
     // Update payroll status
     payroll.status = 'processed';
     payroll.processedAt = new Date().toISOString().split('T')[0];
-    await this.payrollRepo.save(payroll);
+    await manager.getRepository(Payroll).save(payroll);
 
     // ── Contabilización de nómina procesada ──
     const totalGross = Number(payroll.totalGross);
@@ -661,6 +664,7 @@ export class PayrollService {
             createdBy: processedBy || 'Sistema',
             lines,
           },
+          manager,
         );
         this.logger.log(`Comprobante nómina ${payroll.period} generado`);
       } catch (error) {
@@ -670,6 +674,9 @@ export class PayrollService {
     }
 
     return { payroll };
+    });
+
+    return result;
   }
 
   async markAsPaid(companyId: number, id: number, bankAccountId?: string) {
@@ -687,9 +694,11 @@ export class PayrollService {
       );
     }
 
+    const result = await this.dataSource.transaction(async (manager) => {
+
     payroll.status = 'paid';
     payroll.paidAt = new Date().toISOString().split('T')[0];
-    await this.payrollRepo.save(payroll);
+    await manager.getRepository(Payroll).save(payroll);
 
     // ── Contabilización de pago de nómina ──
     const netAmount = Number(payroll.totalNet);
@@ -730,6 +739,7 @@ export class PayrollService {
               },
             ],
           },
+          manager,
         );
         this.logger.log(`Comprobante pago nómina ${payroll.period} generado`);
       } catch (error) {
@@ -754,10 +764,13 @@ export class PayrollService {
             referenceNumber: `PAGO-NOM-${payroll.period}-${payroll.id}`,
             category: 'payroll',
             companyId,
-          });
+          },
+          manager,
+        );
 
           // ── Payment asociado para conciliación y reportes (FIN-07) ──
-          const payment = this.paymentRepo.create({
+          const paymentRepo = manager.getRepository(Payment);
+          const payment = paymentRepo.create({
             companyId,
             paymentNumber: `PAG-NOM-${payroll.id}`,
             paymentDate: payroll.paidAt || new Date().toISOString().split('T')[0],
@@ -772,7 +785,7 @@ export class PayrollService {
             status: 'completed',
             paidBy: 'Sistema',
           });
-          await this.paymentRepo.save(payment);
+          await paymentRepo.save(payment);
 
           this.logger.log(`Movimiento bancario y Payment registrados para pago nómina ${payroll.period}`);
         } catch (error) {
@@ -782,6 +795,9 @@ export class PayrollService {
     }
 
     return { payroll };
+    });
+
+    return result;
   }
 
   /**

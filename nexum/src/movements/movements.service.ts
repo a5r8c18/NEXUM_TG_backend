@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { VoucherService } from '../accounting/voucher.service';
 import { Movement, MovementType } from '../entities/movement.entity';
+import { Account } from '../entities/account.entity';
 import { MovementItem } from '../entities/movement-item.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import {
@@ -340,95 +341,101 @@ export class MovementsService {
 
     const category = data.category || movType.category;
 
-    // Calcular totales
-    let grandTotal = 0;
-    const movementItems: Partial<MovementItem>[] = [];
+    const result = await this.dataSource.transaction(async (manager) => {
+      // Calcular totales
+      let grandTotal = 0;
+      const movementItems: Partial<MovementItem>[] = [];
 
-    for (const item of items) {
-      const unitPrice = item.unitPrice || 0;
-      const totalAmount = unitPrice * item.quantity;
-      grandTotal += totalAmount;
+      for (const item of items) {
+        const unitPrice = item.unitPrice || 0;
+        const totalAmount = unitPrice * item.quantity;
+        grandTotal += totalAmount;
 
-      // Asegurar que exista el producto en inventario
-      await this.inventoryWarehouseService.ensureProduct(companyId, {
-        productCode: item.productCode,
-        productName: item.productName,
-        productDescription: item.productDescription,
-        productUnit: item.unit,
-        unitPrice: item.unitPrice,
-        warehouseId: data.warehouseId,
-        entity: data.entity,
-        location: item.location,
-      });
+        // Asegurar que exista el producto en inventario (dentro de la transacción)
+        await this.inventoryWarehouseService.ensureProduct(companyId, {
+          productCode: item.productCode,
+          productName: item.productName,
+          productDescription: item.productDescription,
+          productUnit: item.unit,
+          unitPrice: item.unitPrice,
+          warehouseId: data.warehouseId,
+          entity: data.entity,
+          location: item.location,
+        }, manager);
 
-      // Actualizar stock
-      await this.inventoryWarehouseService.updateStock(
+        // Actualizar stock dentro de la transacción
+        await this.inventoryWarehouseService.updateStock(
+          companyId,
+          item.productCode,
+          data.warehouseId,
+          item.quantity,
+          'entry',
+          undefined,
+          manager,
+        );
+
+        movementItems.push({
+          productCode: item.productCode,
+          productName: item.productName,
+          quantity: item.quantity,
+          unitPrice,
+          totalAmount,
+          productUnit: item.unit || 'und',
+          productDescription: item.productDescription || null,
+          expenseElement: item.expenseElement || null,
+          costCenterId: item.costCenterId || null,
+          subelementId: item.subelementId || null,
+        });
+      }
+
+      // Registrar movimiento (documento único) dentro de la transacción
+      const mov = this.movementRepo.create({
         companyId,
-        item.productCode,
-        data.warehouseId,
-        item.quantity,
-        'entry',
-      );
-
-      movementItems.push({
-        productCode: item.productCode,
-        productName: item.productName,
-        quantity: item.quantity,
-        unitPrice,
-        totalAmount,
-        productUnit: item.unit || 'und',
-        productDescription: item.productDescription || null,
-        expenseElement: item.expenseElement || null,
-        costCenterId: item.costCenterId || null,
-        subelementId: item.subelementId || null,
+        movementType: 'entry',
+        movementCode: data.movementCode,
+        movementDescription: movType.description,
+        category,
+        productCode: items.length === 1 ? items[0].productCode : null,
+        quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+        unitPrice: items.length === 1 ? (items[0].unitPrice || 0) : 0,
+        totalAmount: grandTotal,
+        itemCount: items.length,
+        reason: data.label || movType.description,
+        label: data.label || null,
+        expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
+        costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
+        subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
+        destinationWarehouse: data.warehouseId,
+        userName: userName || 'System',
       });
-    }
 
-    // Registrar movimiento (documento único)
-    const mov = this.movementRepo.create({
-      companyId,
-      movementType: 'entry',
-      movementCode: data.movementCode,
-      movementDescription: movType.description,
-      category,
-      productCode: items.length === 1 ? items[0].productCode : null,
-      quantity: items.reduce((sum, i) => sum + i.quantity, 0),
-      unitPrice: items.length === 1 ? (items[0].unitPrice || 0) : 0,
-      totalAmount: grandTotal,
-      itemCount: items.length,
-      reason: data.label || movType.description,
-      label: data.label || null,
-      expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
-      costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
-      subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
-      destinationWarehouse: data.warehouseId,
-      userName: userName || 'System',
-    });
+      const savedMov = await manager.getRepository(Movement).save(mov);
 
-    const savedMov = await this.movementRepo.save(mov);
+      // Guardar items detallados
+      if (items.length > 0) {
+        const itemEntities = movementItems.map(mi => {
+          const entity = new MovementItem();
+          Object.assign(entity, { ...mi, movementId: savedMov.id });
+          return entity;
+        });
+        await manager.getRepository(MovementItem).save(itemEntities);
+      }
 
-    // Guardar items detallados
-    if (items.length > 0) {
-      const itemEntities = movementItems.map(mi => {
-        const entity = new MovementItem();
-        Object.assign(entity, { ...mi, movementId: savedMov.id });
-        return entity;
-      });
-      await this.dataSource.getRepository(MovementItem).save(itemEntities);
-    }
+      // ── Contabilización automática (un solo comprobante para toda la operación) ──
+      await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
+        debitAccountCode: data.debitAccountCode,
+        creditAccountCode: data.creditAccountCode,
+      }, manager);
 
-    // ── Contabilización automática (un solo comprobante para toda la operación) ──
-    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
-      debitAccountCode: data.debitAccountCode,
-      creditAccountCode: data.creditAccountCode,
+      return savedMov;
     });
 
     // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
-      await this.postMovementHook(companyId, savedMov.id, item.productCode, data.warehouseId, 'entry', item.quantity, userName);
+      await this.postMovementHook(companyId, result.id, item.productCode, data.warehouseId, 'entry', item.quantity, userName);
     }
 
-    return this.enrichMovement(companyId, savedMov);
+    return this.enrichMovement(companyId, result);
   }
 
   async createExit(
@@ -492,116 +499,122 @@ export class MovementsService {
     const productCodes = items.map((i) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
-    let grandTotal = 0;
-    const movementItems: Partial<MovementItem>[] = [];
-    const valeProducts: any[] = [];
+    const result = await this.dataSource.transaction(async (manager) => {
+      let grandTotal = 0;
+      const movementItems: Partial<MovementItem>[] = [];
+      const valeProducts: any[] = [];
 
-    for (const item of items) {
-      const inventories = inventoryMap.get(item.productCode) || [];
-      const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
-      const unitPrice = inventory?.unitPrice || 0;
-      const totalAmount = unitPrice * item.quantity;
-      grandTotal += totalAmount;
+      for (const item of items) {
+        const inventories = inventoryMap.get(item.productCode) || [];
+        const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
+        const unitPrice = inventory?.unitPrice || 0;
+        const totalAmount = unitPrice * item.quantity;
+        grandTotal += totalAmount;
 
-      // Actualizar stock
-      await this.inventoryWarehouseService.updateStock(
-        companyId,
-        item.productCode,
-        data.warehouseId,
-        item.quantity,
-        'exit',
+        // Actualizar stock dentro de la transacción
+        await this.inventoryWarehouseService.updateStock(
+          companyId,
+          item.productCode,
+          data.warehouseId,
+          item.quantity,
+          'exit',
+          undefined,
+          manager,
+        );
+
+        movementItems.push({
+          productCode: item.productCode,
+          productName: inventory?.productName || item.productCode,
+          quantity: item.quantity,
+          unitPrice,
+          totalAmount,
+          productUnit: inventory?.productUnit || 'und',
+          productDescription: inventory?.productDescription || null,
+          expenseElement: item.expenseElement || data.expenseElement || null,
+          costCenterId: item.costCenterId || data.costCenterId || null,
+          subelementId: item.subelementId || data.subelementId || null,
+        });
+
+        valeProducts.push({
+          code: item.productCode,
+          description: inventory?.productName || item.productCode,
+          quantity: item.quantity,
+          unit: inventory?.productUnit || 'und',
+          unitPrice,
+          amount: totalAmount,
+        });
+      }
+
+      // Registrar movimiento (documento único) dentro de la transacción
+      const savedMov = await manager.getRepository(Movement).save(
+        this.movementRepo.create({
+          companyId,
+          movementType: 'exit',
+          movementCode: data.movementCode,
+          movementDescription: movType.description,
+          category,
+          productCode: items.length === 1 ? items[0].productCode : null,
+          quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+          unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
+          totalAmount: grandTotal,
+          itemCount: items.length,
+          reason: data.reason || movType.description,
+          sourceWarehouse: data.warehouseId,
+          expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
+          costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
+          subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
+          employeeId: data.employeeId || null,
+          employeeName: data.employeeName || null,
+          userName: userName || 'System',
+        }),
       );
 
-      movementItems.push({
-        productCode: item.productCode,
-        productName: inventory?.productName || item.productCode,
-        quantity: item.quantity,
-        unitPrice,
-        totalAmount,
-        productUnit: inventory?.productUnit || 'und',
-        productDescription: inventory?.productDescription || null,
-        expenseElement: item.expenseElement || data.expenseElement || null,
-        costCenterId: item.costCenterId || data.costCenterId || null,
-        subelementId: item.subelementId || data.subelementId || null,
-      });
+      // Guardar items detallados
+      if (items.length > 0) {
+        const itemEntities = movementItems.map((mi) => {
+          const entity = new MovementItem();
+          Object.assign(entity, { ...mi, movementId: savedMov.id });
+          return entity;
+        });
+        await manager.getRepository(MovementItem).save(itemEntities);
+      }
 
-      valeProducts.push({
-        code: item.productCode,
-        description: inventory?.productName || item.productCode,
-        quantity: item.quantity,
-        unit: inventory?.productUnit || 'und',
-        unitPrice,
-        amount: totalAmount,
-      });
-    }
+      // Vale de Entrega (UN solo documento con todos los productos)
+      const firstInventory = (inventoryMap.get(items[0].productCode) || [])
+        .find((inv) => inv.warehouseId === data.warehouseId);
+      await manager.getRepository(DeliveryReport).save(
+        this.drRepo.create({
+          companyId,
+          reportNumber: `VE-${savedMov.id.substring(0, 8)}`,
+          reportDate: new Date(),
+          entityName: data.entity || 'Entrega Directa',
+          employeeId: data.employeeId || null,
+          employeeName: data.employeeName || null,
+          warehouseId: data.warehouseId,
+          warehouseName: firstInventory?.warehouseName || data.warehouseId,
+          authorizationDocument: `SALIDA-${savedMov.id.substring(0, 8)}`,
+          products: JSON.stringify(valeProducts),
+          reportType: 'SC-2-08',
+          observations: data.reason || movType.description,
+          createdByName: userName || 'System',
+        }),
+      );
 
-    // Registrar movimiento (documento único)
-    const savedMov = await this.movementRepo.save(
-      this.movementRepo.create({
-        companyId,
-        movementType: 'exit',
-        movementCode: data.movementCode,
-        movementDescription: movType.description,
-        category,
-        productCode: items.length === 1 ? items[0].productCode : null,
-        quantity: items.reduce((sum, i) => sum + i.quantity, 0),
-        unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
-        totalAmount: grandTotal,
-        itemCount: items.length,
-        reason: data.reason || movType.description,
-        sourceWarehouse: data.warehouseId,
-        expenseElement: items.length === 1 ? (items[0].expenseElement || null) : null,
-        costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
-        subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
-        employeeId: data.employeeId || null,
-        employeeName: data.employeeName || null,
-        userName: userName || 'System',
-      }),
-    );
+      // ── Contabilización automática (un solo comprobante) ──
+      await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
+        debitAccountCode: data.debitAccountCode,
+        creditAccountCode: data.creditAccountCode,
+      }, manager);
 
-    // Guardar items detallados
-    if (items.length > 0) {
-      const itemEntities = movementItems.map((mi) => {
-        const entity = new MovementItem();
-        Object.assign(entity, { ...mi, movementId: savedMov.id });
-        return entity;
-      });
-      await this.dataSource.getRepository(MovementItem).save(itemEntities);
-    }
-
-    // Vale de Entrega (UN solo documento con todos los productos)
-    const firstInventory = (inventoryMap.get(items[0].productCode) || [])
-      .find((inv) => inv.warehouseId === data.warehouseId);
-    await this.drRepo.save(
-      this.drRepo.create({
-        companyId,
-        reportNumber: `VE-${savedMov.id.substring(0, 8)}`,
-        reportDate: new Date(),
-        entityName: data.entity || 'Entrega Directa',
-        employeeId: data.employeeId || null,
-        employeeName: data.employeeName || null,
-        warehouseId: data.warehouseId,
-        warehouseName: firstInventory?.warehouseName || data.warehouseId,
-        authorizationDocument: `SALIDA-${savedMov.id.substring(0, 8)}`,
-        products: JSON.stringify(valeProducts),
-        reportType: 'SC-2-08',
-        observations: data.reason || movType.description,
-        createdByName: userName || 'System',
-      }),
-    );
-
-    // ── Contabilización automática (un solo comprobante) ──
-    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
-      debitAccountCode: data.debitAccountCode,
-      creditAccountCode: data.creditAccountCode,
+      return savedMov;
     });
 
     // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
-      await this.postMovementHook(companyId, savedMov.id, item.productCode, data.warehouseId, 'exit', item.quantity, userName);
+      await this.postMovementHook(companyId, result.id, item.productCode, data.warehouseId, 'exit', item.quantity, userName);
     }
 
-    return this.enrichMovement(companyId, savedMov);
+    return this.enrichMovement(companyId, result);
   }
 
   async createTransfer(
@@ -869,115 +882,121 @@ export class MovementsService {
     const productCodes = items.map((i) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
-    let grandTotal = 0;
-    const movementItems: Partial<MovementItem>[] = [];
-    const valeProducts: any[] = [];
+    const result = await this.dataSource.transaction(async (manager) => {
+      let grandTotal = 0;
+      const movementItems: Partial<MovementItem>[] = [];
+      const valeProducts: any[] = [];
 
-    for (const item of items) {
-      const inventories = inventoryMap.get(item.productCode) || [];
-      const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
-      const unitPrice = inventory?.unitPrice || 0;
-      const totalAmount = unitPrice * item.quantity;
-      grandTotal += totalAmount;
+      for (const item of items) {
+        const inventories = inventoryMap.get(item.productCode) || [];
+        const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
+        const unitPrice = inventory?.unitPrice || 0;
+        const totalAmount = unitPrice * item.quantity;
+        grandTotal += totalAmount;
 
-      // La dirección del stock depende del tipo de devolución:
-      // - Devolución de COMPRA a proveedor (código exit, p.ej. 1107/2107) → sale stock
-      // - Devolución de VENTA del cliente (código entry, p.ej. 106/107) → entra stock
-      const stockDirection: 'entry' | 'exit' =
-        movType.direction === 'exit' ? 'exit' : 'entry';
-      await this.inventoryWarehouseService.updateStock(
-        companyId,
-        item.productCode,
-        data.warehouseId,
-        item.quantity,
-        stockDirection,
+        // La dirección del stock depende del tipo de devolución:
+        // - Devolución de COMPRA a proveedor (código exit, p.ej. 1107/2107) → sale stock
+        // - Devolución de VENTA del cliente (código entry, p.ej. 106/107) → entra stock
+        const stockDirection: 'entry' | 'exit' =
+          movType.direction === 'exit' ? 'exit' : 'entry';
+        await this.inventoryWarehouseService.updateStock(
+          companyId,
+          item.productCode,
+          data.warehouseId,
+          item.quantity,
+          stockDirection,
+          undefined,
+          manager,
+        );
+
+        movementItems.push({
+          productCode: item.productCode,
+          productName: inventory?.productName || item.productCode,
+          quantity: item.quantity,
+          unitPrice,
+          totalAmount,
+          productUnit: inventory?.productUnit || 'und',
+          productDescription: inventory?.productDescription || null,
+          costCenterId: item.costCenterId || data.costCenterId || null,
+          subelementId: item.subelementId || data.subelementId || null,
+        });
+
+        valeProducts.push({
+          code: item.productCode,
+          description: inventory?.productName || item.productCode,
+          quantity: item.quantity,
+          unit: inventory?.productUnit || 'und',
+          unitPrice,
+          amount: totalAmount,
+        });
+      }
+
+      // Registrar movimiento (documento único) dentro de la transacción
+      const savedMov = await manager.getRepository(Movement).save(
+        this.movementRepo.create({
+          companyId,
+          movementType: 'return',
+          movementCode: data.movementCode,
+          movementDescription: movType.description,
+          category,
+          productCode: items.length === 1 ? items[0].productCode : null,
+          quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+          unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
+          totalAmount: grandTotal,
+          itemCount: items.length,
+          reason: data.reason,
+          destinationWarehouse: data.warehouseId,
+          costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
+          subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
+          userName: userName || 'System',
+          purchaseId: data.purchase_id || null,
+        }),
       );
 
-      movementItems.push({
-        productCode: item.productCode,
-        productName: inventory?.productName || item.productCode,
-        quantity: item.quantity,
-        unitPrice,
-        totalAmount,
-        productUnit: inventory?.productUnit || 'und',
-        productDescription: inventory?.productDescription || null,
-        costCenterId: item.costCenterId || data.costCenterId || null,
-        subelementId: item.subelementId || data.subelementId || null,
-      });
+      // Guardar items detallados
+      if (items.length > 0) {
+        const itemEntities = movementItems.map((mi) => {
+          const entity = new MovementItem();
+          Object.assign(entity, { ...mi, movementId: savedMov.id });
+          return entity;
+        });
+        await manager.getRepository(MovementItem).save(itemEntities);
+      }
 
-      valeProducts.push({
-        code: item.productCode,
-        description: inventory?.productName || item.productCode,
-        quantity: item.quantity,
-        unit: inventory?.productUnit || 'und',
-        unitPrice,
-        amount: totalAmount,
-      });
-    }
+      // Vale de Devolución (UN solo documento con todos los productos)
+      const firstInventory = (inventoryMap.get(items[0].productCode) || [])
+        .find((inv) => inv.warehouseId === data.warehouseId);
+      await manager.getRepository(DeliveryReport).save(
+        this.drRepo.create({
+          companyId,
+          reportNumber: `VD-${savedMov.id.substring(0, 8)}`,
+          reportDate: new Date(),
+          entityName: data.entity || 'Devolución',
+          warehouseId: data.warehouseId,
+          warehouseName: firstInventory?.warehouseName || data.warehouseId,
+          authorizationDocument: `DEVOL-${savedMov.id.substring(0, 8)}`,
+          products: JSON.stringify(valeProducts),
+          reportType: 'SC-2-08',
+          observations: data.reason,
+          createdByName: userName || 'System',
+        }),
+      );
 
-    // Registrar movimiento (documento único)
-    const savedMov = await this.movementRepo.save(
-      this.movementRepo.create({
-        companyId,
-        movementType: 'return',
-        movementCode: data.movementCode,
-        movementDescription: movType.description,
-        category,
-        productCode: items.length === 1 ? items[0].productCode : null,
-        quantity: items.reduce((sum, i) => sum + i.quantity, 0),
-        unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
-        totalAmount: grandTotal,
-        itemCount: items.length,
-        reason: data.reason,
-        destinationWarehouse: data.warehouseId,
-        costCenterId: data.costCenterId || (items.length === 1 ? items[0].costCenterId : null),
-        subelementId: data.subelementId || (items.length === 1 ? items[0].subelementId : null),
-        userName: userName || 'System',
-        purchaseId: data.purchase_id || null,
-      }),
-    );
+      // ── Contabilización automática (un solo comprobante) ──
+      await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
+        debitAccountCode: data.debitAccountCode,
+        creditAccountCode: data.creditAccountCode,
+      }, manager);
 
-    // Guardar items detallados
-    if (items.length > 0) {
-      const itemEntities = movementItems.map((mi) => {
-        const entity = new MovementItem();
-        Object.assign(entity, { ...mi, movementId: savedMov.id });
-        return entity;
-      });
-      await this.dataSource.getRepository(MovementItem).save(itemEntities);
-    }
-
-    // Vale de Devolución (UN solo documento con todos los productos)
-    const firstInventory = (inventoryMap.get(items[0].productCode) || [])
-      .find((inv) => inv.warehouseId === data.warehouseId);
-    await this.drRepo.save(
-      this.drRepo.create({
-        companyId,
-        reportNumber: `VD-${savedMov.id.substring(0, 8)}`,
-        reportDate: new Date(),
-        entityName: data.entity || 'Devolución',
-        warehouseId: data.warehouseId,
-        warehouseName: firstInventory?.warehouseName || data.warehouseId,
-        authorizationDocument: `DEVOL-${savedMov.id.substring(0, 8)}`,
-        products: JSON.stringify(valeProducts),
-        reportType: 'SC-2-08',
-        observations: data.reason,
-        createdByName: userName || 'System',
-      }),
-    );
-
-    // ── Contabilización automática (un solo comprobante) ──
-    await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
-      debitAccountCode: data.debitAccountCode,
-      creditAccountCode: data.creditAccountCode,
+      return savedMov;
     });
 
     // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
-      await this.postMovementHook(companyId, savedMov.id, item.productCode, data.warehouseId, 'return', item.quantity, userName);
+      await this.postMovementHook(companyId, result.id, item.productCode, data.warehouseId, 'return', item.quantity, userName);
     }
 
-    return this.enrichMovement(companyId, savedMov);
+    return this.enrichMovement(companyId, result);
   }
 
   async getTransfersByWarehouse(
@@ -1291,6 +1310,7 @@ export class MovementsService {
       debitAccountCode?: string;
       creditAccountCode?: string;
     },
+    manager?: EntityManager,
   ): Promise<void> {
     if (totalAmount <= 0) {
       this.logger.warn(
@@ -1337,13 +1357,14 @@ export class MovementsService {
     }
 
     // Validar que las cuentas existan en la empresa; si no, usar defaults resilientes
-    const debitAcc = await this.voucherService['accountRepo'].findOneBy({ code: debitAccount, companyId });
+    const accountRepo = manager ? manager.getRepository(Account) : this.voucherService['accountRepo'];
+    const debitAcc = await accountRepo.findOneBy({ code: debitAccount, companyId });
     if (!debitAcc) {
       this.logger.warn(`Cuenta débito ${debitAccount} no existe para la empresa. Usando cuenta de inventario por categoría.`);
       debitAccount = getInventoryAccountByCategory(movType.category);
     }
 
-    const creditAcc = await this.voucherService['accountRepo'].findOneBy({ code: creditAccount, companyId });
+    const creditAcc = await accountRepo.findOneBy({ code: creditAccount, companyId });
     if (!creditAcc) {
       this.logger.warn(`Cuenta crédito ${creditAccount} no existe para la empresa. Usando cuenta por defecto según tipo.`);
       // Defaults resilientes según tipo de movimiento
@@ -1415,11 +1436,13 @@ export class MovementsService {
           createdBy: userName || 'Sistema',
           lines: voucherLines,
         },
+        manager,
       );
 
       // Vincular comprobante al movimiento
       movement.voucherId = voucher.id;
-      await this.movementRepo.update(movement.id, { voucherId: voucher.id });
+      const movementRepo = manager ? manager.getRepository(Movement) : this.movementRepo;
+      await movementRepo.update(movement.id, { voucherId: voucher.id });
 
       this.logger.log(
         `Comprobante ${voucher.voucherNumber} generado para movimiento ${movement.movementCode} (${movement.id})`,

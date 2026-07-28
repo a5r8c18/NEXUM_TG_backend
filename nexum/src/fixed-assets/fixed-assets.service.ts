@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
 import { DepreciationHistory } from '../entities/depreciation-history.entity';
 import { VoucherService } from '../accounting/voucher.service';
@@ -34,6 +34,7 @@ export class FixedAssetsService {
     private readonly financeService: FinanceService,
     private readonly accountMappingService: AccountMappingService,
     private readonly auditService: AuditService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findAll(
@@ -117,23 +118,95 @@ export class FixedAssetsService {
       }
     }
 
-    const asset = new FixedAsset();
-    asset.companyId = companyId;
-    asset.assetCode = data.assetCode;
-    asset.name = data.name;
-    asset.description = data.description || '';
-    asset.groupNumber = data.groupNumber;
-    asset.subgroup = data.subgroup;
-    asset.subgroupDetail = data.subgroupDetail || '';
-    asset.acquisitionValue = data.acquisitionValue;
-    asset.acquisitionDate = data.acquisitionDate;
-    asset.location = data.location || '';
-    asset.responsiblePerson = responsiblePerson;
-    asset.employeeId = data.employeeId || null;
-    asset.depreciationRate = depRate ?? 0;
-    asset.currentValue = data.acquisitionValue;
-    asset.status = 'active';
-    await this.assetRepo.save(asset);
+    const result = await this.dataSource.transaction(async (manager) => {
+      const asset = new FixedAsset();
+      asset.companyId = companyId;
+      asset.assetCode = data.assetCode;
+      asset.name = data.name;
+      asset.description = data.description || '';
+      asset.groupNumber = data.groupNumber;
+      asset.subgroup = data.subgroup;
+      asset.subgroupDetail = data.subgroupDetail || '';
+      asset.acquisitionValue = data.acquisitionValue;
+      asset.acquisitionDate = data.acquisitionDate;
+      asset.location = data.location || '';
+      asset.responsiblePerson = responsiblePerson;
+      asset.employeeId = data.employeeId || null;
+      asset.depreciationRate = depRate ?? 0;
+      asset.currentValue = data.acquisitionValue;
+      asset.status = 'active';
+      await manager.getRepository(FixedAsset).save(asset);
+
+      // ── Registro en inventario AFT ──
+      await this.upsertFixedAssetInventory(asset, undefined, manager);
+
+      // ── Contabilización de adquisición de activo fijo ──
+      const acquisitionValue = Number(asset.acquisitionValue);
+      if (acquisitionValue > 0) {
+        try {
+          const assetAccount =
+            (await this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.FIXED_ASSET_ACQUISITION,
+            )) || '240';
+          const payableAccount =
+            (await this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.PURCHASE_ORDER,
+            )) || '410';
+
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'fixed-assets',
+            String(asset.id),
+            {
+              date: asset.acquisitionDate || new Date().toISOString().split('T')[0],
+              description: `Adquisición AFT: ${asset.name} (${asset.assetCode})`,
+              type: 'fixed-assets',
+              reference: `AFT-${asset.assetCode}`,
+              createdBy: 'Sistema',
+              lines: [
+                {
+                  accountCode: assetAccount, // Activos Fijos Tangibles
+                  debit: acquisitionValue,
+                  credit: 0,
+                  description: `Alta AFT ${asset.assetCode}`,
+                },
+                {
+                  accountCode: payableAccount, // Cuentas por Pagar
+                  debit: 0,
+                  credit: acquisitionValue,
+                  description: `Obligación por adquisición AFT`,
+                },
+              ],
+            },
+            manager,
+          );
+
+          // ── Cuenta por Pagar asociada a la adquisición ──
+          const dueDate = new Date(asset.acquisitionDate);
+          dueDate.setDate(dueDate.getDate() + 30);
+
+          await this.financeService.createPayable(companyId, {
+            purchaseNumber: asset.assetCode,
+            supplierName: 'Proveedor AFT',
+            supplierNit: 'N/D',
+            originalAmount: acquisitionValue,
+            dueDate: dueDate.toISOString().split('T')[0],
+            status: 'pending',
+            currency: 'CUP',
+            notes: `CxP generada por adquisición AFT ${asset.assetCode} - ${asset.name}`,
+          }, manager);
+        } catch (error) {
+          this.logger.error(`Error contabilización/finanzas AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+          // El comprobante de adquisición AFT es parte de la operación; si no se
+          // puede generar el borrador contable, no debe quedar registrado.
+          throw new BadRequestException(`Error al contabilizar adquisición AFT: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      return { asset };
+    });
 
     // ── Auditoría de creación ──
     await this.auditService.log({
@@ -141,85 +214,18 @@ export class FixedAssetsService {
       userName: 'Sistema',
       action: AuditAction.CREATE,
       resource: AuditResource.FIXED_ASSET,
-      resourceId: String(asset.id),
-      resourceName: `Alta AFT: ${asset.assetCode} - ${asset.name}`,
+      resourceId: String(result.asset.id),
+      resourceName: `Alta AFT: ${result.asset.assetCode} - ${result.asset.name}`,
       oldValues: undefined,
       newValues: {
-        assetCode: asset.assetCode,
-        name: asset.name,
-        acquisitionValue: asset.acquisitionValue,
-        depreciationRate: asset.depreciationRate,
+        assetCode: result.asset.assetCode,
+        name: result.asset.name,
+        acquisitionValue: result.asset.acquisitionValue,
+        depreciationRate: result.asset.depreciationRate,
       },
     });
 
-    // ── Registro en inventario AFT ──
-    await this.upsertFixedAssetInventory(asset);
-
-    // ── Contabilización de adquisición de activo fijo ──
-    const acquisitionValue = Number(asset.acquisitionValue);
-    if (acquisitionValue > 0) {
-      try {
-        const assetAccount =
-          (await this.accountMappingService.getAccountForMapping(
-            companyId,
-            MappingType.FIXED_ASSET_ACQUISITION,
-          )) || '240';
-        const payableAccount =
-          (await this.accountMappingService.getAccountForMapping(
-            companyId,
-            MappingType.PURCHASE_ORDER,
-          )) || '410';
-
-        await this.voucherService.createVoucherFromModule(
-          companyId,
-          'fixed-assets',
-          String(asset.id),
-          {
-            date: asset.acquisitionDate || new Date().toISOString().split('T')[0],
-            description: `Adquisición AFT: ${asset.name} (${asset.assetCode})`,
-            type: 'fixed-assets',
-            reference: `AFT-${asset.assetCode}`,
-            createdBy: 'Sistema',
-            lines: [
-              {
-                accountCode: assetAccount, // Activos Fijos Tangibles
-                debit: acquisitionValue,
-                credit: 0,
-                description: `Alta AFT ${asset.assetCode}`,
-              },
-              {
-                accountCode: payableAccount, // Cuentas por Pagar
-                debit: 0,
-                credit: acquisitionValue,
-                description: `Obligación por adquisición AFT`,
-              },
-            ],
-          },
-        );
-
-        // ── Cuenta por Pagar asociada a la adquisición ──
-        const dueDate = new Date(asset.acquisitionDate);
-        dueDate.setDate(dueDate.getDate() + 30);
-
-        await this.financeService.createPayable(companyId, {
-          purchaseNumber: asset.assetCode,
-          supplierName: 'Proveedor AFT',
-          supplierNit: 'N/D',
-          originalAmount: acquisitionValue,
-          dueDate: dueDate.toISOString().split('T')[0],
-          status: 'pending',
-          currency: 'CUP',
-          notes: `CxP generada por adquisición AFT ${asset.assetCode} - ${asset.name}`,
-        });
-      } catch (error) {
-        this.logger.error(`Error contabilización/finanzas AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
-        // El comprobante de adquisición AFT es parte de la operación; si no se
-        // puede generar el borrador contable, no debe quedar registrado.
-        throw new BadRequestException(`Error al contabilizar adquisición AFT: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    return { asset };
+    return result;
   }
 
   async update(
@@ -907,9 +913,10 @@ export class FixedAssetsService {
   }
 
   // ── Sincronizar Registro de Inventario de AFT ──
-  private async upsertFixedAssetInventory(asset: FixedAsset, overrideStatus?: 'active' | 'disposed' | 'transferred' | 'fully_depreciated') {
+  private async upsertFixedAssetInventory(asset: FixedAsset, overrideStatus?: 'active' | 'disposed' | 'transferred' | 'fully_depreciated', manager?: EntityManager) {
     try {
-      const existing = await this.inventoryRepo.findOne({
+      const inventoryRepo = manager ? manager.getRepository(FixedAssetInventory) : this.inventoryRepo;
+      const existing = await inventoryRepo.findOne({
         where: { assetId: asset.id, companyId: asset.companyId },
         order: { createdAt: 'DESC' },
       });
@@ -943,10 +950,10 @@ export class FixedAssetsService {
 
       if (existing) {
         Object.assign(existing, inventoryData);
-        await this.inventoryRepo.save(existing);
+        await inventoryRepo.save(existing);
       } else {
-        const record = this.inventoryRepo.create(inventoryData);
-        await this.inventoryRepo.save(record);
+        const record = inventoryRepo.create(inventoryData);
+        await inventoryRepo.save(record);
       }
     } catch (error) {
       this.logger.error(`Error sincronizando inventario AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);

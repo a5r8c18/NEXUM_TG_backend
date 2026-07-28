@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Invoice } from '../entities/invoice.entity';
 import { AccountReceivable } from '../entities/account-receivable.entity';
 import { AccountPayable } from '../entities/account-payable.entity';
@@ -42,6 +42,7 @@ export class FinanceService {
     private readonly accountMappingService: AccountMappingService,
     private readonly sequenceService: DocumentSequenceService,
     private readonly entityManager: EntityManager,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ════════════════════════════════════════════════════════
@@ -194,19 +195,21 @@ export class FinanceService {
     return ap;
   }
 
-  async createPayable(companyId: number, data: any) {
+  async createPayable(companyId: number, data: any, manager?: EntityManager) {
     const apNumber = await this.sequenceService.nextFormatted(
       companyId,
       'account-payable',
       'CXP',
+      { manager },
     );
-    const ap = this.apRepo.create({
+    const apRepo = manager ? manager.getRepository(AccountPayable) : this.apRepo;
+    const ap = apRepo.create({
       ...data,
       companyId,
       apNumber,
       balanceAmount: data.originalAmount,
     });
-    return this.apRepo.save(ap);
+    return apRepo.save(ap);
   }
 
   async getPayableStatistics(companyId: number) {
@@ -232,8 +235,9 @@ export class FinanceService {
     return qb.getMany();
   }
 
-  async findOneBankAccount(companyId: number, id: string) {
-    const ba = await this.bankRepo.findOne({
+  async findOneBankAccount(companyId: number, id: string, manager?: EntityManager) {
+    const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
+    const ba = await bankRepo.findOne({
       where: { id, companyId },
       relations: ['transactions'],
     });
@@ -286,7 +290,18 @@ export class FinanceService {
     companyId: number,
     bankAccountId: string,
     delta: number,
+    manager?: EntityManager,
   ): Promise<void> {
+    if (manager) {
+      await manager.query(
+        `UPDATE bank_accounts
+          SET balance = balance + $1,
+              available_balance = balance + $1
+        WHERE id = $2 AND company_id = $3`,
+        [delta, bankAccountId, companyId],
+      );
+      return;
+    }
     await this.bankRepo.query(
       `UPDATE bank_accounts
           SET balance = balance + $1,
@@ -296,11 +311,12 @@ export class FinanceService {
     );
   }
 
-  async createBankTransaction(companyId: number, data: any) {
-    const ba = await this.findOneBankAccount(companyId, data.bankAccountId);
+  async createBankTransaction(companyId: number, data: any, manager?: EntityManager) {
+    const ba = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
 
-    const tx = this.txRepo.create({ ...data });
-    const saved = await this.txRepo.save(tx);
+    const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
+    const tx = txRepo.create({ ...data });
+    const saved = await txRepo.save(tx);
 
     // Actualizar saldo de la cuenta de forma atómica
     await this.applyBankBalanceDelta(
@@ -309,6 +325,7 @@ export class FinanceService {
       data.transactionType === 'credit'
         ? Number(data.amount)
         : -Number(data.amount),
+      manager,
     );
 
     return saved;
@@ -409,9 +426,13 @@ export class FinanceService {
     let counterpartAccount: string | undefined;
     let counterpartReference: string | undefined;
 
+    const result = await this.dataSource.transaction(async (manager) => {
+    const arRepo = manager.getRepository(AccountReceivable);
+    const apRepo = manager.getRepository(AccountPayable);
+
     // ── Validación contra el saldo pendiente y actualización del submayor ──
     if (data.accountReceivableId) {
-      const ar = await this.arRepo.findOne({
+      const ar = await arRepo.findOne({
         where: { id: data.accountReceivableId, companyId },
       });
       if (!ar) {
@@ -434,7 +455,7 @@ export class FinanceService {
     }
 
     if (data.accountPayableId) {
-      const ap = await this.apRepo.findOne({
+      const ap = await apRepo.findOne({
         where: { id: data.accountPayableId, companyId },
       });
       if (!ap) {
@@ -463,6 +484,7 @@ export class FinanceService {
       companyId,
       'payment',
       'PAG',
+      { manager },
     );
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const paymentData: Partial<Payment> = {
@@ -471,12 +493,13 @@ export class FinanceService {
       paymentNumber,
       status: 'completed',
     };
-    const payment = this.paymentRepo.create(paymentData as Payment);
-    const saved = await this.paymentRepo.save(payment);
+    const paymentRepo = manager.getRepository(Payment);
+    const payment = paymentRepo.create(paymentData as Payment);
+    const saved = await paymentRepo.save(payment);
 
     // Actualizar CxC o CxP
     if (data.accountReceivableId) {
-      const ar = await this.arRepo.findOne({ where: { id: data.accountReceivableId, companyId } });
+      const ar = await arRepo.findOne({ where: { id: data.accountReceivableId, companyId } });
       if (ar) {
         ar.paidAmount = Math.round((Number(ar.paidAmount) + amount) * 100) / 100;
         ar.balanceAmount =
@@ -484,15 +507,15 @@ export class FinanceService {
         ar.lastPaymentDate = data.paymentDate;
         ar.lastPaymentAmount = amount;
         ar.status = ar.balanceAmount <= 0.009 ? 'paid' : 'partial';
-        await this.arRepo.save(ar);
+        await arRepo.save(ar);
 
         // Sincronizar el estado del documento de origen: la factura y su
         // cuenta por cobrar deben reflejar siempre la misma realidad.
-        await this.syncInvoiceStatusFromReceivable(companyId, ar);
+        await this.syncInvoiceStatusFromReceivable(companyId, ar, manager);
       }
     }
     if (data.accountPayableId) {
-      const ap = await this.apRepo.findOne({ where: { id: data.accountPayableId, companyId } });
+      const ap = await apRepo.findOne({ where: { id: data.accountPayableId, companyId } });
       if (ap) {
         ap.paidAmount = Math.round((Number(ap.paidAmount) + amount) * 100) / 100;
         ap.balanceAmount =
@@ -500,7 +523,7 @@ export class FinanceService {
         ap.lastPaymentDate = data.paymentDate;
         ap.lastPaymentAmount = amount;
         ap.status = ap.balanceAmount <= 0.009 ? 'paid' : 'partial';
-        await this.apRepo.save(ap);
+        await apRepo.save(ap);
       }
     }
 
@@ -509,21 +532,24 @@ export class FinanceService {
       ...data,
       counterpartAccount,
       counterpartReference,
-    });
+    }, manager);
 
     // ── Registrar movimiento según método de pago ──
     if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'check' ||
         data.paymentMethod === 'credit_card' || data.paymentMethod === 'debit_card') {
       // Pago por banco → crear BankTransaction + actualizar saldo
       if (data.bankAccountId) {
-        await this.registerBankMovementFromPayment(companyId, saved, data);
+        await this.registerBankMovementFromPayment(companyId, saved, data, manager);
       }
     } else if (data.paymentMethod === 'cash') {
       // Pago en efectivo → crear CashMovement + actualizar saldo de caja
-      await this.registerCashMovementFromPayment(companyId, saved, data);
+      await this.registerCashMovementFromPayment(companyId, saved, data, manager);
     }
 
     return saved;
+    });
+
+    return result;
   }
 
   /**
@@ -534,10 +560,12 @@ export class FinanceService {
   private async syncInvoiceStatusFromReceivable(
     companyId: number,
     ar: AccountReceivable,
+    manager?: EntityManager,
   ) {
     if (!ar.invoiceId) return;
 
-    const invoice = await this.invoiceRepo.findOne({
+    const invoiceRepo = manager ? manager.getRepository(Invoice) : this.invoiceRepo;
+    const invoice = await invoiceRepo.findOne({
       where: { id: ar.invoiceId, companyId },
     });
     if (!invoice || invoice.status === 'cancelled') return;
@@ -551,15 +579,15 @@ export class FinanceService {
 
     if (invoice.status !== newStatus) {
       invoice.status = newStatus;
-      await this.invoiceRepo.save(invoice);
+      await invoiceRepo.save(invoice);
       this.logger.log(
         `Factura ${invoice.invoiceNumber} sincronizada a estado '${newStatus}' desde la CxC ${ar.arNumber}`,
       );
     }
   }
 
-  private async registerBankMovementFromPayment(companyId: number, payment: Payment, data: any) {
-    const ba = await this.bankRepo.findOne({ where: { id: data.bankAccountId, companyId } });
+  private async registerBankMovementFromPayment(companyId: number, payment: Payment, data: any, manager?: EntityManager) {
+    const ba = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
     if (!ba) return;
 
     const isIncome = data.paymentType === 'receivable';
@@ -567,9 +595,11 @@ export class FinanceService {
       companyId,
       'bank-transaction',
       'TXB',
+      { manager },
     );
 
-    const tx = this.txRepo.create({
+    const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
+    const tx = txRepo.create({
       transactionNumber,
       transactionDate: data.paymentDate,
       transactionType: isIncome ? 'credit' : 'debit',
@@ -582,7 +612,7 @@ export class FinanceService {
       bankAccountId: data.bankAccountId,
       companyId,
     });
-    await this.txRepo.save(tx);
+    await txRepo.save(tx);
 
     // Actualizar saldo bancario de forma atómica: la lectura-modificación-
     // escritura en memoria pierde operaciones concurrentes.
@@ -590,18 +620,20 @@ export class FinanceService {
       companyId,
       ba.id,
       isIncome ? Number(data.amount) : -Number(data.amount),
+      manager,
     );
 
     this.logger.log(`BankTransaction ${tx.transactionNumber} creada desde Payment ${payment.paymentNumber}`);
   }
 
-  private async registerCashMovementFromPayment(companyId: number, payment: Payment, data: any) {
+  private async registerCashMovementFromPayment(companyId: number, payment: Payment, data: any, manager?: EntityManager) {
     // Buscar caja activa (abierta) o la default
-    let cashRegister = await this.cashRegisterRepo.findOne({
+    const cashRegisterRepo = manager ? manager.getRepository(CashRegister) : this.cashRegisterRepo;
+    let cashRegister = await cashRegisterRepo.findOne({
       where: { companyId, status: 'open' },
     });
     if (!cashRegister) {
-      cashRegister = await this.cashRegisterRepo.findOne({
+      cashRegister = await cashRegisterRepo.findOne({
         where: { companyId, isDefault: true },
       });
     }
@@ -615,13 +647,15 @@ export class FinanceService {
       companyId,
       'cash-movement',
       'CAJ',
+      { manager },
     );
 
     const newBalance = isIncome
       ? Number(cashRegister.currentBalance) + Number(data.amount)
       : Number(cashRegister.currentBalance) - Number(data.amount);
 
-    const cm = this.cashMovementRepo.create({
+    const cashMovementRepo = manager ? manager.getRepository(CashMovement) : this.cashMovementRepo;
+    const cm = cashMovementRepo.create({
       movementNumber,
       movementDate: new Date(data.paymentDate),
       movementType: isIncome ? 'income' : 'expense',
@@ -635,11 +669,11 @@ export class FinanceService {
       cashRegisterId: cashRegister.id,
       companyId,
     });
-    await this.cashMovementRepo.save(cm);
+    await cashMovementRepo.save(cm);
 
     // Actualizar saldo de caja
     cashRegister.currentBalance = newBalance;
-    await this.cashRegisterRepo.save(cashRegister);
+    await cashRegisterRepo.save(cashRegister);
 
     // Advertir si excede límite de retención
     if (newBalance > Number(cashRegister.maxRetentionLimit)) {
@@ -651,7 +685,7 @@ export class FinanceService {
     this.logger.log(`CashMovement ${cm.movementNumber} creada desde Payment ${payment.paymentNumber}`);
   }
 
-  private async createPaymentVoucher(companyId: number, payment: Payment, data: any) {
+  private async createPaymentVoucher(companyId: number, payment: Payment, data: any, manager?: EntityManager) {
     const isIncome = data.paymentType === 'receivable';
     const amount = Number(data.amount);
 
@@ -738,6 +772,7 @@ export class FinanceService {
           createdBy: data.performedBy || 'Sistema',
           lines,
         },
+        manager,
       );
       this.logger.log(`Voucher generado para Payment ${payment.paymentNumber}`);
     } catch (error) {

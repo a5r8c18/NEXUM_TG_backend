@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { InventoryWarehouse } from '../entities/inventory-warehouse.entity';
 import { Movement } from '../entities/movement.entity';
 import { WarehousesService } from '../warehouses/warehouses.service';
@@ -31,8 +31,10 @@ export class InventoryWarehouseService {
     companyId: number,
     productCode: string,
     warehouseId: string,
+    manager?: EntityManager,
   ): Promise<InventoryWarehouse | null> {
-    return this.inventoryWarehouseRepo.findOne({
+    const repo = manager ? manager.getRepository(InventoryWarehouse) : this.inventoryWarehouseRepo;
+    return repo.findOne({
       where: { companyId, productCode, warehouseId, isActive: true },
     });
   }
@@ -92,6 +94,7 @@ export class InventoryWarehouseService {
       entity?: string;
       location?: string;
     },
+    manager?: EntityManager,
   ): Promise<InventoryWarehouse> {
     // Verificar que el almacén exista (soporta UUID o código de almacén)
     const warehouse = await this.warehousesService.findByIdOrCode(
@@ -106,10 +109,12 @@ export class InventoryWarehouseService {
       companyId,
       data.productCode,
       data.warehouseId,
+      manager,
     );
 
+    const repo = manager ? manager.getRepository(InventoryWarehouse) : this.inventoryWarehouseRepo;
     if (!inventory) {
-      inventory = this.inventoryWarehouseRepo.create({
+      inventory = repo.create({
         companyId,
         productCode: data.productCode,
         productName: data.productName,
@@ -126,7 +131,7 @@ export class InventoryWarehouseService {
         stockLimit: 0,
         isActive: true,
       });
-      inventory = await this.inventoryWarehouseRepo.save(inventory);
+      inventory = await repo.save(inventory);
     }
 
     return inventory;
@@ -140,11 +145,13 @@ export class InventoryWarehouseService {
     quantityChange: number,
     type: 'entry' | 'exit',
     newUnitPrice?: number, // Para entradas con nuevo precio
+    manager?: EntityManager,
   ): Promise<InventoryWarehouse> {
     const inventory = await this.findByCompanyProductAndWarehouse(
       companyId,
       productCode,
       warehouseId,
+      manager,
     );
 
     if (!inventory) {
@@ -185,7 +192,8 @@ export class InventoryWarehouseService {
       // promedio ponderado vigente al momento de la salida. NCC Res. 235-2005 MFP.
     }
 
-    return this.inventoryWarehouseRepo.save(inventory);
+    const repo = manager ? manager.getRepository(InventoryWarehouse) : this.inventoryWarehouseRepo;
+    return repo.save(inventory);
   }
 
   // Costo Promedio Ponderado (WAC) de un producto a nivel de empresa.
