@@ -377,6 +377,9 @@ export class PurchasesService {
           `Error al generar comprobante para compra ${purchase.id}: ${error.message}`,
           error.stack,
         );
+        // El comprobante de recepción es parte de la compra; no se completa si
+        // no se puede generar el borrador contable.
+        throw error;
       }
     }
 

@@ -362,6 +362,8 @@ export class VoucherService {
         credit: number;
         description?: string;
         costCenterId?: string;
+        /** Subcuenta analítica explícita; si se indica, se usa en lugar de resolver accountCode */
+        subaccountCode?: string | null;
         /** Elemento de gasto (clasificador cubano) — requerido en cuentas de gasto */
         element?: string | null;
         /** Subelemento de gasto (clasificador cubano) */
@@ -379,6 +381,7 @@ export class VoucherService {
         this.accountRepo,
         companyId,
         line.accountCode,
+        line.subaccountCode,
       );
       // El elemento/subelemento de gasto solo es aplicable a cuentas de gasto.
       // Si se recibe un subelemento sin elemento, se deriva el elemento del
@@ -390,8 +393,9 @@ export class VoucherService {
       }
       resolvedLines.push({
         accountId: account.id,
-        accountCode: account.code,
+        accountCode: line.accountCode || account.code,
         accountName: account.name,
+        subaccountCode: line.subaccountCode || null,
         debit: line.debit,
         credit: line.credit,
         description: line.description,
@@ -837,7 +841,25 @@ export class VoucherService {
     repo: Repository<Account>,
     companyId: number,
     code: string,
+    subaccountCode?: string | null,
   ): Promise<Account> {
+    // Si se indica subcuenta analítica explícita, resolver directamente esa
+    // cuenta y no redirigir silenciosamente a otra subcuenta genérica.
+    if (subaccountCode) {
+      const exact = await repo.findOneBy({ code: subaccountCode, companyId });
+      if (exact) {
+        if (!exact.allowsMovements) {
+          throw new BadRequestException(
+            `La subcuenta ${subaccountCode} (${exact.name}) no admite movimientos`,
+          );
+        }
+        return exact;
+      }
+      throw new BadRequestException(
+        `Subcuenta ${subaccountCode} no encontrada para esta empresa`,
+      );
+    }
+
     const account = await repo.findOneBy({ code, companyId });
     if (!account) {
       throw new BadRequestException(
@@ -884,6 +906,7 @@ export class VoucherService {
             manager.getRepository(Account),
             companyId,
             line.accountCode,
+            line.subaccountCode,
           );
           accountId = account.id;
           accountCode = account.code;

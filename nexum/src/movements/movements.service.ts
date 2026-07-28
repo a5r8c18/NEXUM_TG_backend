@@ -1429,8 +1429,10 @@ export class MovementsService {
         `Error al generar comprobante para movimiento ${movement.id}: ${error.message}`,
         error.stack,
       );
-      // No lanzar el error — el movimiento de inventario ya se realizó.
-      // El comprobante se puede generar manualmente después.
+      // El comprobante de movimiento de inventario es obligatorio (aunque se
+      // postee manualmente después). Lanzar el error evita que la operación
+      // quede registrada sin su voucher borrador.
+      throw error;
     }
   }
 }

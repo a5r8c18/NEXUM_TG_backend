@@ -213,6 +213,9 @@ export class FixedAssetsService {
         });
       } catch (error) {
         this.logger.error(`Error contabilización/finanzas AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+        // El comprobante de adquisición AFT es parte de la operación; si no se
+        // puede generar el borrador contable, no debe quedar registrado.
+        throw new BadRequestException(`Error al contabilizar adquisición AFT: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -1234,6 +1237,7 @@ export class FixedAssetsService {
             credit: 0,
             description: `Depreciación ${month}/${year}`,
             costCenterId,
+            subelement: '70100',
           });
         }
 

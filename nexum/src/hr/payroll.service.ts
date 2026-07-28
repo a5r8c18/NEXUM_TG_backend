@@ -581,6 +581,7 @@ export class PayrollService {
             credit: 0,
             description: `Salarios y Seguridad Social patronal ${payroll.period}`,
             costCenterId,
+            subelement: '50100',
           });
         }
 
@@ -593,6 +594,7 @@ export class PayrollService {
             credit: 0,
             description: `Provisión mensual de vacaciones ${payroll.period}`,
             costCenterId,
+            subelement: '50300',
           });
         }
 
@@ -663,6 +665,7 @@ export class PayrollService {
         this.logger.log(`Comprobante nómina ${payroll.period} generado`);
       } catch (error) {
         this.logger.error(`Error contabilización nómina ${payroll.id}: ${error.message}`);
+        throw error;
       }
     }
 
@@ -731,6 +734,7 @@ export class PayrollService {
         this.logger.log(`Comprobante pago nómina ${payroll.period} generado`);
       } catch (error) {
         this.logger.error(`Error contabilización pago nómina: ${error.message}`);
+        throw error;
       }
 
       // ── Reflejar la salida de efectivo en Finanzas (saldo bancario) ──

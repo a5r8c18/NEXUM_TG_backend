@@ -412,6 +412,9 @@ export class InvoicesService {
         }
       } catch (error) {
         this.logger.error(`Error contabilización factura ${invoice.id}: ${error.message}`);
+        // Un error en la contabilización del costo de ventas o en el movimiento
+        // de inventario no debe dejar la factura creada de forma inconsistente.
+        throw error;
       }
     }
 
@@ -768,6 +771,7 @@ export class InvoicesService {
         this.logger.error(
           `Error reverso costo de ventas ${invoice.id}: ${error.message}`,
         );
+        throw error;
       }
     }
 
@@ -822,6 +826,7 @@ export class InvoicesService {
         this.logger.error(
           `Error contabilización cancelación ${invoice.id}: ${error.message}`,
         );
+        throw error;
       }
     }
 
