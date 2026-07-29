@@ -821,14 +821,40 @@ export class FinanceService {
       'CAJA',
       { year: 0, padding: 3 },
     );
+    const openingBalance = Number(data.openingBalance ?? data.currentBalance ?? 0);
+    const isOpen = openingBalance > 0;
     const cr = this.cashRegisterRepo.create({
       ...data,
       companyId,
       registerCode,
-      status: 'closed',
-      currentBalance: data.openingBalance || 0,
+      status: isOpen ? 'open' : 'closed',
+      openingBalance,
+      currentBalance: openingBalance,
+      lastOpeningDate: isOpen ? new Date() : null,
     });
-    return this.cashRegisterRepo.save(cr);
+    const saved = await this.cashRegisterRepo.save(cr);
+    if (isOpen) {
+      const movementNumber = await this.sequenceService.nextFormatted(
+        companyId,
+        'cash-movement',
+        'CAJ',
+        { year: 0, padding: 6 },
+      );
+      const cm = this.cashMovementRepo.create({
+        companyId,
+        cashRegisterId: saved.id,
+        movementNumber,
+        movementDate: new Date(),
+        movementType: 'opening',
+        amount: openingBalance,
+        balanceAfter: openingBalance,
+        description: `Fondo inicial de caja ${saved.registerCode}`,
+        documentType: 'apertura',
+        documentNumber: saved.registerCode,
+      });
+      await this.cashMovementRepo.save(cm);
+    }
+    return saved;
   }
 
   async updateCashRegister(companyId: number, id: string, data: any) {
