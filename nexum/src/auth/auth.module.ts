@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -23,6 +23,7 @@ import { RefreshToken } from './refresh-token.entity';
 import { LoginAttempt } from '../entities/login-attempt.entity';
 import { UserMFA } from '../entities/user-mfa.entity';
 
+@Global()
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Company, RegistrationRequest, RefreshToken, LoginAttempt, UserMFA]),

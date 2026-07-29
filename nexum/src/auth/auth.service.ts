@@ -69,7 +69,20 @@ export class AuthService {
       relations: ['company'],
     });
 
-    if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
+    let isValidPassword = false;
+    if (user?.password) {
+      if (await bcrypt.compare(password, user.password)) {
+        isValidPassword = true;
+      } else if (!/^\$2[aby]\$\d+\$/.test(user.password) && user.password === password) {
+        // Legado: contraseña almacenada en texto plano.
+        // Se valida y se migra inmediatamente a bcrypt.
+        isValidPassword = true;
+        user.password = await bcrypt.hash(password, 10);
+        await this.userRepo.save(user);
+      }
+    }
+
+    if (!user || !user.password || !isValidPassword) {
       // Record failed attempt
       await this.loginAttemptService.recordAttempt({
         email,

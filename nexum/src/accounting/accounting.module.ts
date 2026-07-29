@@ -26,6 +26,7 @@ import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { ExpenseType } from '../entities/expense-type.entity';
 import { Subelement } from '../entities/subelement.entity';
 import { GeneratedReport } from '../entities/generated-report.entity';
+import { Company } from '../entities/company.entity';
 import { AuthModule } from '../auth/auth.module';
 import { AuditModule } from '../audit/audit.module';
 import { PaginationModule } from '../common/pagination/pagination.module';
@@ -44,6 +45,7 @@ import { PaginationModule } from '../common/pagination/pagination.module';
       Subelement,
       GeneratedReport,
       AccountMapping,
+      Company,
     ]),
     forwardRef(() => AuthModule),
     AuditModule,

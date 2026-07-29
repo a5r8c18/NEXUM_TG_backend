@@ -18,6 +18,7 @@ import { EmployeeContract } from '../entities/employee-contract.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { EmployeeSalaryHistory } from '../entities/employee-salary-history.entity';
+import { Payment } from '../entities/payment.entity';
 import { AuthModule } from '../auth/auth.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { FinanceModule } from '../finance/finance.module';
@@ -33,6 +34,7 @@ import { FinanceModule } from '../finance/finance.module';
       Attendance,
       LeaveRequest,
       EmployeeSalaryHistory,
+      Payment,
     ]),
     forwardRef(() => AuthModule),
     forwardRef(() => AccountingModule),
