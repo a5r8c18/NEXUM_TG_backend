@@ -832,7 +832,8 @@ export class FinanceService {
       currentBalance: openingBalance,
       lastOpeningDate: isOpen ? new Date() : null,
     });
-    const saved = await this.cashRegisterRepo.save(cr);
+    const savedResult = await this.cashRegisterRepo.save(cr);
+    const saved = Array.isArray(savedResult) ? savedResult[0] : savedResult;
     if (isOpen) {
       const movementNumber = await this.sequenceService.nextFormatted(
         companyId,

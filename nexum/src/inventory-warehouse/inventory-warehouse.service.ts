@@ -458,4 +458,47 @@ export class InventoryWarehouseService {
     inventory.isActive = false;
     await this.inventoryWarehouseRepo.save(inventory);
   }
+
+  // Obtener inventario filtrado por almacén, producto (código/nombre) y rangos de stock
+  async findFiltered(
+    companyId: number,
+    filters: {
+      warehouse?: string;
+      product?: string;
+      minStock?: number;
+      maxStock?: number;
+    },
+  ): Promise<InventoryWarehouse[]> {
+    const { warehouse, product, minStock, maxStock } = filters;
+
+    const qb = this.inventoryWarehouseRepo
+      .createQueryBuilder('iw')
+      .where('iw.companyId = :companyId', { companyId })
+      .andWhere('iw.isActive = :isActive', { isActive: true });
+
+    if (warehouse) {
+      qb.andWhere('iw.warehouseId = :warehouseId', { warehouseId: warehouse });
+    }
+
+    if (product) {
+      const term = `%${product.toLowerCase()}%`;
+      qb.andWhere(
+        '(LOWER(iw.productCode) LIKE :term OR LOWER(iw.productName) LIKE :term OR LOWER(iw.productDescription) LIKE :term)',
+        { term },
+      );
+    }
+
+    if (minStock !== undefined && !isNaN(minStock)) {
+      qb.andWhere('iw.stock >= :minStock', { minStock });
+    }
+
+    if (maxStock !== undefined && !isNaN(maxStock)) {
+      qb.andWhere('iw.stock <= :maxStock', { maxStock });
+    }
+
+    return qb
+      .orderBy('iw.warehouseName', 'ASC')
+      .addOrderBy('iw.productName', 'ASC')
+      .getMany();
+  }
 }

@@ -256,7 +256,20 @@ export class MovementsService {
       relatedMovementId: m.relatedMovementId || null,
       expenseElement: m.expenseElement || null,
       voucherId: m.voucherId || null,
+      reportNumber: this.getReportNumber(m),
     };
+  }
+
+  private getReportNumber(m: Movement): string {
+    const prefix: Record<MovementType, string> = {
+      entry: 'IR',
+      exit: 'VE',
+      return: 'VD',
+      transfer: 'TR',
+    };
+    const type = m.movementType;
+    const shortId = m.id.split('-')[0] || m.id.substring(0, 8);
+    return `${prefix[type] || 'DOC'}-${shortId}`;
   }
 
   // Enrich individual (para operaciones de escritura que retornan un solo movimiento)

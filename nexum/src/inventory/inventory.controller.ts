@@ -25,12 +25,11 @@ export class InventoryController {
     @Query('maxStock') maxStock?: string,
   ) {
     const companyId = getCompanyId(req);
-    if (warehouse) {
-      return this.inventoryWarehouseService.findByCompanyAndWarehouse(
-        companyId,
-        warehouse,
-      );
-    }
-    return this.inventoryWarehouseService.findByCompany(companyId);
+    return this.inventoryWarehouseService.findFiltered(companyId, {
+      warehouse,
+      product,
+      minStock: minStock ? Number(minStock) : undefined,
+      maxStock: maxStock ? Number(maxStock) : undefined,
+    });
   }
 }
