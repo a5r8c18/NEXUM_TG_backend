@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { MovementsController } from './movements.controller';
 import { MovementsService } from './movements.service';
 import { InventoryWarehouseModule } from '../inventory-warehouse/inventory-warehouse.module';
+import { WarehousesModule } from '../warehouses/warehouses.module';
 import { Movement } from '../entities/movement.entity';
 import { MovementItem } from '../entities/movement-item.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
@@ -15,6 +16,7 @@ import { AuditModule } from '../audit/audit.module';
   imports: [
     TypeOrmModule.forFeature([Movement, MovementItem, DeliveryReport]),
     InventoryWarehouseModule,
+    WarehousesModule,
     StockLimitsModule,
     AuditModule,
     forwardRef(() => AuthModule),

@@ -381,9 +381,9 @@ export class PurchasesService {
           this.logger.log(`Comprobante de recepción (sin factura) generado para compra ${purchase.id}: ${inventoryAccount} / ${transitAccount}`);
         }
       } catch (error) {
-        accountingWarning = `No se pudo generar el comprobante contable: ${error.message}`;
+        accountingWarning = `No se pudo generar el comprobante contable: ${error instanceof Error ? error.message : String(error)}`;
         this.logger.error(
-          `Error al generar comprobante para compra ${purchase.id}: ${error.message}`,
+          `Error al generar comprobante para compra ${purchase.id}: ${error instanceof Error ? error.message : String(error)}`,
           error.stack,
         );
         // El comprobante de recepción es parte de la compra; no se completa si
@@ -402,10 +402,10 @@ export class PurchasesService {
           invoiceDate: arrivesInvoiced ? data.invoiceDate : null,
         }, manager);
       } catch (error) {
-        const msg = `No se pudo crear la Cuenta por Pagar: ${error.message}`;
+        const msg = `No se pudo crear la Cuenta por Pagar: ${error instanceof Error ? error.message : String(error)}`;
         accountingWarning = accountingWarning ? `${accountingWarning}. ${msg}` : msg;
         this.logger.error(
-          `Error al crear CxP para compra ${purchase.id}: ${error.message}`,
+          `Error al crear CxP para compra ${purchase.id}: ${error instanceof Error ? error.message : String(error)}`,
           error.stack,
         );
       }

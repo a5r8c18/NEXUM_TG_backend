@@ -3,6 +3,7 @@ import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef,
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
+import { WarehousesService } from '../warehouses/warehouses.service';
 import { VoucherService } from '../accounting/voucher.service';
 import { Movement, MovementType } from '../entities/movement.entity';
 import { Account } from '../entities/account.entity';
@@ -35,6 +36,7 @@ export class MovementsService {
 
   constructor(
     private readonly inventoryWarehouseService: InventoryWarehouseService,
+    private readonly warehousesService: WarehousesService,
     @Inject(forwardRef(() => VoucherService))
     private readonly voucherService: VoucherService,
     @InjectRepository(Movement)
@@ -112,7 +114,7 @@ export class MovementsService {
         success: true,
       });
     } catch (error) {
-      this.logger.error(`Error en post-movement hook: ${error.message}`);
+      this.logger.error(`Error en post-movement hook: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -281,18 +283,27 @@ export class MovementsService {
       .leftJoinAndSelect('m.items', 'i')
       .where('m.company_id = :companyId', { companyId })
       .andWhere(
-        `(m.product_code = :productCode OR EXISTS (
-            SELECT 1 FROM movement_items mi
-            WHERE mi.movement_id = m.id AND mi.product_code = :productCode
-         ))`,
+        '(m.product_code = :productCode OR i.productCode = :productCode)',
         { productCode },
       )
       .orderBy('m.created_at', 'ASC');
 
+    const warehouseIds: string[] = [];
     if (filters?.warehouse) {
+      const wh = await this.warehousesService.findByIdOrCode(companyId, filters.warehouse);
+      if (wh) {
+        warehouseIds.push(...Array.from(new Set([wh.id, wh.code, wh.name].filter(Boolean) as string[])));
+      } else {
+        warehouseIds.push(filters.warehouse);
+      }
+    }
+
+    if (warehouseIds.length) {
       qb.andWhere(
-        '(m.source_warehouse = :warehouse OR m.destination_warehouse = :warehouse)',
-        { warehouse: filters.warehouse },
+        '(m.source_warehouse IN (:...warehouseIds) OR m.destination_warehouse IN (:...warehouseIds) ' +
+          'OR (m.movement_type IN (:...entryTypes) AND m.purchase_id IS NOT NULL AND ' +
+          'm.purchase_id IN (SELECT p.id::text FROM purchases p WHERE p.company_id = m.company_id AND p.warehouse IN (:...warehouseIds2))))',
+        { warehouseIds, warehouseIds2: warehouseIds, entryTypes: ['entry', 'return'] },
       );
     }
     if (filters?.start_date) {
@@ -303,6 +314,31 @@ export class MovementsService {
     }
 
     const movements = await qb.getMany();
+    this.logger.log(
+      `[getProductHistory] productCode=${productCode}, warehouse=${filters?.warehouse ?? 'ALL'}, ` +
+        `warehouseIds=${warehouseIds.join('|')}, movements=${movements.length}, ` +
+        `types=${movements.map((m) => m.movementType).join(',') || 'none'}`,
+    );
+
+    // Diagnóstico: todos los movimientos del producto sin filtro de almacén
+    const allMovements = await this.movementRepo
+      .createQueryBuilder('m')
+      .leftJoin('m.items', 'i')
+      .select(['m.id', 'm.movementType', 'm.productCode', 'm.sourceWarehouse', 'm.destinationWarehouse'])
+      .where('m.company_id = :companyId', { companyId })
+      .andWhere('(m.product_code = :productCode OR i.productCode = :productCode)', { productCode })
+      .getMany();
+    this.logger.log(
+      `[getProductHistory] all product movements: ${JSON.stringify(
+        allMovements.map((m) => ({
+          id: m.id,
+          type: m.movementType,
+          productCode: m.productCode,
+          source: m.sourceWarehouse,
+          destination: m.destinationWarehouse,
+        })),
+      )}`,
+    );
 
     // Informes de recepción asociados a las compras encontradas
     const purchaseIds = [...new Set(movements.map((m) => m.purchaseId).filter((p): p is string => !!p))];
@@ -318,8 +354,8 @@ export class MovementsService {
 
     const inventories = await this.inventoryWarehouseService.findByCodes(companyId, [productCode]);
     const productInventories = inventories.get(productCode) || [];
-    const reference = filters?.warehouse
-      ? productInventories.find((inv) => inv.warehouseId === filters.warehouse)
+    const reference = warehouseIds.length
+      ? productInventories.find((inv) => warehouseIds.includes(inv.warehouseId))
       : productInventories[0];
 
     let balance = 0;
@@ -333,12 +369,14 @@ export class MovementsService {
         m.movementType === 'entry' ||
         m.movementType === 'return' ||
         (m.movementType === 'transfer' &&
-          (!filters?.warehouse || m.destinationWarehouse === filters.warehouse));
+          (!warehouseIds.length ||
+            (!!m.destinationWarehouse && warehouseIds.includes(m.destinationWarehouse))));
       const isOutgoing =
         m.movementType === 'exit' ||
         (m.movementType === 'transfer' &&
-          !!filters?.warehouse &&
-          m.sourceWarehouse === filters.warehouse);
+          !!warehouseIds.length &&
+          !!m.sourceWarehouse &&
+          warehouseIds.includes(m.sourceWarehouse));
 
       const quantityIn = isIncoming && !isOutgoing ? quantity : 0;
       const quantityOut = isOutgoing ? quantity : 0;
@@ -969,8 +1007,9 @@ export class MovementsService {
       };
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      this.logger.error(`Error en transferencia: ${error.message}`, error.stack);
-      throw error;
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Error en transferencia: ${err.message}`, err.stack);
+      throw err;
     } finally {
       await queryRunner.release();
     }
@@ -1593,14 +1632,15 @@ export class MovementsService {
         `Comprobante ${voucher.voucherNumber} generado para movimiento ${movement.movementCode} (${movement.id})`,
       );
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(
-        `Error al generar comprobante para movimiento ${movement.id}: ${error.message}`,
-        error.stack,
+        `Error al generar comprobante para movimiento ${movement.id}: ${err.message}`,
+        err.stack,
       );
       // El comprobante de movimiento de inventario es obligatorio (aunque se
       // postee manualmente después). Lanzar el error evita que la operación
       // quede registrada sin su voucher borrador.
-      throw error;
+      throw err;
     }
   }
 }
