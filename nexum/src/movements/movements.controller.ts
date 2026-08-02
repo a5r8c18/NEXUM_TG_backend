@@ -22,6 +22,7 @@ export class MovementsController {
     @Query('start_date') start_date?: string,
     @Query('end_date') end_date?: string,
     @Query('product_name') product_name?: string,
+    @Query('product_code') product_code?: string,
     @Query('relations') relations?: string,
     @Query('warehouse') warehouse?: string,
     @Query('movement_type') movement_type?: string,
@@ -33,11 +34,28 @@ export class MovementsController {
       start_date,
       end_date,
       product_name,
+      product_code,
       relations,
       warehouse,
       movement_type: movement_type as any,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
+  @Get('history/:productCode')
+  getProductHistory(
+    @Req() req: Request,
+    @Param('productCode') productCode: string,
+    @Query('warehouse') warehouse?: string,
+    @Query('start_date') start_date?: string,
+    @Query('end_date') end_date?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.movementsService.getProductHistory(companyId, productCode, {
+      warehouse,
+      start_date,
+      end_date,
     });
   }
 

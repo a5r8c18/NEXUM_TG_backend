@@ -402,6 +402,16 @@ export class VoucherService {
         line.accountCode,
         line.subaccountCode,
       );
+
+      // Resolver nombres de la cuenta padre y de la subcuenta por separado
+      const parentAccount = account.parentCode
+        ? await accountRepo.findOneBy({ code: account.parentCode, companyId })
+        : null;
+      const accountCode = parentAccount?.code ?? account.code;
+      const accountName = parentAccount?.name ?? account.name;
+      const subaccountCode = parentAccount ? account.code : null;
+      const subaccountName = parentAccount ? account.name : null;
+
       // El elemento/subelemento de gasto solo es aplicable a cuentas de gasto.
       // Si se recibe un subelemento sin elemento, se deriva el elemento del
       // propio subelemento (los códigos siguen el patrón "elemento.subelemento").
@@ -412,9 +422,10 @@ export class VoucherService {
       }
       resolvedLines.push({
         accountId: account.id,
-        accountCode: line.accountCode || account.code,
-        accountName: account.name,
-        subaccountCode: line.subaccountCode || null,
+        accountCode,
+        accountName,
+        subaccountCode,
+        subaccountName,
         debit: line.debit,
         credit: line.credit,
         description: line.description,
@@ -928,8 +939,15 @@ export class VoucherService {
             line.subaccountCode,
           );
           accountId = account.id;
-          accountCode = account.code;
-          accountName = account.name;
+
+          // Si la cuenta resuelta tiene padre, guardar el padre en accountCode/accountName
+          const parent = account.parentCode
+            ? await manager
+                .getRepository(Account)
+                .findOneBy({ code: account.parentCode, companyId })
+            : null;
+          accountCode = parent?.code ?? account.code;
+          accountName = parent?.name ?? account.name;
         }
 
         // Subcuenta

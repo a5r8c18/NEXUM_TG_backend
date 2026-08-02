@@ -132,6 +132,28 @@ export class InventoryWarehouseService {
         isActive: true,
       });
       inventory = await repo.save(inventory);
+    } else {
+      // Completar datos que pudieron quedar con el valor por defecto al crearse
+      const incomingUnit = data.productUnit?.trim();
+      let dirty = false;
+
+      if (
+        incomingUnit &&
+        incomingUnit !== inventory.productUnit &&
+        (!inventory.productUnit || inventory.productUnit === 'und')
+      ) {
+        inventory.productUnit = incomingUnit;
+        dirty = true;
+      }
+
+      if (data.productDescription && !inventory.productDescription) {
+        inventory.productDescription = data.productDescription;
+        dirty = true;
+      }
+
+      if (dirty) {
+        inventory = await repo.save(inventory);
+      }
     }
 
     return inventory;

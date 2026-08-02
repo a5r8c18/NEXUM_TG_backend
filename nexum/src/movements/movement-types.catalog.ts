@@ -31,6 +31,7 @@ const ENTRY_TYPES: MovementTypeDefinition[] = [
   { code: '107', description: 'Devolución de ventas a entidades', direction: 'entry', category: 'insumo' },
   { code: '108', description: 'Entrada de centro de costo', direction: 'entry', category: 'insumo' },
   { code: '112', description: 'Donaciones recibidas', direction: 'entry', category: 'insumo' },
+  { code: '113', description: 'Ajuste de inventario (entrada)', direction: 'entry', category: 'insumo' },
 
   // ── Mercancía (201–210) ──
   { code: '201', description: 'Carga inicial de inventarios en almacén', direction: 'entry', category: 'mercancia' },
@@ -41,6 +42,7 @@ const ENTRY_TYPES: MovementTypeDefinition[] = [
   { code: '207', description: 'Devolución de ventas a entidades', direction: 'entry', category: 'mercancia' },
   { code: '208', description: 'Entrada de centro de costo', direction: 'entry', category: 'mercancia' },
   { code: '210', description: 'Entrada de almacén de producción terminados', direction: 'entry', category: 'mercancia' },
+  { code: '213', description: 'Ajuste de inventario (entrada)', direction: 'entry', category: 'mercancia' },
 
   // ── Insumo (301) ──
   { code: '301', description: 'Carga inicial de inventarios en almacén', direction: 'entry', category: 'insumo' },
@@ -52,6 +54,7 @@ const ENTRY_TYPES: MovementTypeDefinition[] = [
   { code: '308', description: 'Entrada de centro de costo', direction: 'entry', category: 'produccion' },
   { code: '310', description: 'Entrada al almacén de producción terminados', direction: 'entry', category: 'produccion' },
   { code: '311', description: 'Ajuste incremento al terminar el proceso', direction: 'entry', category: 'produccion' },
+  { code: '313', description: 'Ajuste de inventario (entrada)', direction: 'entry', category: 'produccion' },
 
   // ── Mercancía presupuesto (402) ──
   { code: '402', description: 'Compras a proveedores (Presup.)', direction: 'entry', category: 'mercancia' },
@@ -69,6 +72,7 @@ const EXIT_TYPES: MovementTypeDefinition[] = [
   { code: '1105', description: 'Salida a centro de costo', direction: 'exit', category: 'insumo' },
   { code: '1106', description: 'Salida para custodio', direction: 'exit', category: 'insumo' },
   { code: '1107', description: 'Devolución de compra a entidades', direction: 'exit', category: 'insumo' },
+  { code: '1110', description: 'Ajuste de inventario (salida)', direction: 'exit', category: 'insumo' },
 
   // ── Mercancía (2100–2109) ──
   { code: '2100', description: 'Ventas a clientes', direction: 'exit', category: 'mercancia' },
@@ -79,6 +83,7 @@ const EXIT_TYPES: MovementTypeDefinition[] = [
   { code: '2107', description: 'Devolución de compra a entidades', direction: 'exit', category: 'mercancia' },
   { code: '2108', description: 'Salida de producción terminados del almacén', direction: 'exit', category: 'mercancia' },
   { code: '2109', description: 'Salida de producción terminados del almacén', direction: 'exit', category: 'mercancia' },
+  { code: '2110', description: 'Ajuste de inventario (salida)', direction: 'exit', category: 'mercancia' },
 
   // ── Producción (3100–3109) ──
   { code: '3100', description: 'Ventas a clientes', direction: 'exit', category: 'produccion' },
@@ -87,7 +92,16 @@ const EXIT_TYPES: MovementTypeDefinition[] = [
   { code: '3104', description: 'Faltante en inventario', direction: 'exit', category: 'produccion' },
   { code: '3105', description: 'Salida a centro de costo', direction: 'exit', category: 'produccion' },
   { code: '3109', description: 'Ajuste disminución al terminar el proceso', direction: 'exit', category: 'produccion' },
+  { code: '3110', description: 'Ajuste de inventario (salida)', direction: 'exit', category: 'produccion' },
 ];
+
+/** Códigos de ajuste de inventario por dirección. */
+export const ADJUSTMENT_ENTRY_CODES = ['113', '213', '313'];
+export const ADJUSTMENT_EXIT_CODES = ['1110', '2110', '3110'];
+
+export function isAdjustmentCode(code: string): boolean {
+  return ADJUSTMENT_ENTRY_CODES.includes(code) || ADJUSTMENT_EXIT_CODES.includes(code);
+}
 
 // ══════════════════════════════════════════════════════════
 // ── CATÁLOGO COMPLETO ──
@@ -233,6 +247,17 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
     };
   }
 
+  // Ajuste de inventario entrada (113, 213, 313):
+  //   Débito Inventario / Crédito 555 Sobrantes en Investigación
+  if (ADJUSTMENT_ENTRY_CODES.includes(code)) {
+    const inventoryAccount = getInventoryAccountByCategory(type.category);
+    return {
+      debitAccountCode: inventoryAccount,
+      creditAccountCode: '555',
+      description: type.description,
+    };
+  }
+
   // Ajuste incremento (311): Débito Inventario / Crédito Ajuste
   if (code === '311') {
     return {
@@ -323,6 +348,17 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
     return {
       debitAccountCode: '810',  // Costo de Ventas
       creditAccountCode: '188',  // Producción Terminada
+      description: type.description,
+    };
+  }
+
+  // Ajuste de inventario salida (1110, 2110, 3110):
+  //   Débito 332 Faltantes de Bienes en Investigación / Crédito Inventario
+  if (ADJUSTMENT_EXIT_CODES.includes(code)) {
+    const inventoryAccount = getInventoryAccountByCategory(type.category);
+    return {
+      debitAccountCode: '332',
+      creditAccountCode: inventoryAccount,
       description: type.description,
     };
   }

@@ -8,6 +8,7 @@ import { Movement, MovementType } from '../entities/movement.entity';
 import { Account } from '../entities/account.entity';
 import { MovementItem } from '../entities/movement-item.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
+import { ReceptionReport } from '../entities/reception-report.entity';
 import {
   getMovementType,
   getAccountingEntryForMovement,
@@ -121,6 +122,7 @@ export class MovementsService {
       start_date?: string;
       end_date?: string;
       product_name?: string;
+      product_code?: string;
       relations?: string;
       warehouse?: string;
       movement_type?: MovementType;
@@ -145,6 +147,9 @@ export class MovementsService {
     }
     if (filters?.movement_type) {
       qb.andWhere('m.movement_type = :movementType', { movementType: filters.movement_type });
+    }
+    if (filters?.product_code) {
+      qb.andWhere('m.product_code = :productCode', { productCode: filters.product_code });
     }
 
     qb.orderBy('m.createdAt', 'DESC');
@@ -172,8 +177,8 @@ export class MovementsService {
     if (filters?.product_name) {
       const search = filters.product_name.toLowerCase();
       enriched = enriched.filter(e =>
-        e.product.productName.toLowerCase().includes(search) ||
-        e.product.productCode.toLowerCase().includes(search),
+        e.product?.productName?.toLowerCase().includes(search) ||
+        e.product?.productCode?.toLowerCase().includes(search),
       );
     }
 
@@ -258,6 +263,131 @@ export class MovementsService {
       voucherId: m.voucherId || null,
       reportNumber: this.getReportNumber(m),
     };
+  }
+
+  /**
+   * Historial de un producto concreto.
+   * Recorre los movimientos (y sus items) en los que participa el producto y
+   * reconstruye la existencia acumulada, devolviendo además la referencia al
+   * informe asociado (Informe de Recepción, Vale de Entrega o Transferencia).
+   */
+  async getProductHistory(
+    companyId: number,
+    productCode: string,
+    filters?: { warehouse?: string; start_date?: string; end_date?: string },
+  ) {
+    const qb = this.movementRepo
+      .createQueryBuilder('m')
+      .leftJoinAndSelect('m.items', 'i')
+      .where('m.company_id = :companyId', { companyId })
+      .andWhere(
+        `(m.product_code = :productCode OR EXISTS (
+            SELECT 1 FROM movement_items mi
+            WHERE mi.movement_id = m.id AND mi.product_code = :productCode
+         ))`,
+        { productCode },
+      )
+      .orderBy('m.created_at', 'ASC');
+
+    if (filters?.warehouse) {
+      qb.andWhere(
+        '(m.source_warehouse = :warehouse OR m.destination_warehouse = :warehouse)',
+        { warehouse: filters.warehouse },
+      );
+    }
+    if (filters?.start_date) {
+      qb.andWhere('m.created_at >= :start', { start: filters.start_date });
+    }
+    if (filters?.end_date) {
+      qb.andWhere('m.created_at <= :end', { end: filters.end_date });
+    }
+
+    const movements = await qb.getMany();
+
+    // Informes de recepción asociados a las compras encontradas
+    const purchaseIds = [...new Set(movements.map((m) => m.purchaseId).filter((p): p is string => !!p))];
+    const receptionReports = purchaseIds.length
+      ? await this.dataSource
+          .getRepository(ReceptionReport)
+          .createQueryBuilder('r')
+          .where('r.company_id = :companyId', { companyId })
+          .andWhere('r.purchase_id IN (:...purchaseIds)', { purchaseIds })
+          .getMany()
+      : [];
+    const reportByPurchase = new Map(receptionReports.map((r) => [r.purchaseId as string, r]));
+
+    const inventories = await this.inventoryWarehouseService.findByCodes(companyId, [productCode]);
+    const productInventories = inventories.get(productCode) || [];
+    const reference = filters?.warehouse
+      ? productInventories.find((inv) => inv.warehouseId === filters.warehouse)
+      : productInventories[0];
+
+    let balance = 0;
+    const rows = movements.map((m) => {
+      const item = (m.items || []).find((i) => i.productCode === productCode);
+      const quantity = Number(item?.quantity ?? m.quantity ?? 0);
+      const unitPrice = Number(item?.unitPrice ?? m.unitPrice ?? 0);
+      const totalAmount = Number(item?.totalAmount ?? unitPrice * quantity);
+
+      const isIncoming =
+        m.movementType === 'entry' ||
+        m.movementType === 'return' ||
+        (m.movementType === 'transfer' &&
+          (!filters?.warehouse || m.destinationWarehouse === filters.warehouse));
+      const isOutgoing =
+        m.movementType === 'exit' ||
+        (m.movementType === 'transfer' &&
+          !!filters?.warehouse &&
+          m.sourceWarehouse === filters.warehouse);
+
+      const quantityIn = isIncoming && !isOutgoing ? quantity : 0;
+      const quantityOut = isOutgoing ? quantity : 0;
+      balance += quantityIn - quantityOut;
+
+      const receptionReport = m.purchaseId ? reportByPurchase.get(m.purchaseId) : undefined;
+
+      return {
+        id: m.id,
+        date: m.createdAt,
+        movementCode: m.movementCode,
+        movementDescription: m.movementDescription,
+        concept: `${m.movementCode ?? ''} - ${m.movementDescription ?? ''}`.trim(),
+        movementType: m.movementType,
+        category: m.category,
+        productUnit: item?.productUnit || reference?.productUnit || 'und',
+        quantity,
+        quantityIn,
+        quantityOut,
+        unitPrice,
+        totalAmount,
+        balance,
+        reportNumber: receptionReport?.reportNumber || this.getReportNumber(m),
+        reportType: this.getReportKind(m),
+        purchaseId: m.purchaseId || null,
+        voucherId: m.voucherId || null,
+        sourceWarehouse: m.sourceWarehouse,
+        destinationWarehouse: m.destinationWarehouse,
+        reason: m.reason,
+      };
+    });
+
+    return {
+      productCode,
+      productName: reference?.productName || productCode,
+      productUnit: reference?.productUnit || 'und',
+      warehouseId: reference?.warehouseId || null,
+      warehouseName: reference?.warehouseName || null,
+      currentBalance: reference?.stock ?? balance,
+      unitPrice: reference?.unitPrice ?? 0,
+      movements: rows,
+    };
+  }
+
+  /** Tipo de informe asociado al movimiento, usado para navegar al documento. */
+  private getReportKind(m: Movement): 'reception' | 'delivery' | 'transfer' {
+    if (m.movementType === 'exit') return 'delivery';
+    if (m.movementType === 'transfer') return 'transfer';
+    return 'reception';
   }
 
   private getReportNumber(m: Movement): string {
@@ -1443,7 +1573,9 @@ export class MovementsService {
           date: movement.createdAt
             ? new Date(movement.createdAt).toISOString().split('T')[0]
             : new Date().toISOString().split('T')[0],
-          description: `${movType.description} - ${movement.productCode} x${movement.quantity}`,
+          description: movement.productCode
+            ? `${movType.description} - ${movement.productCode} x${movement.quantity ?? 0}`
+            : `${movType.description} - ${movement.quantity ?? 0} unidades (${movement.itemCount ?? 0} productos)`,
           type: 'inventory',
           reference: `MOV-${movement.movementCode}-${movement.id.substring(0, 8)}`,
           createdBy: userName || 'Sistema',

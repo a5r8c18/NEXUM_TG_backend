@@ -168,6 +168,7 @@ export class PurchasesService {
       const product = await this.productsService.ensureProduct(companyId, {
         productCode: p.product_code,
         productName: p.product_name,
+        productUnit: p.unit,
       });
 
       // Determinar código de movimiento según categoría del producto
@@ -232,6 +233,7 @@ export class PurchasesService {
           unitPrice: p.unit_price,
           totalAmount: totalPrice,
           reason: `Compra ${data.document}`,
+          destinationWarehouse: data.warehouse,
           userName: userName || 'System',
           purchaseId: purchase.id,
         }),

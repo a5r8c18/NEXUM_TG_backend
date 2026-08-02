@@ -108,6 +108,7 @@ export class ProductsService {
     productCode: string;
     productName: string;
     productDescription?: string;
+    productUnit?: string;
   }) {
     // Verificar que no exista el mismo código
     const existing = await this.findByCode(companyId, data.productCode);
@@ -128,6 +129,7 @@ export class ProductsService {
       productCode: data.productCode,
       productName: data.productName,
       productDescription: data.productDescription || null,
+      productUnit: data.productUnit || 'und',
       isActive: true,
     });
 
@@ -211,25 +213,35 @@ export class ProductsService {
     productCode: string;
     productName: string;
     productDescription?: string;
+    productUnit?: string;
   }): Promise<Product> {
     let product = await this.findByCode(companyId, data.productCode);
-    
+
     if (!product) {
       product = await this.create(companyId, {
         productCode: data.productCode,
         productName: data.productName,
         productDescription: data.productDescription,
+        productUnit: data.productUnit || 'und',
       });
     } else {
-      // Actualizar nombre y descripción si cambiaron
-      const needsUpdate = 
+      // La unidad solo se actualiza si llega una real y la guardada es el default
+      const incomingUnit = data.productUnit?.trim();
+      const shouldUpdateUnit =
+        !!incomingUnit &&
+        incomingUnit !== product.productUnit &&
+        (!product.productUnit || product.productUnit === 'und');
+
+      const needsUpdate =
         product.productName !== data.productName ||
-        product.productDescription !== (data.productDescription || null);
+        product.productDescription !== (data.productDescription || null) ||
+        shouldUpdateUnit;
 
       if (needsUpdate) {
         await this.update(companyId, product.id, {
           productName: data.productName,
           productDescription: data.productDescription,
+          ...(shouldUpdateUnit ? { productUnit: incomingUnit } : {}),
         });
       }
     }
