@@ -261,6 +261,7 @@ export class InventoryWarehouseService {
       destinationWarehouseId: string;
       reason?: string;
     },
+    manager?: EntityManager,
   ): Promise<{
     sourceInventory: InventoryWarehouse;
     destinationInventory: InventoryWarehouse;
@@ -280,6 +281,7 @@ export class InventoryWarehouseService {
       companyId,
       data.productCode,
       data.sourceWarehouseId,
+      manager,
     );
     if (!source) {
       throw new NotFoundException(
@@ -295,6 +297,25 @@ export class InventoryWarehouseService {
       data.sourceWarehouseId,
       data.quantity,
       'exit',
+      undefined,
+      manager,
+    );
+
+    // El producto puede no existir aún en el almacén destino: se crea con
+    // stock 0 para que la entrada pueda registrarse sobre él.
+    await this.ensureProduct(
+      companyId,
+      {
+        productCode: source.productCode,
+        productName: source.productName,
+        productDescription: source.productDescription || undefined,
+        productUnit: source.productUnit,
+        unitPrice: transferUnitCost,
+        warehouseId: data.destinationWarehouseId,
+        entity: source.entity || undefined,
+        location: source.location || undefined,
+      },
+      manager,
     );
 
     // Aumentar stock en almacén destino al costo del origen
@@ -305,6 +326,7 @@ export class InventoryWarehouseService {
       data.quantity,
       'entry',
       transferUnitCost,
+      manager,
     );
 
     return {

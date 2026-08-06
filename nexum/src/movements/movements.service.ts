@@ -893,13 +893,17 @@ export class MovementsService {
         const totalAmount = unitPrice * item.quantity;
         grandTotal += totalAmount;
 
-        // Transferir stock
-        await this.inventoryWarehouseService.transferStock(companyId, {
-          productCode: item.productCode,
-          quantity: item.quantity,
-          sourceWarehouseId: data.sourceWarehouseId,
-          destinationWarehouseId: data.destinationWarehouseId,
-        });
+        // Transferir stock (dentro de la transacción)
+        await this.inventoryWarehouseService.transferStock(
+          companyId,
+          {
+            productCode: item.productCode,
+            quantity: item.quantity,
+            sourceWarehouseId: data.sourceWarehouseId,
+            destinationWarehouseId: data.destinationWarehouseId,
+          },
+          queryRunner.manager,
+        );
 
         const itemData: Partial<MovementItem> = {
           productCode: item.productCode,
@@ -956,8 +960,8 @@ export class MovementsService {
         }),
       );
 
-      // Guardar items detallados para ambos movimientos
-      const miRepo = this.dataSource.getRepository(MovementItem);
+      // Guardar items detallados para ambos movimientos (dentro de la
+      // transacción: fuera de ella los movimientos padre aún no son visibles)
       if (items.length > 0) {
         const exitItemEntities = exitItems.map((mi) => {
           const entity = new MovementItem();
@@ -969,7 +973,10 @@ export class MovementsService {
           Object.assign(entity, { ...mi, movementId: entryMov.id });
           return entity;
         });
-        await miRepo.save([...exitItemEntities, ...entryItemEntities]);
+        await queryRunner.manager.save(MovementItem, [
+          ...exitItemEntities,
+          ...entryItemEntities,
+        ]);
       }
 
       // Vincular ambos movimientos entre sí
