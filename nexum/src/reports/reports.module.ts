@@ -9,6 +9,7 @@ import { Inventory } from '../entities/inventory.entity';
 import { Movement } from '../entities/movement.entity';
 import { MovementItem } from '../entities/movement-item.entity';
 import { Purchase } from '../entities/purchase.entity';
+import { Warehouse } from '../entities/warehouse.entity';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { Purchase } from '../entities/purchase.entity';
       Movement,
       MovementItem,
       Purchase,
+      Warehouse,
     ]),
     forwardRef(() => AuthModule),
   ],

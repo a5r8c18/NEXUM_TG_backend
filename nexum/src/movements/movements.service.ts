@@ -15,6 +15,9 @@ import {
   getAccountingEntryForMovement,
   getTransferEntryCode,
   isTransferExitCode,
+  isTransferEntryCode,
+  TRANSFER_EXIT_CODES,
+  TRANSFER_ENTRY_CODES,
   getInventoryAccountByCategory,
   MovementTypeDefinition,
 } from './movement-types.catalog';
@@ -143,9 +146,24 @@ export class MovementsService {
       qb.andWhere('m.created_at <= :end', { end: filters.end_date });
     }
     if (filters?.warehouse) {
-      qb.andWhere('(m.source_warehouse = :warehouse OR m.destination_warehouse = :warehouse)', { 
-        warehouse: filters.warehouse 
-      });
+      // Una transferencia son dos movimientos que comparten origen y destino:
+      // la salida pertenece al almacén origen y la entrada al destino. Sin
+      // distinguirlos por código, filtrar por almacén devolvería ambos.
+      qb.andWhere(
+        `(
+          (m.movement_type <> 'transfer' AND (m.source_warehouse = :warehouse OR m.destination_warehouse = :warehouse))
+          OR (m.movement_type = 'transfer' AND m.movement_code IN (:...transferExitCodes) AND m.source_warehouse = :warehouse)
+          OR (m.movement_type = 'transfer' AND m.movement_code IN (:...transferEntryCodes) AND m.destination_warehouse = :warehouse)
+          OR (m.movement_type = 'transfer' AND (m.movement_code IS NULL OR m.movement_code NOT IN (:...transferCodes))
+              AND (m.source_warehouse = :warehouse OR m.destination_warehouse = :warehouse))
+        )`,
+        {
+          warehouse: filters.warehouse,
+          transferExitCodes: TRANSFER_EXIT_CODES,
+          transferEntryCodes: TRANSFER_ENTRY_CODES,
+          transferCodes: [...TRANSFER_EXIT_CODES, ...TRANSFER_ENTRY_CODES],
+        },
+      );
     }
     if (filters?.movement_type) {
       qb.andWhere('m.movement_type = :movementType', { movementType: filters.movement_type });
@@ -210,7 +228,13 @@ export class MovementsService {
     let relevantInventory = inventories[0];
     
     // Enhanced warehouse matching logic with fallback
-    if ((m.movementType === 'transfer' || m.movementType === 'entry' || m.movementType === 'return') && m.destinationWarehouse) {
+    // En una transferencia, la salida pertenece al origen y la entrada al destino
+    const isTransferExit =
+      m.movementType === 'transfer' && !!m.movementCode && isTransferExitCode(m.movementCode);
+
+    if (isTransferExit && m.sourceWarehouse) {
+      relevantInventory = inventories.find(inv => inv.warehouseId === m.sourceWarehouse) || inventories[0];
+    } else if ((m.movementType === 'transfer' || m.movementType === 'entry' || m.movementType === 'return') && m.destinationWarehouse) {
       relevantInventory = inventories.find(inv => inv.warehouseId === m.destinationWarehouse) || inventories[0];
     } else if (m.sourceWarehouse) {
       relevantInventory = inventories.find(inv => inv.warehouseId === m.sourceWarehouse) || inventories[0];
@@ -299,11 +323,26 @@ export class MovementsService {
     }
 
     if (warehouseIds.length) {
+      // La salida de una transferencia pertenece al origen y la entrada al
+      // destino: incluir ambas duplicaría el movimiento y descuadraría el saldo.
       qb.andWhere(
-        '(m.source_warehouse IN (:...warehouseIds) OR m.destination_warehouse IN (:...warehouseIds) ' +
-          'OR (m.movement_type IN (:...entryTypes) AND m.purchase_id IS NOT NULL AND ' +
-          'm.purchase_id IN (SELECT p.id::text FROM purchases p WHERE p.company_id = m.company_id AND p.warehouse IN (:...warehouseIds2))))',
-        { warehouseIds, warehouseIds2: warehouseIds, entryTypes: ['entry', 'return'] },
+        `(
+          (m.movement_type <> 'transfer' AND (m.source_warehouse IN (:...warehouseIds) OR m.destination_warehouse IN (:...warehouseIds)))
+          OR (m.movement_type = 'transfer' AND m.movement_code IN (:...transferExitCodes) AND m.source_warehouse IN (:...warehouseIds))
+          OR (m.movement_type = 'transfer' AND m.movement_code IN (:...transferEntryCodes) AND m.destination_warehouse IN (:...warehouseIds))
+          OR (m.movement_type = 'transfer' AND (m.movement_code IS NULL OR m.movement_code NOT IN (:...transferCodes))
+              AND (m.source_warehouse IN (:...warehouseIds) OR m.destination_warehouse IN (:...warehouseIds)))
+          OR (m.movement_type IN (:...entryTypes) AND m.purchase_id IS NOT NULL AND
+              m.purchase_id IN (SELECT p.id::text FROM purchases p WHERE p.company_id = m.company_id AND p.warehouse IN (:...warehouseIds2)))
+        )`,
+        {
+          warehouseIds,
+          warehouseIds2: warehouseIds,
+          entryTypes: ['entry', 'return'],
+          transferExitCodes: TRANSFER_EXIT_CODES,
+          transferEntryCodes: TRANSFER_ENTRY_CODES,
+          transferCodes: [...TRANSFER_EXIT_CODES, ...TRANSFER_ENTRY_CODES],
+        },
       );
     }
     if (filters?.start_date) {
@@ -365,15 +404,31 @@ export class MovementsService {
       const unitPrice = Number(item?.unitPrice ?? m.unitPrice ?? 0);
       const totalAmount = Number(item?.totalAmount ?? unitPrice * quantity);
 
+      // En una transferencia el código determina el sentido: la salida
+      // (1102/2102/3102) descarga el origen y la entrada (103/203/308) carga
+      // el destino. Ambos movimientos comparten origen y destino, así que
+      // compararlos entre sí daría el mismo signo a los dos.
+      const isTransfer = m.movementType === 'transfer';
+      const code = m.movementCode || '';
+      const isTransferIn = isTransfer && isTransferEntryCode(code);
+      const isTransferOut = isTransfer && isTransferExitCode(code);
+
       const isIncoming =
         m.movementType === 'entry' ||
         m.movementType === 'return' ||
-        (m.movementType === 'transfer' &&
-          (!warehouseIds.length ||
-            (!!m.destinationWarehouse && warehouseIds.includes(m.destinationWarehouse))));
+        isTransferIn ||
+        // Transferencias antiguas sin código reconocible: se usa el destino
+        (isTransfer &&
+          !isTransferIn &&
+          !isTransferOut &&
+          !!m.destinationWarehouse &&
+          (!warehouseIds.length || warehouseIds.includes(m.destinationWarehouse)));
       const isOutgoing =
         m.movementType === 'exit' ||
-        (m.movementType === 'transfer' &&
+        isTransferOut ||
+        (isTransfer &&
+          !isTransferIn &&
+          !isTransferOut &&
           !!warehouseIds.length &&
           !!m.sourceWarehouse &&
           warehouseIds.includes(m.sourceWarehouse));
@@ -979,8 +1034,16 @@ export class MovementsService {
         ]);
       }
 
-      // Vincular ambos movimientos entre sí
-      const linkNote = `(Salida: ${exitMov.id.substring(0, 8)}, Entrada: ${entryMov.id.substring(0, 8)})`;
+      // Vincular ambos movimientos entre sí. El vínculo real es
+      // relatedMovementId; el motivo describe el traslado en texto legible.
+      const [sourceWh, destinationWh] = await Promise.all([
+        this.warehousesService.findByIdOrCode(companyId, data.sourceWarehouseId),
+        this.warehousesService.findByIdOrCode(companyId, data.destinationWarehouseId),
+      ]);
+      const sourceName = sourceWh?.name || data.sourceWarehouseId;
+      const destinationName = destinationWh?.name || data.destinationWarehouseId;
+      const linkNote = `(${sourceName} → ${destinationName})`;
+
       await queryRunner.manager.update(Movement, exitMov.id, {
         relatedMovementId: entryMov.id,
         reason: `${transferReason} ${linkNote}`,

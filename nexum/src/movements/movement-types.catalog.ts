@@ -401,6 +401,21 @@ export function isTransferExitCode(code: string): boolean {
   return ['1102', '2102', '3102'].includes(code);
 }
 
+/** Códigos de salida de transferencia (pertenecen al almacén origen). */
+export const TRANSFER_EXIT_CODES = Object.keys(TRANSFER_EXIT_TO_ENTRY);
+
+/** Códigos de entrada de transferencia (pertenecen al almacén destino). */
+export const TRANSFER_ENTRY_CODES = Object.values(TRANSFER_EXIT_TO_ENTRY);
+
+/**
+ * Verifica si un código corresponde a una transferencia recibida.
+ * Los dos movimientos de una transferencia comparten almacén origen y destino,
+ * por lo que el código es lo único que indica a qué almacén pertenece cada uno.
+ */
+export function isTransferEntryCode(code: string): boolean {
+  return TRANSFER_ENTRY_CODES.includes(code);
+}
+
 /**
  * Devuelve la cuenta contable de inventario según la categoría.
  * Nomenclador cubano 2016:

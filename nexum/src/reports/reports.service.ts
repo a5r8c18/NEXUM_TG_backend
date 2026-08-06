@@ -7,6 +7,7 @@ import { Inventory } from '../entities/inventory.entity';
 import { Movement } from '../entities/movement.entity';
 import { MovementItem } from '../entities/movement-item.entity';
 import { Purchase } from '../entities/purchase.entity';
+import { Warehouse } from '../entities/warehouse.entity';
 
 @Injectable()
 export class ReportsService {
@@ -23,7 +24,46 @@ export class ReportsService {
     private readonly movementItemRepo: Repository<MovementItem>,
     @InjectRepository(Purchase)
     private readonly purchaseRepo: Repository<Purchase>,
+    @InjectRepository(Warehouse)
+    private readonly warehouseRepo: Repository<Warehouse>,
   ) {}
+
+  /**
+   * Los movimientos guardan el identificador del almacén, no su nombre.
+   * Devuelve un mapa id/código → nombre para mostrarlo de forma legible.
+   */
+  private async getWarehouseNameMap(
+    companyId: number,
+  ): Promise<Map<string, string>> {
+    const warehouses = await this.warehouseRepo.find({ where: { companyId } });
+    const map = new Map<string, string>();
+    for (const w of warehouses) {
+      if (w.id) map.set(w.id, w.name);
+      if (w.code) map.set(w.code, w.name);
+    }
+    return map;
+  }
+
+  /**
+   * Las transferencias antiguas guardaron en el motivo los identificadores de
+   * los movimientos, p.ej. "(Salida: cbe8bb43, Entrada: baa1e88e)", ilegibles
+   * para el usuario. Se sustituyen por los nombres de los almacenes.
+   */
+  private cleanTransferReason(
+    reason: string | null,
+    sourceName: string | null,
+    destinationName: string | null,
+  ): string | null {
+    if (!reason) return reason;
+
+    const legacyNote = /\s*\(Salida:\s*[^,]+,\s*Entrada:\s*[^)]+\)\s*$/i;
+    if (!legacyNote.test(reason)) return reason;
+
+    const base = reason.replace(legacyNote, '').trim();
+    return sourceName && destinationName
+      ? `${base} (${sourceName} \u2192 ${destinationName})`
+      : base;
+  }
 
   async getReceptionReports(
     companyId: number,
@@ -234,6 +274,7 @@ export class ReportsService {
     }
 
     const movements = await qb.getMany();
+    const warehouseNames = await this.getWarehouseNameMap(companyId);
 
     // Cargar items de todos los movimientos en una sola consulta
     const movIds = movements.map((m) => m.id);
@@ -268,15 +309,22 @@ export class ReportsService {
           ? m.createdAt.toISOString()
           : String(m.createdAt);
 
+      const sourceName = m.sourceWarehouse
+        ? warehouseNames.get(m.sourceWarehouse) || m.sourceWarehouse
+        : null;
+      const destinationName = m.destinationWarehouse
+        ? warehouseNames.get(m.destinationWarehouse) || m.destinationWarehouse
+        : null;
+
       return {
         id: m.id,
         relatedMovementId: m.relatedMovementId,
         movementCode: m.movementCode,
         movementDescription: m.movementDescription,
         category: m.category,
-        sourceWarehouse: m.sourceWarehouse,
-        destinationWarehouse: m.destinationWarehouse,
-        reason: m.reason,
+        sourceWarehouse: sourceName,
+        destinationWarehouse: destinationName,
+        reason: this.cleanTransferReason(m.reason, sourceName, destinationName),
         userName: m.userName,
         details: { products, totalAmount },
         date: dateStr.split('T')[0],
