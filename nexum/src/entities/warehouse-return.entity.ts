@@ -24,7 +24,7 @@ export class WarehouseReturn {
   returnDate: string;
 
   @Column({ name: 'return_type', type: 'varchar', length: 20, default: 'supplier' })
-  returnType: 'supplier' | 'production' | 'adjustment' | 'damage';
+  returnType: 'supplier' | 'customer' | 'production' | 'adjustment' | 'damage';
 
   @Column({ name: 'return_reason', type: 'varchar', length: 200 })
   returnReason: string;

@@ -6,7 +6,6 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { WarehouseReturn } from './warehouse-return.entity';
-import { Product } from './product.entity';
 
 @Entity('warehouse_return_items')
 export class WarehouseReturnItem {
@@ -55,8 +54,4 @@ export class WarehouseReturnItem {
   @ManyToOne(() => WarehouseReturn, returnDoc => returnDoc.items)
   @JoinColumn({ name: 'warehouse_return_id' })
   warehouseReturn: WarehouseReturn;
-
-  @ManyToOne(() => Product)
-  @JoinColumn({ name: 'product_code' })
-  product: Product;
 }

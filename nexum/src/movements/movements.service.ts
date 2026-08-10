@@ -10,6 +10,12 @@ import { Account } from '../entities/account.entity';
 import { MovementItem } from '../entities/movement-item.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import { ReceptionReport } from '../entities/reception-report.entity';
+import { WarehouseReturn } from '../entities/warehouse-return.entity';
+import { WarehouseReturnItem } from '../entities/warehouse-return-item.entity';
+import { AccountPayable } from '../entities/account-payable.entity';
+import { AccountReceivable } from '../entities/account-receivable.entity';
+import { ProductsService } from '../products/products.service';
+import { DocumentSequenceService } from '../common/sequence/document-sequence.service';
 import {
   getMovementType,
   getAccountingEntryForMovement,
@@ -19,6 +25,9 @@ import {
   TRANSFER_EXIT_CODES,
   TRANSFER_ENTRY_CODES,
   getInventoryAccountByCategory,
+  isReturnCode,
+  isPurchaseReturnCode,
+  isEntitySalesReturnCode,
   MovementTypeDefinition,
 } from './movement-types.catalog';
 import { StockLimitsService, StockWarning } from '../stock-limits/stock-limits.service';
@@ -46,6 +55,12 @@ export class MovementsService {
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(DeliveryReport)
     private readonly drRepo: Repository<DeliveryReport>,
+    @InjectRepository(WarehouseReturn)
+    private readonly warehouseReturnRepo: Repository<WarehouseReturn>,
+    @InjectRepository(WarehouseReturnItem)
+    private readonly warehouseReturnItemRepo: Repository<WarehouseReturnItem>,
+    private readonly productsService: ProductsService,
+    private readonly sequenceService: DocumentSequenceService,
     private readonly dataSource: DataSource,
     private readonly stockLimitsService: StockLimitsService,
     private readonly auditService: AuditService,
@@ -477,13 +492,16 @@ export class MovementsService {
   }
 
   /** Tipo de informe asociado al movimiento, usado para navegar al documento. */
-  private getReportKind(m: Movement): 'reception' | 'delivery' | 'transfer' {
+  private getReportKind(m: Movement): 'reception' | 'delivery' | 'transfer' | 'return' {
+    if (m.reportType) return m.reportType;
     if (m.movementType === 'exit') return 'delivery';
     if (m.movementType === 'transfer') return 'transfer';
+    if (m.movementType === 'return') return 'return';
     return 'reception';
   }
 
   private getReportNumber(m: Movement): string {
+    if (m.reportNumber) return m.reportNumber;
     const prefix: Record<MovementType, string> = {
       entry: 'IR',
       exit: 'VE',
@@ -500,6 +518,163 @@ export class MovementsService {
     const codes = m.productCode ? [m.productCode] : [];
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, codes);
     return this.enrichMovementFromMap(m, inventoryMap);
+  }
+
+  /**
+   * Genera el reporte de devolución (WarehouseReturn + items) cuando el código
+   * de movimiento es de devolución. Sustituye al antiguo formulario aparte de
+   * devoluciones: el reporte se deriva del código del movimiento.
+   */
+  private async createReturnReport(
+    manager: EntityManager,
+    companyId: number,
+    movement: Movement,
+    movType: MovementTypeDefinition,
+    items: {
+      productCode: string;
+      productName: string;
+      productUnit: string;
+      quantity: number;
+      unitPrice: number;
+      totalAmount: number;
+      expirationDate?: string | null;
+    }[],
+    opts: { warehouseId: string; warehouseName?: string; entity?: string; reason?: string; userName?: string },
+  ): Promise<WarehouseReturn> {
+    const returnNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'warehouse-return',
+      'DA',
+      { year: new Date().getFullYear(), padding: 4, includeYear: true },
+    );
+
+    const isPurchaseReturn = isPurchaseReturnCode(movement.movementCode || '');
+    const totalAmount = items.reduce((sum, i) => sum + i.totalAmount, 0);
+
+    const returnDoc = new WarehouseReturn();
+    Object.assign(returnDoc, {
+      companyId,
+      returnNumber,
+      returnDate: new Date().toISOString().split('T')[0],
+      returnType: isPurchaseReturn ? 'supplier' : 'customer',
+      returnReason: opts.reason || movType.description,
+      supplierName: opts.entity || null,
+      supplierNit: null,
+      sourceWarehouseId: opts.warehouseId,
+      sourceWarehouseName: opts.warehouseName || opts.warehouseId,
+      destinationWarehouseId: null,
+      destinationWarehouseName: null,
+      returnedBy: opts.userName || 'System',
+      status: 'processed',
+      totalItems: items.length,
+      totalAmount,
+      notes: `Movimiento ${movement.movementCode} - ${movType.description}`,
+    });
+    const saved = await manager.getRepository(WarehouseReturn).save(returnDoc);
+
+    const itemEntities = items.map((item, index) => {
+      const entity = new WarehouseReturnItem();
+      Object.assign(entity, {
+        warehouseReturnId: saved.id,
+        lineNumber: index + 1,
+        productCode: item.productCode,
+        productName: item.productName,
+        productUnit: item.productUnit || 'und',
+        quantityReturned: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalAmount,
+        conditionStatus: 'good',
+      });
+      return entity;
+    });
+    await manager.getRepository(WarehouseReturnItem).save(itemEntities);
+
+    // Vincular el informe de devolución al movimiento para visibilidad
+    movement.reportNumber = returnNumber;
+    movement.reportType = 'return';
+    await manager.getRepository(Movement).save(movement);
+
+    this.logger.log(`Reporte de devolución ${returnNumber} generado para movimiento ${movement.id}`);
+    return saved;
+  }
+
+  /**
+   * Cancela la cuenta pendiente asociada a una devolución:
+   *   - Salida por devolución de compra a entidades (1107/2107) → cuenta por pagar.
+   *   - Entrada por devolución de ventas a entidades (107/207/307) → cuenta por cobrar.
+   *
+   * Se descuenta el importe devuelto del saldo pendiente; si el saldo queda en
+   * cero la cuenta se cierra (cancelled / written_off).
+   */
+  private async settleReturnAccounts(
+    manager: EntityManager,
+    companyId: number,
+    movementCode: string,
+    amount: number,
+    entityName?: string,
+  ): Promise<void> {
+    if (amount <= 0) return;
+
+    if (isPurchaseReturnCode(movementCode)) {
+      const repo = manager.getRepository(AccountPayable);
+      const qb = repo
+        .createQueryBuilder('ap')
+        .where('ap.company_id = :companyId', { companyId })
+        .andWhere('ap.status IN (:...statuses)', { statuses: ['pending', 'partial', 'overdue'] })
+        .andWhere('ap.balance_amount > 0');
+      if (entityName) {
+        qb.andWhere('LOWER(TRIM(ap.supplier_name)) = LOWER(TRIM(:supplierName))', {
+          supplierName: entityName,
+        });
+      }
+      const payable = await qb.orderBy('ap.created_at', 'ASC').getOne();
+      if (!payable) {
+        this.logger.warn(
+          `Devolución ${movementCode}: no se encontró cuenta por pagar pendiente${entityName ? ` de ${entityName}` : ''}`,
+        );
+        return;
+      }
+      const balance = Number(payable.balanceAmount) - amount;
+      payable.balanceAmount = balance > 0 ? balance : 0;
+      payable.status = payable.balanceAmount === 0 ? 'cancelled' : 'partial';
+      payable.notes = `${payable.notes ? payable.notes + ' | ' : ''}Devolución de compra ${movementCode}: -${amount.toFixed(2)}`;
+      await repo.save(payable);
+      this.logger.log(`Cuenta por pagar ${payable.apNumber} ajustada por devolución: saldo ${payable.balanceAmount}`);
+      return;
+    }
+
+    if (isEntitySalesReturnCode(movementCode)) {
+      const repo = manager.getRepository(AccountReceivable);
+      const qb = repo
+        .createQueryBuilder('ar')
+        .where('ar.company_id = :companyId', { companyId })
+        .andWhere('ar.status IN (:...statuses)', { statuses: ['pending', 'partial', 'overdue'] })
+        .andWhere('ar.balance_amount > 0');
+      if (entityName) {
+        qb.andWhere('LOWER(TRIM(ar.customer_name)) = LOWER(TRIM(:customerName))', {
+          customerName: entityName,
+        });
+      }
+      const receivable = await qb.orderBy('ar.created_at', 'ASC').getOne();
+      if (!receivable) {
+        this.logger.warn(
+          `Devolución ${movementCode}: no se encontró cuenta por cobrar pendiente${entityName ? ` de ${entityName}` : ''}`,
+        );
+        return;
+      }
+      const balance = Number(receivable.balanceAmount) - amount;
+      receivable.balanceAmount = balance > 0 ? balance : 0;
+      if (receivable.balanceAmount === 0) {
+        receivable.status = 'written_off';
+        receivable.writtenOffDate = new Date().toISOString().split('T')[0];
+        receivable.writtenOffReason = `Devolución de ventas ${movementCode}`;
+      } else {
+        receivable.status = 'partial';
+      }
+      receivable.collectionNotes = `${receivable.collectionNotes ? receivable.collectionNotes + ' | ' : ''}Devolución de ventas ${movementCode}: -${amount.toFixed(2)}`;
+      await repo.save(receivable);
+      this.logger.log(`Cuenta por cobrar ${receivable.arNumber} ajustada por devolución: saldo ${receivable.balanceAmount}`);
+    }
   }
 
   async createDirectEntry(
@@ -587,6 +762,16 @@ export class MovementsService {
         const totalAmount = unitPrice * item.quantity;
         grandTotal += totalAmount;
 
+        // Asegurar que exista el producto en el catálogo central. Si no está
+        // catalogado se crea con la categoría del tipo de movimiento elegido.
+        await this.productsService.ensureProduct(companyId, {
+          productCode: item.productCode,
+          productName: item.productName,
+          productDescription: item.productDescription,
+          productUnit: item.unit,
+          category,
+        });
+
         // Asegurar que exista el producto en inventario (dentro de la transacción)
         await this.inventoryWarehouseService.ensureProduct(companyId, {
           productCode: item.productCode,
@@ -624,10 +809,12 @@ export class MovementsService {
         });
       }
 
+      const isReturn = isReturnCode(data.movementCode);
+
       // Registrar movimiento (documento único) dentro de la transacción
       const mov = this.movementRepo.create({
         companyId,
-        movementType: 'entry',
+        movementType: isReturn ? 'return' : 'entry',
         movementCode: data.movementCode,
         movementDescription: movType.description,
         category,
@@ -662,6 +849,31 @@ export class MovementsService {
         debitAccountCode: data.debitAccountCode,
         creditAccountCode: data.creditAccountCode,
       }, manager);
+
+      // ── Devolución: reporte de devolución + cancelación de cuenta por cobrar ──
+      if (isReturnCode(data.movementCode)) {
+        await this.createReturnReport(
+          manager,
+          companyId,
+          savedMov,
+          movType,
+          movementItems.map((mi) => ({
+            productCode: mi.productCode as string,
+            productName: mi.productName as string,
+            productUnit: mi.productUnit || 'und',
+            quantity: Number(mi.quantity),
+            unitPrice: Number(mi.unitPrice || 0),
+            totalAmount: Number(mi.totalAmount || 0),
+          })),
+          {
+            warehouseId: data.warehouseId,
+            entity: data.entity,
+            reason: data.label || movType.description,
+            userName,
+          },
+        );
+        await this.settleReturnAccounts(manager, companyId, data.movementCode, grandTotal, data.entity);
+      }
 
       return savedMov;
     });
@@ -781,11 +993,13 @@ export class MovementsService {
         });
       }
 
+      const isReturn = isReturnCode(data.movementCode);
+
       // Registrar movimiento (documento único) dentro de la transacción
       const savedMov = await manager.getRepository(Movement).save(
         this.movementRepo.create({
           companyId,
-          movementType: 'exit',
+          movementType: isReturn ? 'return' : 'exit',
           movementCode: data.movementCode,
           movementDescription: movType.description,
           category,
@@ -815,32 +1029,64 @@ export class MovementsService {
         await manager.getRepository(MovementItem).save(itemEntities);
       }
 
-      // Vale de Entrega (UN solo documento con todos los productos)
       const firstInventory = (inventoryMap.get(items[0].productCode) || [])
         .find((inv) => inv.warehouseId === data.warehouseId);
-      await manager.getRepository(DeliveryReport).save(
-        this.drRepo.create({
+
+      if (isReturn) {
+        // Devolución: el documento del movimiento es el reporte de devolución,
+        // no el vale de entrega.
+        await this.createReturnReport(
+          manager,
           companyId,
-          reportNumber: `VE-${savedMov.id.substring(0, 8)}`,
-          reportDate: new Date(),
-          entityName: data.entity || 'Entrega Directa',
-          employeeId: data.employeeId || null,
-          employeeName: data.employeeName || null,
-          warehouseId: data.warehouseId,
-          warehouseName: firstInventory?.warehouseName || data.warehouseId,
-          authorizationDocument: `SALIDA-${savedMov.id.substring(0, 8)}`,
-          products: JSON.stringify(valeProducts),
-          reportType: 'SC-2-08',
-          observations: data.reason || movType.description,
-          createdByName: userName || 'System',
-        }),
-      );
+          savedMov,
+          movType,
+          movementItems.map((mi) => ({
+            productCode: mi.productCode as string,
+            productName: mi.productName as string,
+            productUnit: mi.productUnit || 'und',
+            quantity: Number(mi.quantity),
+            unitPrice: Number(mi.unitPrice || 0),
+            totalAmount: Number(mi.totalAmount || 0),
+          })),
+          {
+            warehouseId: data.warehouseId,
+            warehouseName: firstInventory?.warehouseName,
+            entity: data.entity,
+            reason: data.reason || movType.description,
+            userName,
+          },
+        );
+      } else {
+        // Vale de Entrega (UN solo documento con todos los productos)
+        await manager.getRepository(DeliveryReport).save(
+          this.drRepo.create({
+            companyId,
+            reportNumber: `VE-${savedMov.id.substring(0, 8)}`,
+            reportDate: new Date(),
+            entityName: data.entity || 'Entrega Directa',
+            employeeId: data.employeeId || null,
+            employeeName: data.employeeName || null,
+            warehouseId: data.warehouseId,
+            warehouseName: firstInventory?.warehouseName || data.warehouseId,
+            authorizationDocument: `SALIDA-${savedMov.id.substring(0, 8)}`,
+            products: JSON.stringify(valeProducts),
+            reportType: 'SC-2-08',
+            observations: data.reason || movType.description,
+            createdByName: userName || 'System',
+          }),
+        );
+      }
 
       // ── Contabilización automática (un solo comprobante) ──
       await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
         debitAccountCode: data.debitAccountCode,
         creditAccountCode: data.creditAccountCode,
       }, manager);
+
+      // ── Devolución de compra: cancelar la cuenta por pagar al proveedor ──
+      if (isReturn) {
+        await this.settleReturnAccounts(manager, companyId, data.movementCode, grandTotal, data.entity);
+      }
 
       return savedMov;
     });
@@ -1239,6 +1485,9 @@ export class MovementsService {
         debitAccountCode: data.debitAccountCode,
         creditAccountCode: data.creditAccountCode,
       }, manager);
+
+      // ── Cancelar la cuenta por pagar / por cobrar según el tipo de devolución ──
+      await this.settleReturnAccounts(manager, companyId, data.movementCode, grandTotal, data.entity);
 
       return savedMov;
     });

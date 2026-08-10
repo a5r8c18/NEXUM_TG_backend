@@ -103,6 +103,53 @@ export function isAdjustmentCode(code: string): boolean {
   return ADJUSTMENT_ENTRY_CODES.includes(code) || ADJUSTMENT_EXIT_CODES.includes(code);
 }
 
+/**
+ * Códigos de devolución.
+ *
+ * La devolución no es un tipo de operación aparte: es un movimiento de entrada o
+ * de salida cuyo código pertenece a estas listas. El reporte de devolución
+ * (WarehouseReturn) y la cancelación de la cuenta correspondiente se derivan del
+ * código, no de un formulario separado.
+ */
+
+/** Salidas por devolución de compra a entidades (proveedores). */
+export const PURCHASE_RETURN_EXIT_CODES = ['1107', '2107'];
+
+/** Entradas por devolución de ventas efectuadas a trabajadores. */
+export const WORKER_SALES_RETURN_ENTRY_CODES = ['106', '206', '306'];
+
+/** Entradas por devolución de ventas a entidades (clientes). */
+export const ENTITY_SALES_RETURN_ENTRY_CODES = ['107', '207', '307'];
+
+/** Todas las entradas por devolución de ventas. */
+export const SALES_RETURN_ENTRY_CODES = [
+  ...WORKER_SALES_RETURN_ENTRY_CODES,
+  ...ENTITY_SALES_RETURN_ENTRY_CODES,
+];
+
+/** Indica si el código corresponde a cualquier tipo de devolución. */
+export function isReturnCode(code: string): boolean {
+  return (
+    PURCHASE_RETURN_EXIT_CODES.includes(code) ||
+    SALES_RETURN_ENTRY_CODES.includes(code)
+  );
+}
+
+/** Devolución de compra al proveedor: cancela la cuenta por pagar. */
+export function isPurchaseReturnCode(code: string): boolean {
+  return PURCHASE_RETURN_EXIT_CODES.includes(code);
+}
+
+/** Devolución de venta del cliente: cancela la cuenta por cobrar. */
+export function isSalesReturnCode(code: string): boolean {
+  return SALES_RETURN_ENTRY_CODES.includes(code);
+}
+
+/** Solo las devoluciones de ventas a entidades cancelan cuenta por cobrar. */
+export function isEntitySalesReturnCode(code: string): boolean {
+  return ENTITY_SALES_RETURN_ENTRY_CODES.includes(code);
+}
+
 // ══════════════════════════════════════════════════════════
 // ── CATÁLOGO COMPLETO ──
 // ══════════════════════════════════════════════════════════

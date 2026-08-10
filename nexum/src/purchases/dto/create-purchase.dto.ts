@@ -25,6 +25,10 @@ export class PurchaseProductDto {
 
   @IsOptional()
   @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
   expiration_date?: string;
 }
 

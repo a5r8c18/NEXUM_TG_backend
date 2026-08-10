@@ -168,6 +168,14 @@ export class Movement {
   })
   investigationResponsible: string | null;
 
+  /** Número del informe/doc. oficial asociado (IR, VE, VD, DA, TR). */
+  @Column({ name: 'report_number', type: 'varchar', length: 50, nullable: true })
+  reportNumber: string | null;
+
+  /** Tipo del informe asociado para navegación en el frontend. */
+  @Column({ name: 'report_type', type: 'varchar', length: 20, nullable: true })
+  reportType: 'reception' | 'delivery' | 'transfer' | 'return' | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

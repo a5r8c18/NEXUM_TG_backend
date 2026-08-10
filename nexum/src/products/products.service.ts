@@ -104,11 +104,17 @@ export class ProductsService {
     });
   }
 
+  private normalizeCategory(category?: string): ProductCategory {
+    const valid: ProductCategory[] = ['insumo', 'mercancia', 'produccion'];
+    return valid.includes(category as ProductCategory) ? (category as ProductCategory) : 'mercancia';
+  }
+
   async create(companyId: number, data: {
     productCode: string;
     productName: string;
     productDescription?: string;
     productUnit?: string;
+    category?: string;
   }) {
     // Verificar que no exista el mismo código
     const existing = await this.findByCode(companyId, data.productCode);
@@ -130,6 +136,7 @@ export class ProductsService {
       productName: data.productName,
       productDescription: data.productDescription || null,
       productUnit: data.productUnit || 'und',
+      category: this.normalizeCategory(data.category),
       isActive: true,
     });
 
@@ -214,6 +221,7 @@ export class ProductsService {
     productName: string;
     productDescription?: string;
     productUnit?: string;
+    category?: string;
   }): Promise<Product> {
     let product = await this.findByCode(companyId, data.productCode);
 
@@ -223,6 +231,7 @@ export class ProductsService {
         productName: data.productName,
         productDescription: data.productDescription,
         productUnit: data.productUnit || 'und',
+        category: data.category,
       });
     } else {
       // La unidad solo se actualiza si llega una real y la guardada es el default
@@ -232,16 +241,23 @@ export class ProductsService {
         incomingUnit !== product.productUnit &&
         (!product.productUnit || product.productUnit === 'und');
 
+      const targetCategory = this.normalizeCategory(data.category);
+      const shouldUpdateCategory =
+        !!data.category &&
+        targetCategory !== product.category;
+
       const needsUpdate =
         product.productName !== data.productName ||
         product.productDescription !== (data.productDescription || null) ||
-        shouldUpdateUnit;
+        shouldUpdateUnit ||
+        shouldUpdateCategory;
 
       if (needsUpdate) {
         await this.update(companyId, product.id, {
           productName: data.productName,
           productDescription: data.productDescription,
           ...(shouldUpdateUnit ? { productUnit: incomingUnit } : {}),
+          ...(shouldUpdateCategory ? { category: targetCategory } : {}),
         });
       }
     }

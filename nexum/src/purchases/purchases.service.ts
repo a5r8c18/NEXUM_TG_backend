@@ -125,15 +125,16 @@ export class PurchasesService {
       invoiceDate?: string;           // <-- Opción C: fecha de la factura del proveedor
       debitAccountCode?: string;      // <-- NUEVO: cuenta de inventario (débito)
       creditAccountCode?: string;     // <-- NUEVO: cuenta de proveedor (crédito)
-      products: Array<{
+      products: {
         product_code: string;
         product_name: string;
         quantity: number;
         unit_price: number;
         amount?: number;
         unit?: string;
+        category?: string;
         expiration_date?: string;
-      }>;
+      }[];
     },
     userName?: string,
   ) {
@@ -169,6 +170,7 @@ export class PurchasesService {
         productCode: p.product_code,
         productName: p.product_name,
         productUnit: p.unit,
+        category: p.category,
       });
 
       // Determinar código de movimiento según categoría del producto
