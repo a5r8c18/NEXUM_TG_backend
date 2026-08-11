@@ -62,8 +62,8 @@ export class Movement {
   @Column({
     name: 'unit_price',
     type: 'decimal',
-    precision: 12,
-    scale: 2,
+    precision: 18,
+    scale: 8,
     default: 0,
   })
   unitPrice: number;
@@ -71,8 +71,8 @@ export class Movement {
   @Column({
     name: 'total_amount',
     type: 'decimal',
-    precision: 15,
-    scale: 2,
+    precision: 20,
+    scale: 8,
     default: 0,
   })
   totalAmount: number;

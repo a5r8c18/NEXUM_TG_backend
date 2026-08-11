@@ -36,6 +36,7 @@ import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
+import { isSettled, roundDecimal, toDecimal } from '../common/utils/decimal.util';
 
 /** Códigos de movimiento que registran un faltante sujeto a investigación. */
 const SHORTAGE_CODES = ['1104', '2104', '3104'];
@@ -634,12 +635,20 @@ export class MovementsService {
         );
         return;
       }
-      const balance = Number(payable.balanceAmount) - amount;
-      payable.balanceAmount = balance > 0 ? balance : 0;
-      payable.status = payable.balanceAmount === 0 ? 'cancelled' : 'partial';
-      payable.notes = `${payable.notes ? payable.notes + ' | ' : ''}Devolución de compra ${movementCode}: -${amount.toFixed(2)}`;
+      const previousBalance = toDecimal(payable.balanceAmount);
+      const balance = roundDecimal(previousBalance - roundDecimal(amount));
+      // Un residuo por debajo de medio centavo es redondeo, no deuda: se liquida.
+      const settled = balance <= 0 || isSettled(balance);
+      payable.balanceAmount = settled ? 0 : balance;
+      payable.status = settled ? 'cancelled' : 'partial';
+      payable.paidAmount = roundDecimal(
+        toDecimal(payable.originalAmount) - payable.balanceAmount,
+      );
+      payable.notes = `${payable.notes ? payable.notes + ' | ' : ''}Devolución de compra ${movementCode}: -${roundDecimal(amount)}`;
       await repo.save(payable);
-      this.logger.log(`Cuenta por pagar ${payable.apNumber} ajustada por devolución: saldo ${payable.balanceAmount}`);
+      this.logger.log(
+        `Cuenta por pagar ${payable.apNumber} ajustada por devolución: saldo ${payable.balanceAmount} (${payable.status})`,
+      );
       return;
     }
 
@@ -662,18 +671,26 @@ export class MovementsService {
         );
         return;
       }
-      const balance = Number(receivable.balanceAmount) - amount;
-      receivable.balanceAmount = balance > 0 ? balance : 0;
-      if (receivable.balanceAmount === 0) {
+      const previousBalance = toDecimal(receivable.balanceAmount);
+      const balance = roundDecimal(previousBalance - roundDecimal(amount));
+      // Un residuo por debajo de medio centavo es redondeo, no deuda: se liquida.
+      const settled = balance <= 0 || isSettled(balance);
+      receivable.balanceAmount = settled ? 0 : balance;
+      receivable.paidAmount = roundDecimal(
+        toDecimal(receivable.originalAmount) - receivable.balanceAmount,
+      );
+      if (settled) {
         receivable.status = 'written_off';
         receivable.writtenOffDate = new Date().toISOString().split('T')[0];
         receivable.writtenOffReason = `Devolución de ventas ${movementCode}`;
       } else {
         receivable.status = 'partial';
       }
-      receivable.collectionNotes = `${receivable.collectionNotes ? receivable.collectionNotes + ' | ' : ''}Devolución de ventas ${movementCode}: -${amount.toFixed(2)}`;
+      receivable.collectionNotes = `${receivable.collectionNotes ? receivable.collectionNotes + ' | ' : ''}Devolución de ventas ${movementCode}: -${roundDecimal(amount)}`;
       await repo.save(receivable);
-      this.logger.log(`Cuenta por cobrar ${receivable.arNumber} ajustada por devolución: saldo ${receivable.balanceAmount}`);
+      this.logger.log(
+        `Cuenta por cobrar ${receivable.arNumber} ajustada por devolución: saldo ${receivable.balanceAmount} (${receivable.status})`,
+      );
     }
   }
 
@@ -758,9 +775,9 @@ export class MovementsService {
       const movementItems: Partial<MovementItem>[] = [];
 
       for (const item of items) {
-        const unitPrice = item.unitPrice || 0;
-        const totalAmount = unitPrice * item.quantity;
-        grandTotal += totalAmount;
+        const unitPrice = toDecimal(item.unitPrice);
+        const totalAmount = roundDecimal(unitPrice * item.quantity);
+        grandTotal = roundDecimal(grandTotal + totalAmount);
 
         // Asegurar que exista el producto en el catálogo central. Si no está
         // catalogado se crea con la categoría del tipo de movimiento elegido.
@@ -955,9 +972,9 @@ export class MovementsService {
       for (const item of items) {
         const inventories = inventoryMap.get(item.productCode) || [];
         const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
-        const unitPrice = inventory?.unitPrice || 0;
-        const totalAmount = unitPrice * item.quantity;
-        grandTotal += totalAmount;
+        const unitPrice = toDecimal(inventory?.unitPrice);
+        const totalAmount = roundDecimal(unitPrice * item.quantity);
+        grandTotal = roundDecimal(grandTotal + totalAmount);
 
         // Actualizar stock dentro de la transacción
         await this.inventoryWarehouseService.updateStock(
@@ -1388,9 +1405,9 @@ export class MovementsService {
       for (const item of items) {
         const inventories = inventoryMap.get(item.productCode) || [];
         const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
-        const unitPrice = inventory?.unitPrice || 0;
-        const totalAmount = unitPrice * item.quantity;
-        grandTotal += totalAmount;
+        const unitPrice = toDecimal(inventory?.unitPrice);
+        const totalAmount = roundDecimal(unitPrice * item.quantity);
+        grandTotal = roundDecimal(grandTotal + totalAmount);
 
         // La dirección del stock depende del tipo de devolución:
         // - Devolución de COMPRA a proveedor (código exit, p.ej. 1107/2107) → sale stock

@@ -4,6 +4,7 @@ import { EntityManager, In, Repository } from 'typeorm';
 import { InventoryWarehouse } from '../entities/inventory-warehouse.entity';
 import { Movement } from '../entities/movement.entity';
 import { WarehousesService } from '../warehouses/warehouses.service';
+import { roundDecimal, toDecimal } from '../common/utils/decimal.util';
 
 @Injectable()
 export class InventoryWarehouseService {
@@ -186,16 +187,15 @@ export class InventoryWarehouseService {
       // Costo Promedio Ponderado (NCC Res. 235-2005 MFP)
       // IMPORTANTE: calcular ANTES de modificar el stock
       if (newUnitPrice && newUnitPrice > 0) {
-        const previousStock = inventory.stock;
-        const previousTotalValue = previousStock * inventory.unitPrice;
-        const newTotalValue = quantityChange * newUnitPrice;
+        const previousStock = Number(inventory.stock);
+        const previousTotalValue = previousStock * toDecimal(inventory.unitPrice);
+        const newTotalValue = quantityChange * toDecimal(newUnitPrice);
         const newStock = previousStock + quantityChange;
-        
+
         // Fórmula: (stockAnterior × precioAnterior + cantidadNueva × precioNuevo) / stockNuevo
+        // Se conservan 8 decimales: redondear a 2 aquí descuadraba las devoluciones.
         if (newStock > 0) {
-          inventory.unitPrice = (previousTotalValue + newTotalValue) / newStock;
-          // Redondear a 2 decimales para precisión monetaria
-          inventory.unitPrice = Math.round(inventory.unitPrice * 100) / 100;
+          inventory.unitPrice = roundDecimal((previousTotalValue + newTotalValue) / newStock);
         }
       }
 
@@ -246,7 +246,7 @@ export class InventoryWarehouseService {
       return { unitCost: lastKnownCost, totalStock: 0 };
     }
     return {
-      unitCost: Math.round((totalValue / totalStock) * 100) / 100,
+      unitCost: roundDecimal(totalValue / totalStock),
       totalStock,
     };
   }

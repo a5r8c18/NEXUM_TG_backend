@@ -44,13 +44,13 @@ export class AccountReceivable {
   @Column({ name: 'customer_nit', type: 'varchar', length: 20, nullable: true })
   customerNit: string | null;
 
-  @Column({ name: 'original_amount', type: 'decimal', precision: 12, scale: 2 })
+  @Column({ name: 'original_amount', type: 'decimal', precision: 20, scale: 8 })
   originalAmount: number;
 
-  @Column({ name: 'balance_amount', type: 'decimal', precision: 12, scale: 2 })
+  @Column({ name: 'balance_amount', type: 'decimal', precision: 20, scale: 8 })
   balanceAmount: number;
 
-  @Column({ name: 'paid_amount', type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({ name: 'paid_amount', type: 'decimal', precision: 20, scale: 8, default: 0 })
   paidAmount: number;
 
   @Column({ name: 'due_date', type: 'date' })
@@ -77,7 +77,7 @@ export class AccountReceivable {
   @Column({ name: 'last_payment_date', type: 'date', nullable: true })
   lastPaymentDate: string | null;
 
-  @Column({ name: 'last_payment_amount', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  @Column({ name: 'last_payment_amount', type: 'decimal', precision: 20, scale: 8, nullable: true })
   lastPaymentAmount: number | null;
 
   @Column({ name: 'collection_notes', type: 'text', nullable: true })

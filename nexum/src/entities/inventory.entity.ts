@@ -52,8 +52,8 @@ export class Inventory {
   @Column({
     name: 'unit_price',
     type: 'decimal',
-    precision: 12,
-    scale: 2,
+    precision: 18,
+    scale: 8,
     default: 0,
   })
   unitPrice: number;
