@@ -959,6 +959,8 @@ export class MovementsService {
     }
 
     const category = data.category || movType.category;
+    const isReturn = isReturnCode(data.movementCode);
+    const isPurchaseReturn = isPurchaseReturnCode(data.movementCode);
 
     // Obtener inventario de todos los productos en batch
     const productCodes = items.map((i) => i.productCode);
@@ -969,11 +971,41 @@ export class MovementsService {
       const movementItems: Partial<MovementItem>[] = [];
       const valeProducts: any[] = [];
 
+      // Para devoluciones de compra, precargar el importe exacto de la compra original
+      // de cada producto. Si se devuelve todo el lote exacto, usamos su importe total y
+      // precio unitario real para cuadrar con la cuenta por pagar original.
+      let purchaseReturnPrices = new Map<string, { totalPrice: number; quantity: number }>();
+      if (isPurchaseReturn) {
+        const rows: any[] = await manager.query(
+          `SELECT DISTINCT ON (pp.product_code) pp.product_code, pp.total_price, pp.quantity
+           FROM purchase_products pp
+           INNER JOIN purchases p ON p.id = pp.purchase_id
+           WHERE p.company_id = $1 AND p.warehouse = $2 AND pp.product_code = ANY($3)
+           ORDER BY pp.product_code, p.created_at DESC`,
+          [companyId, data.warehouseId, productCodes],
+        );
+        for (const r of rows) {
+          purchaseReturnPrices.set(r.product_code, {
+            totalPrice: Number(r.total_price),
+            quantity: Number(r.quantity),
+          });
+        }
+      }
+
       for (const item of items) {
         const inventories = inventoryMap.get(item.productCode) || [];
         const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
-        const unitPrice = toDecimal(inventory?.unitPrice);
-        const totalAmount = roundDecimal(unitPrice * item.quantity);
+
+        let unitPrice: number;
+        let totalAmount: number;
+        const purchasePrice = isPurchaseReturn ? purchaseReturnPrices.get(item.productCode) : undefined;
+        if (purchasePrice && item.quantity === purchasePrice.quantity) {
+          totalAmount = roundDecimal(purchasePrice.totalPrice);
+          unitPrice = roundDecimal(totalAmount / item.quantity);
+        } else {
+          unitPrice = toDecimal(inventory?.unitPrice);
+          totalAmount = roundDecimal(unitPrice * item.quantity);
+        }
         grandTotal = roundDecimal(grandTotal + totalAmount);
 
         // Actualizar stock dentro de la transacción
@@ -1009,8 +1041,6 @@ export class MovementsService {
           amount: totalAmount,
         });
       }
-
-      const isReturn = isReturnCode(data.movementCode);
 
       // Registrar movimiento (documento único) dentro de la transacción
       const savedMov = await manager.getRepository(Movement).save(

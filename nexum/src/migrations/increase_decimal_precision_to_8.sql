@@ -24,6 +24,11 @@ ALTER TABLE movement_items
   ALTER COLUMN unit_price TYPE numeric(18, 8),
   ALTER COLUMN total_amount TYPE numeric(20, 8);
 
+-- ── Productos de compras ──
+ALTER TABLE purchase_products
+  ALTER COLUMN unit_price TYPE numeric(18, 8),
+  ALTER COLUMN total_price TYPE numeric(20, 8);
+
 -- ── Cuentas por pagar ──
 ALTER TABLE account_payables
   ALTER COLUMN original_amount TYPE numeric(20, 8),

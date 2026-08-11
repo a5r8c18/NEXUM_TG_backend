@@ -28,6 +28,11 @@ export class IncreaseDecimalPrecisionTo81700000000001 implements MigrationInterf
          ALTER COLUMN unit_price TYPE numeric(18, 8),
          ALTER COLUMN total_amount TYPE numeric(20, 8)`,
     );
+    await queryRunner.query(
+      `ALTER TABLE purchase_products
+         ALTER COLUMN unit_price TYPE numeric(18, 8),
+         ALTER COLUMN total_price TYPE numeric(20, 8)`,
+    );
 
     await queryRunner.query(
       `ALTER TABLE account_payables
@@ -72,6 +77,11 @@ export class IncreaseDecimalPrecisionTo81700000000001 implements MigrationInterf
          ALTER COLUMN balance_amount TYPE numeric(12, 2),
          ALTER COLUMN paid_amount TYPE numeric(12, 2),
          ALTER COLUMN last_payment_amount TYPE numeric(12, 2)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE purchase_products
+         ALTER COLUMN unit_price TYPE numeric(12, 2),
+         ALTER COLUMN total_price TYPE numeric(15, 2)`,
     );
     await queryRunner.query(
       `ALTER TABLE movement_items

@@ -28,10 +28,10 @@ export class PurchaseProduct {
   @Column({ type: 'int' })
   quantity: number;
 
-  @Column({ name: 'unit_price', type: 'decimal', precision: 12, scale: 2 })
+  @Column({ name: 'unit_price', type: 'decimal', precision: 18, scale: 8 })
   unitPrice: number;
 
-  @Column({ name: 'total_price', type: 'decimal', precision: 12, scale: 2 })
+  @Column({ name: 'total_price', type: 'decimal', precision: 18, scale: 8 })
   totalPrice: number;
 
   @Column({ name: 'product_unit', length: 20, default: 'und' })
