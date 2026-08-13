@@ -51,15 +51,29 @@ export class HrManagementService {
   }
 
   async createContract(companyId: number, data: Partial<EmployeeContract>) {
-    const contract = this.contractRepo.create({ ...data, companyId });
+    const sanitized = this.sanitizeContractDates(data);
+    const contract = this.contractRepo.create({ ...sanitized, companyId });
     return this.contractRepo.save(contract);
   }
 
   async updateContract(companyId: number, id: string, data: Partial<EmployeeContract>) {
     const contract = await this.contractRepo.findOneBy({ id, companyId });
     if (!contract) throw new NotFoundException(`Contrato #${id} no encontrado`);
-    Object.assign(contract, data);
+    Object.assign(contract, this.sanitizeContractDates(data));
     return this.contractRepo.save(contract);
+  }
+
+  private sanitizeContractDates(
+    data: Partial<EmployeeContract>,
+  ): Partial<EmployeeContract> {
+    const result = { ...data };
+    if ((result.startDate as any) === '' || result.startDate == null) {
+      result.startDate = undefined;
+    }
+    if ((result.endDate as any) === '' || result.endDate == null) {
+      result.endDate = null;
+    }
+    return result;
   }
 
   async deleteContract(companyId: number, id: string) {
