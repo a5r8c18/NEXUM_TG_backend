@@ -111,10 +111,30 @@ export class HrService {
   // ── Departments ──
 
   async findAllDepartments(companyId: number) {
-    return this.departmentRepo.find({
+    const departments = await this.departmentRepo.find({
       where: { companyId },
       order: { name: 'ASC' },
     });
+
+    // Contar empleados activos o de licencia por departamento.
+    const counts = await this.employeeRepo
+      .createQueryBuilder('e')
+      .select('e.departmentId', 'departmentId')
+      .addSelect('COUNT(*)', 'count')
+      .where('e.companyId = :companyId', { companyId })
+      .andWhere('e.departmentId IS NOT NULL')
+      .andWhere('e.status != :inactive', { inactive: 'inactive' })
+      .groupBy('e.departmentId')
+      .getRawMany();
+
+    const countMap = new Map<string, number>(
+      counts.map((c) => [c.departmentId, Number(c.count)]),
+    );
+    for (const dept of departments) {
+      dept.employeeCount = countMap.get(dept.id) || 0;
+    }
+
+    return departments;
   }
 
   async createDepartment(companyId: number, data: Partial<Department>) {
