@@ -73,6 +73,15 @@ export class FixedAsset {
   @Column({ name: 'current_value', type: 'decimal', precision: 12, scale: 2 })
   currentValue: number;
 
+  @Column({
+    name: 'accumulated_depreciation',
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    default: 0,
+  })
+  accumulatedDepreciation: number;
+
   @Column({ name: 'acquisition_date', type: 'date' })
   acquisitionDate: string;
 
@@ -96,6 +105,9 @@ export class FixedAsset {
 
   @Column({ name: 'cost_center_id', type: 'uuid', nullable: true })
   costCenterId: string | null;
+
+  @Column({ name: 'supplier_id', type: 'uuid', nullable: true })
+  supplierId: string | null;
 
   @ManyToOne(() => CostCenter, { nullable: true })
   @JoinColumn({ name: 'cost_center_id' })

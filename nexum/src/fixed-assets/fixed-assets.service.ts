@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
 import { DepreciationHistory } from '../entities/depreciation-history.entity';
+import { Supplier } from '../entities/supplier.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -30,6 +31,8 @@ export class FixedAssetsService {
     private readonly inventoryRepo: Repository<FixedAssetInventory>,
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
+    @InjectRepository(Supplier)
+    private readonly supplierRepo: Repository<Supplier>,
     @Inject(forwardRef(() => FinanceService))
     private readonly financeService: FinanceService,
     private readonly accountMappingService: AccountMappingService,
@@ -104,9 +107,15 @@ export class FixedAssetsService {
       responsiblePerson?: string;
       employeeId?: string;
       costCenterId?: string;
+      supplierId?: string;
     },
   ) {
     const depRate = await this.getDepreciationRateFromCatalog(companyId, data.groupNumber, data.subgroup);
+    if (depRate == null || depRate <= 0) {
+      throw new BadRequestException(
+        `El subgrupo ${data.subgroup} del grupo ${data.groupNumber} no tiene una tasa de depreciación válida en el catálogo. Configure el catálogo antes de registrar el activo.`,
+      );
+    }
 
     let responsiblePerson = data.responsiblePerson || '';
     if (data.employeeId) {
@@ -115,6 +124,18 @@ export class FixedAssetsService {
       });
       if (employee) {
         responsiblePerson = `${employee.firstName} ${employee.lastName}`.trim();
+      }
+    }
+
+    let supplierName = 'Proveedor AFT';
+    let supplierNit = 'N/D';
+    if (data.supplierId) {
+      const supplier = await this.supplierRepo.findOne({
+        where: { id: data.supplierId, companyId },
+      });
+      if (supplier) {
+        supplierName = supplier.businessName;
+        supplierNit = supplier.nit;
       }
     }
 
@@ -132,8 +153,10 @@ export class FixedAssetsService {
       asset.location = data.location || '';
       asset.responsiblePerson = responsiblePerson;
       asset.employeeId = data.employeeId || null;
-      asset.depreciationRate = depRate ?? 0;
+      asset.supplierId = data.supplierId || null;
+      asset.depreciationRate = depRate;
       asset.currentValue = data.acquisitionValue;
+      asset.accumulatedDepreciation = 0;
       asset.status = 'active';
       await manager.getRepository(FixedAsset).save(asset);
 
@@ -189,8 +212,9 @@ export class FixedAssetsService {
 
           await this.financeService.createPayable(companyId, {
             purchaseNumber: asset.assetCode,
-            supplierName: 'Proveedor AFT',
-            supplierNit: 'N/D',
+            supplierName,
+            supplierNit,
+            supplierId: data.supplierId || undefined,
             originalAmount: acquisitionValue,
             dueDate: dueDate.toISOString().split('T')[0],
             status: 'pending',
@@ -360,12 +384,13 @@ export class FixedAssetsService {
     const disposalDate = data.disposalDate || new Date().toISOString().split('T')[0];
     const acquisitionValue = Number(asset.acquisitionValue);
     const currentValue = Number(asset.currentValue);
-    const accumulatedDepreciation = acquisitionValue - currentValue;
+    const accumulatedDepreciation = Number(asset.accumulatedDepreciation);
     const residualLoss = currentValue; // Valor no depreciado = pérdida
 
     const oldStatus = asset.status;
     asset.status = 'disposed';
     asset.currentValue = 0;
+    asset.accumulatedDepreciation = acquisitionValue;
     await this.assetRepo.save(asset);
 
     // ── Comprobante contable de baja ──
@@ -610,7 +635,20 @@ export class FixedAssetsService {
     }
 
     const oldAcquisitionValue = Number(asset.acquisitionValue);
-    asset.currentValue = newCurrentValue;
+    const oldAccumulatedDepreciation = Number(asset.accumulatedDepreciation);
+
+    // Ajustar valor bruto y valor contable conservando la coherencia contable.
+    asset.acquisitionValue = Math.max(0, oldAcquisitionValue + revaluationDifference);
+    asset.currentValue = Math.max(0, newCurrentValue);
+    if (asset.currentValue === 0) {
+      asset.accumulatedDepreciation = Math.min(asset.acquisitionValue, oldAccumulatedDepreciation);
+    } else {
+      // Recalibrar depreciación acumulada para que currentValue = acquisitionValue - accumulated.
+      asset.accumulatedDepreciation = Math.min(
+        asset.acquisitionValue,
+        Math.max(0, asset.acquisitionValue - asset.currentValue),
+      );
+    }
     await this.assetRepo.save(asset);
 
     // ── Comprobante contable de revalorización ──
@@ -923,9 +961,19 @@ export class FixedAssetsService {
 
       const acquisitionValue = Number(asset.acquisitionValue);
       const currentValue = Number(asset.currentValue);
-      const accumulatedDepreciation = acquisitionValue - currentValue;
+      const accumulatedDepreciation = Number(asset.accumulatedDepreciation);
       const usefulLifeYears = asset.depreciationRate > 0 ? 100 / asset.depreciationRate : null;
       const reportDate = new Date();
+
+      // Vida útil restante en meses, basada en el valor contable actual y la tasa.
+      const annualDepreciation =
+        usefulLifeYears && acquisitionValue > 0
+          ? acquisitionValue / usefulLifeYears
+          : 0;
+      const remainingUsefulLife =
+        annualDepreciation > 0
+          ? Math.max(0, Math.round(currentValue / annualDepreciation * 12))
+          : null;
 
       const inventoryData = {
         assetId: asset.id,
@@ -945,7 +993,7 @@ export class FixedAssetsService {
         responsiblePerson: asset.responsiblePerson || null,
         status: overrideStatus || (asset.status as any) || 'active',
         usefulLifeYears: usefulLifeYears ? Math.round(usefulLifeYears) : null,
-        remainingUsefulLife: usefulLifeYears ? Math.max(0, Math.round(usefulLifeYears - (accumulatedDepreciation / (acquisitionValue / usefulLifeYears)))) : null,
+        remainingUsefulLife,
       };
 
       if (existing) {
@@ -1092,44 +1140,61 @@ export class FixedAssetsService {
     companyId: number,
     year: number,
     month: number,
+    includeProcessed: boolean = false,
   ) {
     const assets = await this.assetRepo.find({
       where: { companyId, status: 'active' },
     });
+
+    // Idempotencia: evitar duplicar meses ya procesados salvo que se fuerce.
+    const processedIds = includeProcessed
+      ? new Set<number>()
+      : new Set<number>(
+          (
+            await this.depreciationHistoryRepo.find({
+              where: { companyId, year, month },
+              select: ['assetId'],
+            })
+          ).map((h) => h.assetId),
+        );
+
     const depreciationRecords: any[] = [];
 
     for (const asset of assets) {
+      if (processedIds.has(asset.id)) continue;
+
       const acquisitionDate = new Date(asset.acquisitionDate);
       const currentDate = new Date(year, month - 1, 1);
 
-      if (currentDate >= acquisitionDate) {
-        const monthsElapsed = Math.max(
-          0,
-          (currentDate.getFullYear() - acquisitionDate.getFullYear()) * 12 +
-            (currentDate.getMonth() - acquisitionDate.getMonth()),
-        );
+      if (currentDate < acquisitionDate) continue;
 
-        const acqVal = Number(asset.acquisitionValue);
-        const depRate = Number(asset.depreciationRate);
-        const monthlyDepreciation = (acqVal * (depRate / 100)) / 12;
-        const accumulatedDepreciation = Math.min(
-          monthlyDepreciation * monthsElapsed,
-          acqVal,
-        );
-        const currentValue = Math.max(acqVal - accumulatedDepreciation, 0);
+      const acqVal = Number(asset.acquisitionValue);
+      const depRate = Number(asset.depreciationRate);
+      const monthlyDepreciation = (acqVal * (depRate / 100)) / 12;
+      const previousAccumulated = Number(asset.accumulatedDepreciation || 0);
+      const newAccumulated = Math.min(
+        previousAccumulated + monthlyDepreciation,
+        acqVal,
+      );
+      const realMonthlyDepreciation = Math.min(
+        newAccumulated - previousAccumulated,
+        acqVal,
+      );
+      const currentValue = Math.max(acqVal - newAccumulated, 0);
 
-        depreciationRecords.push({
-          assetId: asset.id,
-          assetCode: asset.assetCode,
-          assetName: asset.name,
-          month,
-          year,
-          monthlyDepreciation,
-          accumulatedDepreciation,
-          currentValue,
-          depreciationRate: depRate,
-        });
-      }
+      if (realMonthlyDepreciation <= 0 && currentValue <= 0) continue;
+
+      depreciationRecords.push({
+        assetId: asset.id,
+        assetCode: asset.assetCode,
+        assetName: asset.name,
+        month,
+        year,
+        monthlyDepreciation: realMonthlyDepreciation,
+        accumulatedDepreciation: newAccumulated,
+        currentValue,
+        depreciationRate: depRate,
+      });
     }
 
     return { records: depreciationRecords };
@@ -1154,26 +1219,10 @@ export class FixedAssetsService {
     month: number,
   ) {
     const result = await this.calculateMonthlyDepreciation(companyId, year, month);
-    const records = result.records;
-
-    if (records.length === 0) {
-      return { message: 'No hay depreciaciones para este período', voucher: null };
-    }
-
-    // ── Idempotencia: omitir activos ya depreciados en el período ──
-    const alreadyProcessedAssetIds = new Set(
-      (
-        await this.depreciationHistoryRepo.find({
-          where: { companyId, year, month },
-          select: ['assetId'],
-        })
-      ).map((h) => h.assetId),
-    );
-
-    const newRecords = records.filter((r) => !alreadyProcessedAssetIds.has(r.assetId));
+    const newRecords = result.records;
 
     if (newRecords.length === 0) {
-      return { message: `Depreciación ${month}/${year} ya fue procesada`, voucher: null };
+      return { message: `Depreciación ${month}/${year} ya fue procesada o no aplica`, voucher: null };
     }
 
     const totalDepreciation = newRecords.reduce(
@@ -1285,6 +1334,7 @@ export class FixedAssetsService {
       });
       if (asset) {
         asset.currentValue = record.currentValue;
+        asset.accumulatedDepreciation = record.accumulatedDepreciation;
         await this.assetRepo.save(asset);
 
         const history = new DepreciationHistory();

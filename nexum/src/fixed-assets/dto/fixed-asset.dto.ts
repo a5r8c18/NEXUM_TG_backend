@@ -57,6 +57,10 @@ export class CreateFixedAssetDto {
   @IsOptional()
   @IsString()
   employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  supplierId?: string;
 }
 
 export class UpdateFixedAssetDto {
