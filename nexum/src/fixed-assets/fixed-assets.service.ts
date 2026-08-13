@@ -129,6 +129,7 @@ export class FixedAssetsService {
 
     let supplierName = 'Proveedor AFT';
     let supplierNit = 'N/D';
+    let accountingWarning: string | null = null;
     if (data.supplierId) {
       const supplier = await this.supplierRepo.findOne({
         where: { id: data.supplierId, companyId },
@@ -136,6 +137,8 @@ export class FixedAssetsService {
       if (supplier) {
         supplierName = supplier.businessName;
         supplierNit = supplier.nit;
+      } else {
+        accountingWarning = `Proveedor ${data.supplierId} no encontrado; se usará proveedor genérico.`;
       }
     }
 
@@ -229,7 +232,7 @@ export class FixedAssetsService {
         }
       }
 
-      return { asset };
+      return { asset, accountingWarning };
     });
 
     // ── Auditoría de creación ──
@@ -249,7 +252,7 @@ export class FixedAssetsService {
       },
     });
 
-    return result;
+    return { ...result, accountingWarning };
   }
 
   async update(
@@ -786,7 +789,7 @@ export class FixedAssetsService {
     // ── Comprobante contable de salida (entidad origen) ──
     let assetAccount: string;
     let accumulatedDepreciationAccount: string = '375';
-    let transferAccount: string = '699';
+    let transferAccount: string = '696';
     try {
       const acquisitionValue = Number(asset.acquisitionValue);
       const currentValue = Number(asset.currentValue);
@@ -806,7 +809,7 @@ export class FixedAssetsService {
         (await this.accountMappingService.getAccountForMapping(
           companyId,
           MappingType.FIXED_ASSET_TRANSFER,
-        )) || '699';
+        )) || '696';
 
       await this.voucherService.createVoucherFromModule(
         companyId,
