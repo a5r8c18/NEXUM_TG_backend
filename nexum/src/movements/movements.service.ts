@@ -618,20 +618,47 @@ export class MovementsService {
 
     if (isPurchaseReturnCode(movementCode)) {
       const repo = manager.getRepository(AccountPayable);
-      const qb = repo
+      const baseQb = repo
         .createQueryBuilder('ap')
         .where('ap.company_id = :companyId', { companyId })
         .andWhere('ap.status IN (:...statuses)', { statuses: ['pending', 'partial', 'overdue'] })
         .andWhere('ap.balance_amount > 0');
-      if (entityName) {
-        qb.andWhere('LOWER(TRIM(ap.supplier_name)) = LOWER(TRIM(:supplierName))', {
-          supplierName: entityName,
-        });
+
+      let payable: AccountPayable | null = null;
+      const trimmedEntity = entityName?.trim();
+      if (trimmedEntity) {
+        // 1) Coincidencia exacta (ignorando mayúsculas y espacios).
+        payable = await baseQb
+          .clone()
+          .andWhere('LOWER(TRIM(ap.supplier_name)) = LOWER(TRIM(:supplierName))', {
+            supplierName: trimmedEntity,
+          })
+          .orderBy('ap.created_at', 'DESC')
+          .getOne();
+
+        // 2) Si falla, búsqueda por contención (el proveedor puede tener prefijos/sufijos).
+        if (!payable) {
+          payable = await baseQb
+            .clone()
+            .andWhere('ap.supplier_name ILIKE :supplierName', {
+              supplierName: `%${trimmedEntity}%`,
+            })
+            .orderBy('ap.created_at', 'DESC')
+            .getOne();
+        }
       }
-      const payable = await qb.orderBy('ap.created_at', 'ASC').getOne();
+
+      // 3) Sin filtro de entidad (último recurso si no se indicó proveedor).
+      if (!payable) {
+        payable = await baseQb
+          .clone()
+          .orderBy('ap.created_at', 'DESC')
+          .getOne();
+      }
+
       if (!payable) {
         this.logger.warn(
-          `Devolución ${movementCode}: no se encontró cuenta por pagar pendiente${entityName ? ` de ${entityName}` : ''}`,
+          `Devolución ${movementCode}: no se encontró cuenta por pagar pendiente${trimmedEntity ? ` de ${trimmedEntity}` : ''}`,
         );
         return;
       }
@@ -654,20 +681,44 @@ export class MovementsService {
 
     if (isEntitySalesReturnCode(movementCode)) {
       const repo = manager.getRepository(AccountReceivable);
-      const qb = repo
+      const baseQb = repo
         .createQueryBuilder('ar')
         .where('ar.company_id = :companyId', { companyId })
         .andWhere('ar.status IN (:...statuses)', { statuses: ['pending', 'partial', 'overdue'] })
         .andWhere('ar.balance_amount > 0');
-      if (entityName) {
-        qb.andWhere('LOWER(TRIM(ar.customer_name)) = LOWER(TRIM(:customerName))', {
-          customerName: entityName,
-        });
+
+      let receivable: AccountReceivable | null = null;
+      const trimmedEntity = entityName?.trim();
+      if (trimmedEntity) {
+        receivable = await baseQb
+          .clone()
+          .andWhere('LOWER(TRIM(ar.customer_name)) = LOWER(TRIM(:customerName))', {
+            customerName: trimmedEntity,
+          })
+          .orderBy('ar.created_at', 'DESC')
+          .getOne();
+
+        if (!receivable) {
+          receivable = await baseQb
+            .clone()
+            .andWhere('ar.customer_name ILIKE :customerName', {
+              customerName: `%${trimmedEntity}%`,
+            })
+            .orderBy('ar.created_at', 'DESC')
+            .getOne();
+        }
       }
-      const receivable = await qb.orderBy('ar.created_at', 'ASC').getOne();
+
+      if (!receivable) {
+        receivable = await baseQb
+          .clone()
+          .orderBy('ar.created_at', 'DESC')
+          .getOne();
+      }
+
       if (!receivable) {
         this.logger.warn(
-          `Devolución ${movementCode}: no se encontró cuenta por cobrar pendiente${entityName ? ` de ${entityName}` : ''}`,
+          `Devolución ${movementCode}: no se encontró cuenta por cobrar pendiente${trimmedEntity ? ` de ${trimmedEntity}` : ''}`,
         );
         return;
       }

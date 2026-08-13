@@ -154,6 +154,12 @@ export class FinanceService {
     return this.arRepo.save(ar);
   }
 
+  async updateReceivable(companyId: number, id: string, data: any) {
+    const ar = await this.findOneReceivable(companyId, id);
+    Object.assign(ar, data);
+    return this.arRepo.save(ar);
+  }
+
   async getReceivableStatistics(companyId: number) {
     const all = await this.arRepo.find({ where: { companyId } });
     const totalPending = all.filter(a => a.status !== 'paid').reduce((s, a) => s + Number(a.balanceAmount), 0);
@@ -210,6 +216,12 @@ export class FinanceService {
       balanceAmount: data.originalAmount,
     });
     return apRepo.save(ap);
+  }
+
+  async updatePayable(companyId: number, id: string, data: any) {
+    const ap = await this.findOnePayable(companyId, id);
+    Object.assign(ap, data);
+    return this.apRepo.save(ap);
   }
 
   async getPayableStatistics(companyId: number) {

@@ -65,6 +65,11 @@ export class FinanceController {
     return this.financeService.createReceivable(getCompanyId(req), body);
   }
 
+  @Put('receivables/:id')
+  updateReceivable(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.updateReceivable(getCompanyId(req), id, body);
+  }
+
   // ── Cuentas por Pagar ──
   @Get('payables')
   findAllPayables(
@@ -88,6 +93,11 @@ export class FinanceController {
   @Post('payables')
   createPayable(@Req() req: Request, @Body() body: any) {
     return this.financeService.createPayable(getCompanyId(req), body);
+  }
+
+  @Put('payables/:id')
+  updatePayable(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.updatePayable(getCompanyId(req), id, body);
   }
 
   // ── Cuentas Bancarias ──
