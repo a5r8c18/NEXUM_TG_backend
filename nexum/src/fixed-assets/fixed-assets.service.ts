@@ -3,12 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
 import { FixedAssetArea } from '../entities/fixed-asset-area.entity';
-import { DepreciationHistory } from '../entities/depreciation-history.entity';
 import { DepreciationCatalog } from '../entities/depreciation-catalog.entity';
+import { DepreciationHistory } from '../entities/depreciation-history.entity';
 import { FixedAssetInventory } from '../entities/fixed-asset-inventory.entity';
 import { Employee } from '../entities/employee.entity';
 import { Supplier } from '../entities/supplier.entity';
 import { CostCenter } from '../entities/cost-center.entity';
+import { mockDepreciationCatalog } from '../shared/mock-data';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -1035,10 +1036,32 @@ export class FixedAssetsService {
   }
 
   async getDepreciationCatalog(companyId: number) {
-    const entries = await this.catalogRepo.find({
+    let entries = await this.catalogRepo.find({
       where: { companyId, isActive: true },
       order: { groupNumber: 'ASC', subgroupName: 'ASC' },
     });
+
+    if (entries.length === 0) {
+      for (const group of mockDepreciationCatalog as any[]) {
+        for (const sub of group.subgroups) {
+          const entry = this.catalogRepo.create({
+            companyId,
+            groupNumber: group.group_number,
+            groupName: group.group_name,
+            subgroupName: sub.name,
+            depreciationRate: sub.rate,
+            usefulLifeYears: sub.rate > 0 ? Math.round(100 / sub.rate) : null,
+            description: sub.detail || null,
+            isActive: true,
+          });
+          await this.catalogRepo.save(entry);
+        }
+      }
+      entries = await this.catalogRepo.find({
+        where: { companyId, isActive: true },
+        order: { groupNumber: 'ASC', subgroupName: 'ASC' },
+      });
+    }
 
     const grouped = new Map<number, { group_number: number; group_name: string; subgroups: any[] }>();
     for (const entry of entries) {
