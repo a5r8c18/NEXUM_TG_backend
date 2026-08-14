@@ -1012,11 +1012,27 @@ export class FixedAssetsService {
   }
 
   async getDepreciationCatalog(companyId: number) {
-    const catalog = await this.catalogRepo.find({
+    const entries = await this.catalogRepo.find({
       where: { companyId, isActive: true },
       order: { groupNumber: 'ASC', subgroupName: 'ASC' },
     });
-    return { catalog };
+
+    const grouped = new Map<number, { group_number: number; group_name: string; subgroups: any[] }>();
+    for (const entry of entries) {
+      if (!grouped.has(entry.groupNumber)) {
+        grouped.set(entry.groupNumber, {
+          group_number: entry.groupNumber,
+          group_name: entry.groupName,
+          subgroups: [],
+        });
+      }
+      grouped.get(entry.groupNumber)!.subgroups.push({
+        name: entry.subgroupName,
+        rate: Number(entry.depreciationRate),
+      });
+    }
+
+    return { catalog: Array.from(grouped.values()) };
   }
 
   private async getDepreciationRateFromCatalog(
