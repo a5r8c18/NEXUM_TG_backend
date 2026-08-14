@@ -47,6 +47,11 @@ export class CostCenter {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   budget: number;
 
+  // Cuenta de gasto por defecto del PUC cubana asociada a este centro de costo.
+  // Ej. 700-0020 (Producción), 731 (Asociados), 822 (Administrativos).
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  expenseAccountCode: string | null;
+
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 

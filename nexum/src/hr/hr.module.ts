@@ -5,13 +5,13 @@ import { HrService } from './hr.service';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
 import {
-  ContractsController,
   AttendanceController,
   LeavesController,
 } from './hr-management.controller';
 import { HrManagementService } from './hr-management.service';
 import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
+import { CostCenter } from '../entities/cost-center.entity';
 import { Payroll } from '../entities/payroll.entity';
 import { PayrollItem } from '../entities/payroll-item.entity';
 import { EmployeeContract } from '../entities/employee-contract.entity';
@@ -28,6 +28,7 @@ import { FinanceModule } from '../finance/finance.module';
     TypeOrmModule.forFeature([
       Employee,
       Department,
+      CostCenter,
       Payroll,
       PayrollItem,
       EmployeeContract,
@@ -43,7 +44,6 @@ import { FinanceModule } from '../finance/finance.module';
   controllers: [
     HrController,
     PayrollController,
-    ContractsController,
     AttendanceController,
     LeavesController,
   ],

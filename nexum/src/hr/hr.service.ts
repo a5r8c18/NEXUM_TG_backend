@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
+import { CostCenter } from '../entities/cost-center.entity';
 import { EmployeeSalaryHistory } from '../entities/employee-salary-history.entity';
 
 @Injectable()
@@ -12,6 +13,8 @@ export class HrService {
     private readonly employeeRepo: Repository<Employee>,
     @InjectRepository(Department)
     private readonly departmentRepo: Repository<Department>,
+    @InjectRepository(CostCenter)
+    private readonly costCenterRepo: Repository<CostCenter>,
     @InjectRepository(EmployeeSalaryHistory)
     private readonly salaryHistoryRepo: Repository<EmployeeSalaryHistory>,
   ) {}
@@ -45,9 +48,12 @@ export class HrService {
   }
 
   async createEmployee(companyId: number, data: Partial<Employee>) {
+    const resolved = await this.resolveDepartmentAndCostCenter(companyId, data);
+
     const count = await this.employeeRepo.count({ where: { companyId } });
     const emp = this.employeeRepo.create({
       ...data,
+      ...resolved,
       companyId,
       employeeCode: data.employeeCode || `EMP-${String(count + 1).padStart(4, '0')}`,
     });
@@ -57,7 +63,8 @@ export class HrService {
   async updateEmployee(companyId: number, id: string, data: Partial<Employee>) {
     const emp = await this.findOneEmployee(companyId, id);
     const previousSalary = Number(emp.salary) || 0;
-    Object.assign(emp, data);
+    const resolved = await this.resolveDepartmentAndCostCenter(companyId, data);
+    Object.assign(emp, data, resolved);
     const saved = await this.employeeRepo.save(emp);
 
     // Registrar historial si el salario cambió.
@@ -154,5 +161,52 @@ export class HrService {
     if (!dept) throw new NotFoundException(`Departamento #${id} no encontrado`);
     await this.departmentRepo.remove(dept);
     return { message: 'Departamento eliminado correctamente' };
+  }
+
+  /**
+   * Resuelve el centro de costo y el departamento para un empleado siguiendo la
+   * cadena contable cubana: departamento -> centro de costo -> cuenta de gasto.
+   * Si se envía departmentId sin costCenterId, hereda el centro del departamento.
+   * Si el centro de costo no tiene expenseAccountCode, se emite una advertencia.
+   */
+  private async resolveDepartmentAndCostCenter(
+    companyId: number,
+    data: Partial<Employee>,
+  ): Promise<Partial<Employee>> {
+    const resolved: Partial<Employee> = {};
+    let departmentId = data.departmentId;
+    let costCenterId = data.costCenterId;
+    let costCenter: CostCenter | null = null;
+
+    if (departmentId) {
+      const department = await this.departmentRepo.findOneBy({ id: departmentId, companyId });
+      if (department) {
+        resolved.departmentName = department.name;
+        if (!costCenterId && department.costCenterId) {
+          costCenterId = department.costCenterId;
+          resolved.costCenterId = costCenterId;
+        }
+      } else {
+        throw new NotFoundException(`Departamento ${departmentId} no encontrado`);
+      }
+    }
+
+    if (costCenterId) {
+      costCenter = await this.costCenterRepo.findOneBy({ id: costCenterId, companyId });
+      if (!costCenter) {
+        throw new NotFoundException(`Centro de costo ${costCenterId} no encontrado`);
+      }
+      if (!costCenter.expenseAccountCode) {
+        // Advertencia controlada; no interrumpimos la creación del empleado.
+        console.warn(
+          `Centro de costo ${costCenter.id} no tiene cuenta de gasto asignada; la nómina usará mapeos por defecto.`,
+        );
+      }
+      if (!resolved.departmentName && !departmentId) {
+        resolved.costCenterId = costCenterId;
+      }
+    }
+
+    return resolved;
   }
 }

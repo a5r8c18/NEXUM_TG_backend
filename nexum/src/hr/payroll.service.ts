@@ -539,14 +539,20 @@ export class PayrollService {
         let totalOtherRetention = 0;
 
         for (const item of payroll.items) {
-          const costCenterType = item.costCenter?.type;
-          let accountCode: string;
-          if (costCenterType === 'production') {
-            accountCode = prodExpenseAccount || '700-0020';
-          } else if (costCenterType === 'associated') {
-            accountCode = assocExpenseAccount || '731';
-          } else {
-            accountCode = adminExpenseAccount || '822';
+          const costCenter = item.costCenter;
+          const costCenterType = costCenter?.type;
+          let accountCode: string = costCenter?.expenseAccountCode || '';
+
+          // Si el centro de costo no tiene cuenta de gasto propia, usamos los
+          // mapeos por defecto según el tipo de centro de costo.
+          if (!accountCode) {
+            if (costCenterType === 'production') {
+              accountCode = prodExpenseAccount || '700-0020';
+            } else if (costCenterType === 'associated') {
+              accountCode = assocExpenseAccount || '731';
+            } else {
+              accountCode = adminExpenseAccount || '822';
+            }
           }
           const gross = Number(item.grossSalary);
           const employerSS = Math.round(gross * EMPLOYER_SOCIAL_SECURITY_RATE * 100) / 100;
@@ -668,7 +674,7 @@ export class PayrollService {
         );
         this.logger.log(`Comprobante nómina ${payroll.period} generado`);
       } catch (error) {
-        this.logger.error(`Error contabilización nómina ${payroll.id}: ${error.message}`);
+        this.logger.error(`Error contabilización nómina ${payroll.id}: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       }
     }
@@ -743,7 +749,7 @@ export class PayrollService {
         );
         this.logger.log(`Comprobante pago nómina ${payroll.period} generado`);
       } catch (error) {
-        this.logger.error(`Error contabilización pago nómina: ${error.message}`);
+        this.logger.error(`Error contabilización pago nómina: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       }
 
@@ -789,7 +795,7 @@ export class PayrollService {
 
           this.logger.log(`Movimiento bancario y Payment registrados para pago nómina ${payroll.period}`);
         } catch (error) {
-          this.logger.error(`Error registrando movimiento bancario de nómina: ${error.message}`);
+          this.logger.error(`Error registrando movimiento bancario de nómina: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     }
@@ -835,7 +841,7 @@ export class PayrollService {
           );
         } catch (error) {
           this.logger.error(
-            `Error anulando comprobante ${voucher.voucherNumber}: ${error.message}`,
+            `Error anulando comprobante ${voucher.voucherNumber}: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
@@ -850,7 +856,7 @@ export class PayrollService {
           `Reverso por cancelación de nómina ${payroll.period}`,
         );
       } catch (error) {
-        this.logger.error(`Error reversando movimiento bancario: ${error.message}`);
+        this.logger.error(`Error reversando movimiento bancario: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 

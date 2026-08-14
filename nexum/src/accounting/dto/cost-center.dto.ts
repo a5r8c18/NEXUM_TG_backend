@@ -20,6 +20,10 @@ export class CreateCostCenterDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  expenseAccountCode?: string | null;
+
+  @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 }
@@ -36,6 +40,10 @@ export class UpdateCostCenterDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  expenseAccountCode?: string | null;
 
   @IsOptional()
   @IsBoolean()
