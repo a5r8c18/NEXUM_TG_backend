@@ -105,6 +105,7 @@ import { AccountMapping } from './entities/account-mapping.entity';
 import { DepreciationCatalog } from './entities/depreciation-catalog.entity';
 import { DepreciationHistory } from './entities/depreciation-history.entity';
 import { FixedAssetInventory } from './entities/fixed-asset-inventory.entity';
+import { FixedAssetArea } from './entities/fixed-asset-area.entity';
 import { LoginAttempt } from './entities/login-attempt.entity';
 import { Subaccount } from './entities/subaccount.entity';
 import { UserMFA } from './entities/user-mfa.entity';
@@ -137,6 +138,7 @@ import { DocumentSequence } from './entities/document-sequence.entity';
           Invoice,
           InvoiceItem,
           FixedAsset,
+          FixedAssetArea,
           ReceptionReport,
           ReceptionReportItem,
           DeliveryReport,
