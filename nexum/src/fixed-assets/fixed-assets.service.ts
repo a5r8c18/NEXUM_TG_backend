@@ -2,16 +2,18 @@ import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef,
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { FixedAsset } from '../entities/fixed-asset.entity';
+import { FixedAssetArea } from '../entities/fixed-asset-area.entity';
 import { DepreciationHistory } from '../entities/depreciation-history.entity';
+import { DepreciationCatalog } from '../entities/depreciation-catalog.entity';
+import { FixedAssetInventory } from '../entities/fixed-asset-inventory.entity';
+import { Employee } from '../entities/employee.entity';
 import { Supplier } from '../entities/supplier.entity';
+import { CostCenter } from '../entities/cost-center.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction, AuditResource } from '../entities/audit-log.entity';
-import { DepreciationCatalog } from '../entities/depreciation-catalog.entity';
-import { FixedAssetInventory } from '../entities/fixed-asset-inventory.entity';
-import { Employee } from '../entities/employee.entity';
 import { FinanceService } from '../finance/finance.service';
 
 @Injectable()
@@ -23,6 +25,8 @@ export class FixedAssetsService {
     private readonly voucherService: VoucherService,
     @InjectRepository(FixedAsset)
     private readonly assetRepo: Repository<FixedAsset>,
+    @InjectRepository(FixedAssetArea)
+    private readonly areaRepo: Repository<FixedAssetArea>,
     @InjectRepository(DepreciationHistory)
     private readonly depreciationHistoryRepo: Repository<DepreciationHistory>,
     @InjectRepository(DepreciationCatalog)
@@ -33,6 +37,8 @@ export class FixedAssetsService {
     private readonly employeeRepo: Repository<Employee>,
     @InjectRepository(Supplier)
     private readonly supplierRepo: Repository<Supplier>,
+    @InjectRepository(CostCenter)
+    private readonly costCenterRepo: Repository<CostCenter>,
     @Inject(forwardRef(() => FinanceService))
     private readonly financeService: FinanceService,
     private readonly accountMappingService: AccountMappingService,
@@ -104,6 +110,7 @@ export class FixedAssetsService {
       acquisitionValue: number;
       acquisitionDate: string;
       location?: string;
+      areaId?: number;
       responsiblePerson?: string;
       employeeId?: string;
       costCenterId?: string;
@@ -118,7 +125,15 @@ export class FixedAssetsService {
     }
 
     let responsiblePerson = data.responsiblePerson || '';
-    if (data.employeeId) {
+    if (data.costCenterId) {
+      const costCenter = await this.getCostCenterWithExpenseAccount(
+        companyId,
+        data.costCenterId,
+      );
+      if (costCenter) {
+        responsiblePerson = costCenter.expenseAccountCode || '';
+      }
+    } else if (data.employeeId) {
       const employee = await this.employeeRepo.findOne({
         where: { id: data.employeeId, companyId },
       });
@@ -153,9 +168,11 @@ export class FixedAssetsService {
       asset.subgroupDetail = data.subgroupDetail || '';
       asset.acquisitionValue = data.acquisitionValue;
       asset.acquisitionDate = data.acquisitionDate;
+      asset.areaId = data.areaId || null;
       asset.location = data.location || '';
       asset.responsiblePerson = responsiblePerson;
       asset.employeeId = data.employeeId || null;
+      asset.costCenterId = data.costCenterId || null;
       asset.supplierId = data.supplierId || null;
       asset.depreciationRate = depRate;
       asset.currentValue = data.acquisitionValue;
@@ -262,6 +279,7 @@ export class FixedAssetsService {
       name?: string;
       description?: string;
       location?: string;
+      areaId?: number | null;
       responsiblePerson?: string;
       status?: string;
       costCenterId?: string | null;
@@ -283,6 +301,7 @@ export class FixedAssetsService {
     if (data.name !== undefined) asset.name = data.name;
     if (data.description !== undefined) asset.description = data.description;
     if (data.location !== undefined) asset.location = data.location;
+    if (data.areaId !== undefined) asset.areaId = data.areaId;
     if (data.status !== undefined) asset.status = data.status;
 
     if (data.employeeId !== undefined) {
@@ -296,16 +315,20 @@ export class FixedAssetsService {
         }
       } else {
         asset.employeeId = null;
-        if (data.responsiblePerson !== undefined) {
-          asset.responsiblePerson = data.responsiblePerson;
-        }
       }
-    } else if (data.responsiblePerson !== undefined) {
-      asset.responsiblePerson = data.responsiblePerson;
     }
 
     if (data.costCenterId !== undefined) {
       asset.costCenterId = data.costCenterId || null;
+      if (data.costCenterId) {
+        const costCenter = await this.getCostCenterWithExpenseAccount(
+          companyId,
+          data.costCenterId,
+        );
+        asset.responsiblePerson = costCenter?.expenseAccountCode || '';
+      }
+    } else if (data.responsiblePerson !== undefined) {
+      asset.responsiblePerson = data.responsiblePerson;
     }
 
     const saved = await this.assetRepo.save(asset);
@@ -1046,6 +1069,13 @@ export class FixedAssetsService {
     return entry ? Number(entry.depreciationRate) : 0;
   }
 
+  private async getCostCenterWithExpenseAccount(
+    companyId: number,
+    costCenterId: string,
+  ): Promise<CostCenter | null> {
+    return this.costCenterRepo.findOneBy({ id: costCenterId, companyId });
+  }
+
   async getStatistics(companyId: number) {
     const assets = await this.assetRepo.find({ where: { companyId } });
     const active = assets.filter((a) => a.status === 'active');
@@ -1378,5 +1408,38 @@ export class FixedAssetsService {
       totalDepreciation,
       voucher,
     };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── FIXED ASSET AREAS ──
+  // ══════════════════════════════════════════════════════════
+
+  async findAllAreas(companyId: number) {
+    return this.areaRepo.find({
+      where: { companyId },
+      order: { name: 'ASC' },
+    });
+  }
+
+  async createArea(companyId: number, data: { name: string; description?: string }) {
+    const area = this.areaRepo.create({
+      ...data,
+      companyId,
+      isActive: true,
+    });
+    return this.areaRepo.save(area);
+  }
+
+  async updateArea(companyId: number, id: number, data: { name?: string; description?: string; isActive?: boolean }) {
+    const area = await this.areaRepo.findOneBy({ id, companyId });
+    if (!area) throw new NotFoundException(`Área #${id} no encontrada`);
+    Object.assign(area, data);
+    return this.areaRepo.save(area);
+  }
+
+  async deleteArea(companyId: number, id: number) {
+    const area = await this.areaRepo.findOneBy({ id, companyId });
+    if (!area) throw new NotFoundException(`Área #${id} no encontrada`);
+    return this.areaRepo.remove(area);
   }
 }

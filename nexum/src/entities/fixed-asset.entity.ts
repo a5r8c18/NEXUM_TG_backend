@@ -12,6 +12,7 @@ import {
 import { Company } from './company.entity';
 import { Employee } from './employee.entity';
 import { CostCenter } from './cost-center.entity';
+import { FixedAssetArea } from './fixed-asset-area.entity';
 
 @Entity('fixed_assets')
 @Index('IDX_fixed_assets_company_id', ['companyId'])
@@ -87,6 +88,13 @@ export class FixedAsset {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   location: string | null;
+
+  @Column({ name: 'area_id', type: 'int', nullable: true })
+  areaId: number | null = null;
+
+  @ManyToOne(() => FixedAssetArea, { nullable: true })
+  @JoinColumn({ name: 'area_id' })
+  area: FixedAssetArea | null = null;
 
   @Column({
     name: 'responsible_person',

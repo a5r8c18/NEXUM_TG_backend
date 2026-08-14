@@ -11,6 +11,7 @@ export { MovementItem } from './movement-item.entity';
 export { Invoice } from './invoice.entity';
 export { InvoiceItem } from './invoice-item.entity';
 export { FixedAsset } from './fixed-asset.entity';
+export { FixedAssetArea } from './fixed-asset-area.entity';
 export { DepreciationHistory } from './depreciation-history.entity';
 export { DepreciationCatalog } from './depreciation-catalog.entity';
 export { FixedAssetInventory } from './fixed-asset-inventory.entity';

@@ -17,7 +17,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
-import { CreateFixedAssetDto, UpdateFixedAssetDto, ProcessDepreciationDto, DisposeAssetDto, RevalueAssetDto, TransferAssetDto } from './dto/fixed-asset.dto';
+import { CreateFixedAssetDto, UpdateFixedAssetDto, ProcessDepreciationDto, DisposeAssetDto, RevalueAssetDto, TransferAssetDto, CreateUpdateAreaDto } from './dto/fixed-asset.dto';
 import * as ExcelJS from 'exceljs';
 import { PDFDocument, rgb } from 'pdf-lib';
 
@@ -51,6 +51,30 @@ export class FixedAssetsController {
   getDepreciationCatalog(@Req() req: Request) {
     const companyId = getCompanyId(req);
     return this.fixedAssetsService.getDepreciationCatalog(companyId);
+  }
+
+  @Get('areas')
+  findAllAreas(@Req() req: Request) {
+    const companyId = getCompanyId(req);
+    return this.fixedAssetsService.findAllAreas(companyId);
+  }
+
+  @Post('areas')
+  createArea(@Req() req: Request, @Body() body: CreateUpdateAreaDto) {
+    const companyId = getCompanyId(req);
+    return this.fixedAssetsService.createArea(companyId, body);
+  }
+
+  @Put('areas/:id')
+  updateArea(@Req() req: Request, @Param('id') id: string, @Body() body: CreateUpdateAreaDto) {
+    const companyId = getCompanyId(req);
+    return this.fixedAssetsService.updateArea(companyId, parseInt(id), body);
+  }
+
+  @Delete('areas/:id')
+  removeArea(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.fixedAssetsService.deleteArea(companyId, parseInt(id));
   }
 
   @Get('statistics')

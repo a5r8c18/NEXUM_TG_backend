@@ -9,6 +9,7 @@ import {
   Min,
   Max,
   IsInt,
+  IsBoolean,
 } from 'class-validator';
 import { IsNotFutureDate } from './fixed-asset-validator';
 
@@ -51,12 +52,16 @@ export class CreateFixedAssetDto {
   location?: string;
 
   @IsOptional()
-  @IsString()
-  responsiblePerson?: string;
+  @IsInt()
+  areaId?: number;
 
   @IsOptional()
   @IsString()
   employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  costCenterId?: string;
 
   @IsOptional()
   @IsString()
@@ -104,12 +109,16 @@ export class UpdateFixedAssetDto {
   location?: string;
 
   @IsOptional()
-  @IsString()
-  responsiblePerson?: string;
+  @IsInt()
+  areaId?: number;
 
   @IsOptional()
   @IsString()
   employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  costCenterId?: string;
 
   @IsOptional()
   @IsIn(['active', 'disposed', 'fully_depreciated'])
@@ -195,3 +204,16 @@ export class TransferAssetDto {
   newEmployeeId?: string;
 }
 
+export class CreateUpdateAreaDto {
+  @IsString({ message: 'El nombre del área debe ser texto' })
+  @IsNotEmpty({ message: 'El nombre del área es obligatorio' })
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
