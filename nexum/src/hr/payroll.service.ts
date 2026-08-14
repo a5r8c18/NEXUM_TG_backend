@@ -19,14 +19,54 @@ import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
 import { FinanceService } from '../finance/finance.service';
 
-// Contribución Especial a la Seguridad Social del trabajador (Cuba): 5% del salario.
-const EMPLOYEE_SOCIAL_SECURITY_RATE = 0.05;
 // Cuota patronal de Seguridad Social (Cuba): 14,5% del salario.
 const EMPLOYER_SOCIAL_SECURITY_RATE = 0.145;
 // Jornada legal mensual promedio en Cuba (horas) para el cálculo del salario/hora.
 const MONTHLY_LEGAL_HOURS = 190.6;
 // Días promedio del mes para el cálculo del salario diario (descuentos por ausencia).
 const DAYS_PER_MONTH = 30;
+
+/** Redondea a dos decimales. */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Contribución Especial a la Seguridad Social del trabajador (escala Cuba):
+ *  5% si el salario es de 15 000 CUP o menos, 10% si es mayor de 150 000 CUP.
+ *  Para el rango intermedio se conserva el 5%.
+ */
+function calculateSocialSecurity(grossSalary: number): number {
+  const rate = grossSalary > 150000 ? 0.10 : 0.05;
+  return round2(grossSalary * rate);
+}
+
+/** Impuesto sobre los Ingresos Personales (escala progresiva Cuba).
+ *  Aplica el porcentaje correspondiente a la diferencia de cada tramo.
+ */
+function calculateIncomeTax(grossSalary: number): number {
+  const brackets = [
+    { limit: 3260, rate: 0 },
+    { limit: 9510, rate: 0.03 },
+    { limit: 15000, rate: 0.05 },
+    { limit: 20000, rate: 0.075 },
+    { limit: 25000, rate: 0.10 },
+    { limit: 30000, rate: 0.15 },
+    { limit: Infinity, rate: 0.20 },
+  ];
+
+  let tax = 0;
+  let previousLimit = 0;
+  for (const bracket of brackets) {
+    if (grossSalary <= previousLimit) break;
+    const upper = bracket.limit === Infinity ? grossSalary : bracket.limit;
+    const taxableInBracket = Math.min(grossSalary, upper) - previousLimit;
+    if (taxableInBracket > 0) {
+      tax += taxableInBracket * bracket.rate;
+    }
+    previousLimit = upper;
+  }
+  return round2(tax);
+}
 
 /** Días de solapamiento (inclusivos) entre dos rangos de fechas. */
 function overlapDays(
@@ -292,9 +332,10 @@ export class PayrollService {
         0,
         Math.round((baseSalary + overtimePay - unpaidDeduction) * 100) / 100,
       );
-      const socialSecurity =
-        Math.round(grossSalary * EMPLOYEE_SOCIAL_SECURITY_RATE * 100) / 100;
-      const totalDeductionsItem = socialSecurity;
+      const socialSecurity = calculateSocialSecurity(grossSalary);
+      const taxWithholding = calculateIncomeTax(grossSalary);
+      const totalDeductionsItem =
+        Math.round((socialSecurity + taxWithholding) * 100) / 100;
       const netSalary = Math.round((grossSalary - totalDeductionsItem) * 100) / 100;
 
       // ── Provisión mensual de vacaciones (RH-01) ──
@@ -322,7 +363,7 @@ export class PayrollService {
         socialSecurity,
         healthInsurance: 0,
         pension: 0,
-        taxWithholding: 0,
+        taxWithholding,
         otherDeductions: 0,
         totalDeductions: totalDeductionsItem,
         netSalary,
