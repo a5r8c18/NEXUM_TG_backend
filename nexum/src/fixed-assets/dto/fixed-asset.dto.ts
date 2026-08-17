@@ -72,6 +72,14 @@ export class CreateFixedAssetDto {
   @IsOptional()
   @IsString()
   supplierId?: string;
+
+  @IsOptional()
+  @IsString()
+  assetAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  counterpartAccountCode?: string;
 }
 
 export class UpdateFixedAssetDto {
@@ -168,6 +176,18 @@ export class DisposeAssetDto {
   @IsOptional()
   @IsNumber()
   saleAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  assetAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  counterpartAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  proceedsAccountCode?: string;
 }
 
 export class ProcessDepreciationDto {
@@ -271,6 +291,14 @@ export class TransferAssetDto {
   @IsOptional()
   @IsString()
   newEmployeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  assetAccountCode?: string;
+
+  @IsOptional()
+  @IsString()
+  transferAccountCode?: string;
 }
 
 export class CreateUpdateAreaDto {

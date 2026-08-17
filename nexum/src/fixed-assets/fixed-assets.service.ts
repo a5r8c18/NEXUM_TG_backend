@@ -118,6 +118,8 @@ export class FixedAssetsService {
       employeeId?: string;
       costCenterId?: string;
       supplierId?: string;
+      assetAccountCode?: string;
+      counterpartAccountCode?: string;
     },
   ) {
     const depRate = await this.getDepreciationRateFromCatalog(companyId, data.groupNumber, data.subgroup);
@@ -201,6 +203,7 @@ export class FixedAssetsService {
       if (acquisitionValue > 0) {
         try {
           const assetAccount =
+            data.assetAccountCode ||
             (await this.accountMappingService.getAccountForMapping(
               companyId,
               MappingType.FIXED_ASSET_ACQUISITION,
@@ -208,7 +211,10 @@ export class FixedAssetsService {
           // ── Contrapartida según el concepto de alta ──
           let counterpartAccount: string;
           let counterpartDescription: string;
-          if (acquisitionType === 'donacion') {
+          if (data.counterpartAccountCode) {
+            counterpartAccount = data.counterpartAccountCode;
+            counterpartDescription = 'Cuenta seleccionada por el usuario';
+          } else if (acquisitionType === 'donacion') {
             counterpartAccount =
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
@@ -440,6 +446,9 @@ export class FixedAssetsService {
       disposalDate?: string;
       bankAccountId?: string;
       saleAmount?: number;
+      assetAccountCode?: string;
+      counterpartAccountCode?: string;
+      proceedsAccountCode?: string;
     },
     userName?: string,
   ) {
@@ -498,6 +507,7 @@ export class FixedAssetsService {
     if (acquisitionValue > 0) {
       try {
         const assetAccount =
+          data.assetAccountCode ||
           (await this.accountMappingService.getAccountForMapping(
             companyId,
             MappingType.FIXED_ASSET_ACQUISITION,
@@ -531,15 +541,17 @@ export class FixedAssetsService {
           const gainOrLoss = saleAmount - bookValue;
 
           // Débito: Cuenta por Cobrar / Banco por el importe de venta
-          const proceedsAccount = data.bankAccountId
-            ? (await this.accountMappingService.getAccountForMapping(
-                companyId,
-                MappingType.PAYROLL_CASH,
-              )) || '110'
-            : (await this.accountMappingService.getAccountForMapping(
-                companyId,
-                MappingType.FIXED_ASSET_SALE_PROCEEDS,
-              )) || '135';
+          const proceedsAccount = data.proceedsAccountCode
+            ? data.proceedsAccountCode
+            : data.bankAccountId
+              ? (await this.accountMappingService.getAccountForMapping(
+                  companyId,
+                  MappingType.PAYROLL_CASH,
+                )) || '110'
+              : (await this.accountMappingService.getAccountForMapping(
+                  companyId,
+                  MappingType.FIXED_ASSET_SALE_PROCEEDS,
+                )) || '135';
           lines.push({
             accountCode: proceedsAccount,
             debit: saleAmount,
@@ -550,6 +562,7 @@ export class FixedAssetsService {
           // Ganancia o Pérdida
           if (gainOrLoss > 0) {
             const gainAccount =
+              data.counterpartAccountCode ||
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
                 MappingType.FIXED_ASSET_DISPOSAL_GAIN,
@@ -562,6 +575,7 @@ export class FixedAssetsService {
             });
           } else if (gainOrLoss < 0) {
             const lossAccount =
+              data.counterpartAccountCode ||
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
                 MappingType.FIXED_ASSET_DISPOSAL_LOSS,
@@ -577,6 +591,7 @@ export class FixedAssetsService {
           // Débito: Faltantes de Bienes en Investigación por el valor neto
           if (residualLoss > 0) {
             const shortageAccount =
+              data.counterpartAccountCode ||
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
                 MappingType.INVENTORY_SHORTAGE_INVESTIGATION,
@@ -599,6 +614,7 @@ export class FixedAssetsService {
 
             if (pendingPart > 0) {
               const payableAccount =
+                data.counterpartAccountCode ||
                 (await this.accountMappingService.getAccountForMapping(
                   companyId,
                   MappingType.PURCHASE_ORDER,
@@ -612,6 +628,7 @@ export class FixedAssetsService {
             }
             if (paidPart > 0) {
               const receivableAccount =
+                data.proceedsAccountCode ||
                 (await this.accountMappingService.getAccountForMapping(
                   companyId,
                   MappingType.INVENTORY_SHORTAGE_RECEIVABLE,
@@ -629,6 +646,7 @@ export class FixedAssetsService {
           // Débito: Donaciones Entregadas por el valor neto
           if (residualLoss > 0) {
             const donationAccount =
+              data.counterpartAccountCode ||
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
                 MappingType.FIXED_ASSET_DONATION_DELIVERED,
@@ -644,6 +662,7 @@ export class FixedAssetsService {
           // Deterioro / obsolescencia / rotura → Faltantes y Pérdidas de AFT
           if (residualLoss > 0) {
             const lossAccount =
+              data.counterpartAccountCode ||
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
                 MappingType.FIXED_ASSET_DISPOSAL_LOSS,
@@ -1558,6 +1577,8 @@ export class FixedAssetsService {
       newLocation?: string;
       newResponsiblePerson?: string;
       newEmployeeId?: string;
+      assetAccountCode?: string;
+      transferAccountCode?: string;
     },
     userName?: string,
   ) {
@@ -1585,6 +1606,7 @@ export class FixedAssetsService {
       const accumulatedDepreciation = acquisitionValue - currentValue;
 
       assetAccount =
+        data.assetAccountCode ||
         (await this.accountMappingService.getAccountForMapping(
           companyId,
           MappingType.FIXED_ASSET_ACQUISITION,
@@ -1595,6 +1617,7 @@ export class FixedAssetsService {
           MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION,
         )) || '375';
       transferAccount =
+        data.transferAccountCode ||
         (await this.accountMappingService.getAccountForMapping(
           companyId,
           MappingType.FIXED_ASSET_TRANSFER,
