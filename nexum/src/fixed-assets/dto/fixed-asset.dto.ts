@@ -200,6 +200,54 @@ export class RevalueAssetDto {
   appraisalReference?: string;
 }
 
+export class AddImprovementDto {
+  @IsNumber({}, { message: 'El importe de la mejora debe ser un número' })
+  @IsPositive({ message: 'El importe de la mejora debe ser mayor que 0' })
+  @Max(999999999.99, { message: 'El importe no puede exceder 999,999,999.99' })
+  amount: number;
+
+  @IsString({ message: 'La descripción debe ser texto' })
+  @IsNotEmpty({ message: 'La descripción de la mejora es obligatoria' })
+  description: string;
+
+  @IsDateString({}, { message: 'La fecha de la mejora debe tener formato de fecha válido' })
+  @IsNotFutureDate({ message: 'La fecha de la mejora no puede ser futura' })
+  improvementDate: string;
+
+  @IsOptional()
+  @IsString()
+  supplierId?: string;
+
+  @IsOptional()
+  @IsString()
+  bankAccountId?: string;
+}
+
+export class ResolveInvestigationDto {
+  @IsIn(['responsible', 'loss', 'income'], {
+    message:
+      'Resolución inválida: responsible (cobro al responsable), loss (pérdida) o income (ingreso por sobrante)',
+  })
+  resolution: 'responsible' | 'loss' | 'income';
+
+  @IsOptional()
+  @IsDateString({}, { message: 'La fecha de resolución debe tener formato de fecha válido' })
+  resolutionDate?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  responsibleName?: string;
+
+  @IsOptional()
+  @IsNumber({}, { message: 'El importe debe ser un número' })
+  @IsPositive({ message: 'El importe debe ser mayor que 0' })
+  amount?: number;
+}
+
 export class TransferAssetDto {
   @IsInt({ message: 'El ID de la entidad destino debe ser un entero' })
   @IsPositive({ message: 'El ID de la entidad destino debe ser mayor que 0' })

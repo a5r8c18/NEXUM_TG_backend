@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { FixedAsset } from '../entities/fixed-asset.entity';
 import { FixedAssetArea } from '../entities/fixed-asset-area.entity';
 import { DepreciationCatalog } from '../entities/depreciation-catalog.entity';
@@ -183,6 +184,13 @@ export class FixedAssetsService {
       asset.currentValue = data.acquisitionValue;
       asset.accumulatedDepreciation = 0;
       asset.status = 'active';
+      if (acquisitionType === 'sobrante') {
+        // El sobrante queda acreditado en 555 hasta que el usuario resuelva la
+        // investigación (no se reconoce ingreso de forma automática).
+        asset.investigationType = 'surplus';
+        asset.investigationStatus = 'pending';
+        asset.investigationAmount = data.acquisitionValue;
+      }
       await manager.getRepository(FixedAsset).save(asset);
 
       // ── Registro en inventario AFT ──
@@ -454,7 +462,37 @@ export class FixedAssetsService {
     asset.disposalType = data.disposalType;
     asset.disposalDate = disposalDate;
     asset.disposalReason = data.reason;
+    if (data.disposalType === 'faltante' && residualLoss > 0) {
+      // El faltante queda debitado en 332 hasta que el usuario resuelva la
+      // investigación (cobro al responsable o pérdida definitiva).
+      asset.investigationType = 'shortage';
+      asset.investigationStatus = 'pending';
+      asset.investigationAmount = residualLoss;
+    }
     await this.assetRepo.save(asset);
+
+    // ── Devolución de compra: determinar cuánto sigue debiéndose al proveedor ──
+    // Si la compra ya fue pagada (total o parcialmente), la parte pagada no
+    // puede reducir la CxP: nace un derecho de cobro frente al proveedor.
+    let returnPayable: { id: string; apNumber: string; balance: number } | null = null;
+    let returnSplit: { pendingPart: number; paidPart: number } | null = null;
+    if (data.disposalType === 'devolucion_compra') {
+      try {
+        const payables = await this.financeService.findAllPayables(companyId);
+        const payable = payables.find(
+          (p) => p.purchaseNumber === asset.assetCode && p.status !== 'cancelled',
+        );
+        if (payable) {
+          returnPayable = {
+            id: payable.id,
+            apNumber: payable.apNumber,
+            balance: Number(payable.balanceAmount || 0),
+          };
+        }
+      } catch (error) {
+        this.logger.error(`Error consultando CxP de AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
 
     // ── Comprobante contable de baja ──
     if (acquisitionValue > 0) {
@@ -551,19 +589,41 @@ export class FixedAssetsService {
             });
           }
         } else if (data.disposalType === 'devolucion_compra') {
-          // Débito: Cuentas por Pagar — se revierte la obligación con el proveedor
           if (residualLoss > 0) {
-            const payableAccount =
-              (await this.accountMappingService.getAccountForMapping(
-                companyId,
-                MappingType.PURCHASE_ORDER,
-              )) || '410';
-            lines.push({
-              accountCode: payableAccount,
-              debit: residualLoss,
-              credit: 0,
-              description: `Devolución de compra de AFT ${asset.assetCode}`,
-            });
+            // Parte aún no pagada → revierte la obligación (410).
+            // Parte ya pagada → derecho de cobro al proveedor (335).
+            const pendingPart = returnPayable
+              ? Math.min(residualLoss, returnPayable.balance)
+              : residualLoss;
+            const paidPart = Math.max(0, residualLoss - pendingPart);
+
+            if (pendingPart > 0) {
+              const payableAccount =
+                (await this.accountMappingService.getAccountForMapping(
+                  companyId,
+                  MappingType.PURCHASE_ORDER,
+                )) || '410';
+              lines.push({
+                accountCode: payableAccount,
+                debit: pendingPart,
+                credit: 0,
+                description: `Devolución de compra de AFT ${asset.assetCode} (obligación pendiente)`,
+              });
+            }
+            if (paidPart > 0) {
+              const receivableAccount =
+                (await this.accountMappingService.getAccountForMapping(
+                  companyId,
+                  MappingType.INVENTORY_SHORTAGE_RECEIVABLE,
+                )) || '335';
+              lines.push({
+                accountCode: receivableAccount,
+                debit: paidPart,
+                credit: 0,
+                description: `Cobro al proveedor por devolución de AFT ${asset.assetCode} (importe ya pagado)`,
+              });
+            }
+            returnSplit = { pendingPart, paidPart };
           }
         } else if (data.disposalType === 'donacion') {
           // Débito: Donaciones Entregadas por el valor neto
@@ -628,28 +688,56 @@ export class FixedAssetsService {
         asset.disposalType = null;
         asset.disposalDate = null;
         asset.disposalReason = null;
+        asset.investigationType = null;
+        asset.investigationStatus = null;
+        asset.investigationAmount = null;
         await this.assetRepo.save(asset);
         throw new BadRequestException(`Error al generar comprobante contable: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
-    // ── Devolución de compra: cancelar la CxP generada en el alta ──
-    if (data.disposalType === 'devolucion_compra') {
-      try {
-        const payables = await this.financeService.findAllPayables(companyId);
-        const payable = payables.find(
-          (p) => p.purchaseNumber === asset.assetCode && p.status !== 'cancelled',
-        );
-        if (payable) {
-          await this.financeService.updatePayable(companyId, payable.id, {
-            status: 'cancelled',
-            balanceAmount: 0,
-            notes: `${payable.notes || ''} | Cancelada por devolución de compra AFT ${asset.assetCode}`.trim(),
+    // ── Devolución de compra: ajustar CxP y, si ya se pagó, generar CxC ──
+    if (data.disposalType === 'devolucion_compra' && returnSplit) {
+      const { pendingPart, paidPart } = returnSplit;
+
+      if (returnPayable && pendingPart > 0) {
+        try {
+          const newBalance = Math.max(0, returnPayable.balance - pendingPart);
+          await this.financeService.updatePayable(companyId, returnPayable.id, {
+            status: newBalance > 0 ? 'partial' : 'cancelled',
+            balanceAmount: newBalance,
+            notes: `Ajustada por devolución de compra AFT ${asset.assetCode}`,
           });
-          this.logger.log(`CxP ${payable.apNumber} cancelada por devolución AFT ${asset.assetCode}`);
+          this.logger.log(`CxP ${returnPayable.apNumber} ajustada por devolución AFT ${asset.assetCode}`);
+        } catch (error) {
+          this.logger.error(`Error ajustando CxP por devolución AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
         }
-      } catch (error) {
-        this.logger.error(`Error cancelando CxP por devolución AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      if (paidPart > 0) {
+        try {
+          const dueDate = new Date(disposalDate);
+          dueDate.setDate(dueDate.getDate() + 30);
+          let supplierLabel = 'Proveedor AFT';
+          if (asset.supplierId) {
+            const supplier = await this.supplierRepo.findOne({
+              where: { id: asset.supplierId, companyId },
+            });
+            if (supplier) supplierLabel = supplier.businessName;
+          }
+          await this.financeService.createReceivable(companyId, {
+            invoiceNumber: `AFT-DEVOL-${asset.assetCode}`,
+            customerName: supplierLabel,
+            originalAmount: paidPart,
+            dueDate: dueDate.toISOString().split('T')[0],
+            status: 'pending',
+            currency: 'CUP',
+            notes: `CxC al proveedor por devolución de AFT ${asset.assetCode} ya pagado`,
+          });
+          this.logger.log(`CxC por devolución AFT ${asset.assetCode} generada (${paidPart})`);
+        } catch (error) {
+          this.logger.error(`Error CxC por devolución AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
 
@@ -724,6 +812,25 @@ export class FixedAssetsService {
       success: true,
     });
 
+    // ── Acciones que la norma deja a criterio del contador ──
+    // No se automatizan: se informan para que el usuario las registre.
+    const pendingActions: string[] = [];
+    if (data.disposalType === 'venta') {
+      pendingActions.push(
+        'La venta de AFT no emite factura ni liquida impuestos automáticamente: regístrelos en Facturación/Contabilidad si corresponde.',
+      );
+    }
+    if (data.disposalType === 'faltante' && residualLoss > 0) {
+      pendingActions.push(
+        'El faltante quedó en investigación (cuenta 332). Debe resolverse indicando si se cobra al responsable o se asume como pérdida.',
+      );
+    }
+    if (data.disposalType === 'devolucion_compra' && returnSplit?.paidPart) {
+      pendingActions.push(
+        `Se generó una Cuenta por Cobrar al proveedor por ${returnSplit.paidPart.toFixed(2)} correspondiente al importe ya pagado.`,
+      );
+    }
+
     return {
       asset,
       accounting: {
@@ -732,6 +839,548 @@ export class FixedAssetsService {
         acquisitionValue,
         disposalType: data.disposalType,
         disposalDate,
+        purchaseReturn: returnSplit || undefined,
+      },
+      pendingActions,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── Actas oficiales de AFT ──
+  // 'baja'      → Acta de Baja de Activo Fijo Tangible
+  // 'recepcion' → Acta de Entrega/Recepción de Activo Fijo Tangible
+  // ══════════════════════════════════════════════════════════
+  async generateActa(companyId: number, id: number, type: string) {
+    const actaType = (type || '').toLowerCase();
+    if (!['baja', 'recepcion'].includes(actaType)) {
+      throw new BadRequestException(
+        `Tipo de acta inválido: use 'baja' o 'recepcion'`,
+      );
+    }
+
+    const asset = await this.assetRepo.findOne({
+      where: { id, companyId },
+      relations: ['area', 'costCenter', 'company'],
+    });
+    if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
+
+    if (actaType === 'baja' && asset.status !== 'disposed') {
+      throw new BadRequestException(
+        `El activo ${asset.assetCode} no está dado de baja: no procede el Acta de Baja`,
+      );
+    }
+
+    const isBaja = actaType === 'baja';
+    const title = isBaja
+      ? 'ACTA DE BAJA DE ACTIVO FIJO TANGIBLE'
+      : 'ACTA DE ENTREGA/RECEPCIÓN DE ACTIVO FIJO TANGIBLE';
+
+    const acquisitionValue = Number(asset.acquisitionValue);
+    const accumulated = Number(asset.accumulatedDepreciation);
+    const netValue = acquisitionValue - accumulated;
+
+    const rows: Array<[string, string]> = [
+      ['Entidad:', asset.company?.name || `Empresa #${companyId}`],
+      ['Código del activo:', asset.assetCode],
+      ['Denominación:', asset.name],
+      ['Grupo / Subgrupo:', `${asset.groupNumber} / ${asset.subgroup || 'N/D'}`],
+      ['Área:', asset.area?.name || asset.location || 'N/D'],
+      ['Centro de costo:', asset.costCenter?.name || 'N/D'],
+      ['Cuenta de gasto:', asset.responsiblePerson || 'N/D'],
+      ['Fecha de adquisición:', asset.acquisitionDate],
+      ['Concepto de alta:', this.getAcquisitionTypeLabel(asset.acquisitionType)],
+      ['Valor de adquisición:', acquisitionValue.toFixed(2)],
+      ['Depreciación acumulada:', accumulated.toFixed(2)],
+      ['Valor neto contable:', netValue.toFixed(2)],
+      ['Tasa de depreciación:', `${Number(asset.depreciationRate).toFixed(2)} %`],
+    ];
+
+    if (isBaja) {
+      rows.push(
+        ['Concepto de baja:', this.getDisposalTypeLabel(asset.disposalType || '')],
+        ['Fecha de la baja:', asset.disposalDate || 'N/D'],
+        ['Motivo:', asset.disposalReason || 'N/D'],
+      );
+      if (asset.investigationStatus === 'pending') {
+        rows.push([
+          'Faltante en investigación:',
+          `${Number(asset.investigationAmount || 0).toFixed(2)} (cuenta 332)`,
+        ]);
+      }
+    } else {
+      rows.push(
+        ['Estado:', asset.status],
+        ['Referencia de tasación:', asset.appraisalReference || 'N/D'],
+      );
+    }
+
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([595.28, 841.89]);
+    const { width, height } = page.getSize();
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    page.drawText(title, { x: 50, y: height - 60, size: 13, font: bold });
+    page.drawText(
+      `Fecha de emisión: ${new Date().toLocaleDateString('es-CU')}`,
+      { x: 50, y: height - 82, size: 9, font },
+    );
+    page.drawLine({
+      start: { x: 50, y: height - 92 },
+      end: { x: width - 50, y: height - 92 },
+      thickness: 1,
+    });
+
+    let y = height - 120;
+    for (const [label, value] of rows) {
+      page.drawText(label, { x: 50, y, size: 10, font: bold });
+      page.drawText(String(value).substring(0, 70), { x: 210, y, size: 10, font });
+      y -= 20;
+    }
+
+    y -= 20;
+    const legalText = isBaja
+      ? 'Se hace constar que el activo fijo tangible descrito ha sido dado de baja de los registros contables de la entidad, conforme a las Normas Cubanas de Contabilidad (Res. 235/2005 MFP), quedando registrado el comprobante correspondiente.'
+      : 'Se hace constar la entrega y recepción del activo fijo tangible descrito, asumiendo el receptor la responsabilidad material sobre el mismo, conforme a las Normas Cubanas de Contabilidad.';
+
+    const wrap = (text: string, max: number): string[] => {
+      const words = text.split(' ');
+      const out: string[] = [];
+      let line = '';
+      for (const w of words) {
+        if ((line + w).length > max) {
+          out.push(line.trim());
+          line = '';
+        }
+        line += `${w} `;
+      }
+      if (line.trim()) out.push(line.trim());
+      return out;
+    };
+
+    for (const line of wrap(legalText, 95)) {
+      page.drawText(line, { x: 50, y, size: 9, font });
+      y -= 14;
+    }
+
+    y -= 50;
+    const signWidth = 200;
+    page.drawLine({ start: { x: 50, y }, end: { x: 50 + signWidth, y }, thickness: 0.8 });
+    page.drawLine({
+      start: { x: width - 50 - signWidth, y },
+      end: { x: width - 50, y },
+      thickness: 0.8,
+    });
+    page.drawText(isBaja ? 'Entrega (Responsable)' : 'Entrega', {
+      x: 50,
+      y: y - 14,
+      size: 9,
+      font,
+    });
+    page.drawText(isBaja ? 'Aprueba (Director)' : 'Recibe (Responsable)', {
+      x: width - 50 - signWidth,
+      y: y - 14,
+      size: 9,
+      font,
+    });
+
+    y -= 60;
+    page.drawLine({ start: { x: 50, y }, end: { x: 50 + signWidth, y }, thickness: 0.8 });
+    page.drawText('Contabilidad', { x: 50, y: y - 14, size: 9, font });
+
+    const pdf = await pdfDoc.save();
+    const fileName = `acta-${actaType}-${asset.assetCode}.pdf`;
+    return { pdf, fileName };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── Mejora capitalizable de AFT (NCC Cuba - Res. 340) ──
+  // Las inversiones que aumentan la capacidad o vida útil del activo se
+  // capitalizan incrementando su valor:
+  //   Débito  240 (Activos Fijos Tangibles)
+  //   Crédito 410 (Cuentas por Pagar) — o la cuenta de tesorería si se paga
+  // ══════════════════════════════════════════════════════════
+  async addImprovement(
+    companyId: number,
+    id: number,
+    data: {
+      amount: number;
+      description: string;
+      improvementDate: string;
+      supplierId?: string;
+      bankAccountId?: string;
+    },
+    userName?: string,
+  ) {
+    const asset = await this.assetRepo.findOneBy({ id, companyId });
+    if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
+    if (asset.status !== 'active') {
+      throw new BadRequestException(
+        `Solo pueden capitalizarse mejoras en activos activos (${asset.assetCode})`,
+      );
+    }
+
+    const amount = Number(data.amount);
+    if (amount <= 0) {
+      throw new BadRequestException('El importe de la mejora debe ser mayor que 0');
+    }
+
+    const oldAcquisitionValue = Number(asset.acquisitionValue);
+    const oldCurrentValue = Number(asset.currentValue);
+
+    const assetAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.FIXED_ASSET_ACQUISITION,
+      )) || '240';
+    const counterpartAccount = data.bankAccountId
+      ? (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.TREASURY_BANK,
+        )) || '110'
+      : (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.PURCHASE_ORDER,
+        )) || '410';
+
+    asset.acquisitionValue = oldAcquisitionValue + amount;
+    asset.currentValue = oldCurrentValue + amount;
+    await this.assetRepo.save(asset);
+
+    try {
+      await this.voucherService.createVoucherFromModule(
+        companyId,
+        'fixed-assets',
+        String(asset.id),
+        {
+          date: data.improvementDate,
+          description: `Mejora capitalizable AFT: ${asset.name} (${asset.assetCode}) - ${data.description}`,
+          type: 'fixed-assets',
+          reference: `MEJ-${asset.assetCode}`,
+          createdBy: userName || 'Sistema',
+          lines: [
+            {
+              accountCode: assetAccount,
+              debit: amount,
+              credit: 0,
+              description: `Capitalización mejora AFT ${asset.assetCode}`,
+            },
+            {
+              accountCode: counterpartAccount,
+              debit: 0,
+              credit: amount,
+              description: data.bankAccountId
+                ? `Pago de mejora AFT ${asset.assetCode}`
+                : `Obligación por mejora AFT ${asset.assetCode}`,
+            },
+          ],
+        },
+      );
+    } catch (error) {
+      this.logger.error(`Error contabilización mejora AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      asset.acquisitionValue = oldAcquisitionValue;
+      asset.currentValue = oldCurrentValue;
+      await this.assetRepo.save(asset);
+      throw new BadRequestException(`Error al generar comprobante contable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    // ── Finanzas: CxP si no se paga de inmediato, o movimiento bancario ──
+    if (data.bankAccountId) {
+      try {
+        await this.financeService.createBankTransaction(companyId, {
+          bankAccountId: data.bankAccountId,
+          transactionNumber: `TXB-AFT-MEJ-${asset.assetCode}-${Date.now()}`,
+          transactionDate: data.improvementDate,
+          transactionType: 'debit',
+          amount,
+          description: `Mejora capitalizable AFT ${asset.assetCode}`,
+          referenceNumber: `MEJ-${asset.assetCode}`,
+          category: 'fixed-asset-improvement',
+        });
+      } catch (error) {
+        this.logger.error(`Error transacción bancaria mejora AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      try {
+        let supplierName = 'Proveedor AFT';
+        let supplierNit = 'N/D';
+        if (data.supplierId) {
+          const supplier = await this.supplierRepo.findOne({
+            where: { id: data.supplierId, companyId },
+          });
+          if (supplier) {
+            supplierName = supplier.businessName;
+            supplierNit = supplier.nit;
+          }
+        }
+        const dueDate = new Date(data.improvementDate);
+        dueDate.setDate(dueDate.getDate() + 30);
+        await this.financeService.createPayable(companyId, {
+          purchaseNumber: `MEJ-${asset.assetCode}`,
+          supplierName,
+          supplierNit,
+          supplierId: data.supplierId || undefined,
+          originalAmount: amount,
+          dueDate: dueDate.toISOString().split('T')[0],
+          status: 'pending',
+          currency: 'CUP',
+          notes: `CxP por mejora capitalizable de AFT ${asset.assetCode}`,
+        });
+      } catch (error) {
+        this.logger.error(`Error CxP mejora AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    await this.upsertFixedAssetInventory(asset);
+
+    await this.auditService.log({
+      companyId,
+      userName: userName || 'System',
+      action: AuditAction.UPDATE,
+      resource: AuditResource.FIXED_ASSET,
+      resourceId: String(asset.id),
+      resourceName: `Mejora capitalizable AFT: ${asset.assetCode}`,
+      oldValues: { acquisitionValue: oldAcquisitionValue, currentValue: oldCurrentValue },
+      newValues: {
+        acquisitionValue: asset.acquisitionValue,
+        currentValue: asset.currentValue,
+        amount,
+        description: data.description,
+        improvementDate: data.improvementDate,
+      },
+    });
+
+    return {
+      asset,
+      improvement: {
+        amount,
+        newAcquisitionValue: Number(asset.acquisitionValue),
+        newCurrentValue: Number(asset.currentValue),
+        improvementDate: data.improvementDate,
+      },
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── Resolución de Faltantes / Sobrantes en Investigación ──
+  // (NCC Cuba - Res. 235-2005 MFP)
+  //
+  // Esta operación NO es automática: el saldo permanece en 332 (faltante) o
+  // 555 (sobrante) hasta que el usuario registre el resultado de la
+  // investigación, que es una decisión administrativa.
+  //
+  //  Faltante → responsable: Débito 335 (CxC Diversas) / Crédito 332
+  //  Faltante → pérdida:     Débito 845 (Pérdidas de AFT) / Crédito 332
+  //  Sobrante → ingreso:     Débito 555 / Crédito 950 (Otros Ingresos)
+  // ══════════════════════════════════════════════════════════
+  async findPendingInvestigations(companyId: number) {
+    const assets = await this.assetRepo.find({
+      where: { companyId, investigationStatus: 'pending' },
+      order: { updatedAt: 'DESC' },
+    });
+    return {
+      investigations: assets.map((a) => ({
+        assetId: a.id,
+        assetCode: a.assetCode,
+        name: a.name,
+        type: a.investigationType,
+        amount: Number(a.investigationAmount || 0),
+        responsiblePerson: a.responsiblePerson,
+        date: a.investigationType === 'shortage' ? a.disposalDate : a.acquisitionDate,
+        reason: a.disposalReason,
+      })),
+    };
+  }
+
+  async resolveInvestigation(
+    companyId: number,
+    id: number,
+    data: {
+      resolution: 'responsible' | 'loss' | 'income';
+      resolutionDate?: string;
+      notes?: string;
+      responsibleName?: string;
+      amount?: number;
+    },
+    userName?: string,
+  ) {
+    const asset = await this.assetRepo.findOneBy({ id, companyId });
+    if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
+    if (asset.investigationStatus !== 'pending') {
+      throw new BadRequestException(
+        `El activo ${asset.assetCode} no tiene una investigación pendiente`,
+      );
+    }
+
+    const pendingAmount = Number(asset.investigationAmount || 0);
+    const amount = data.amount != null ? Number(data.amount) : pendingAmount;
+    if (amount <= 0) {
+      throw new BadRequestException('El importe a resolver debe ser mayor que 0');
+    }
+    if (amount > pendingAmount) {
+      throw new BadRequestException(
+        `El importe a resolver (${amount}) excede el saldo en investigación (${pendingAmount})`,
+      );
+    }
+
+    const isShortage = asset.investigationType === 'shortage';
+    if (isShortage && data.resolution === 'income') {
+      throw new BadRequestException(
+        'Un faltante solo puede resolverse como cobro al responsable o como pérdida',
+      );
+    }
+    if (!isShortage && data.resolution !== 'income') {
+      throw new BadRequestException(
+        'Un sobrante solo puede resolverse reconociendo el ingreso',
+      );
+    }
+
+    const resolutionDate = data.resolutionDate || new Date().toISOString().split('T')[0];
+
+    const shortageAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVENTORY_SHORTAGE_INVESTIGATION,
+      )) || '332';
+    const surplusAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVENTORY_SURPLUS_INVESTIGATION,
+      )) || '555';
+
+    const lines: Array<{
+      accountCode: string;
+      debit: number;
+      credit: number;
+      description: string;
+    }> = [];
+    let description: string;
+
+    if (data.resolution === 'responsible') {
+      const receivableAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.INVENTORY_SHORTAGE_RECEIVABLE,
+        )) || '335';
+      lines.push({
+        accountCode: receivableAccount,
+        debit: amount,
+        credit: 0,
+        description: `Faltante AFT ${asset.assetCode} a cargo del responsable`,
+      });
+      lines.push({
+        accountCode: shortageAccount,
+        debit: 0,
+        credit: amount,
+        description: `Cierre faltante en investigación AFT ${asset.assetCode}`,
+      });
+      description = `Resolución faltante AFT ${asset.assetCode}: cobro al responsable`;
+    } else if (data.resolution === 'loss') {
+      const lossAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.FIXED_ASSET_DISPOSAL_LOSS,
+        )) || '845';
+      lines.push({
+        accountCode: lossAccount,
+        debit: amount,
+        credit: 0,
+        description: `Pérdida definitiva por faltante AFT ${asset.assetCode}`,
+      });
+      lines.push({
+        accountCode: shortageAccount,
+        debit: 0,
+        credit: amount,
+        description: `Cierre faltante en investigación AFT ${asset.assetCode}`,
+      });
+      description = `Resolución faltante AFT ${asset.assetCode}: pérdida definitiva`;
+    } else {
+      const incomeAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.INVENTORY_SURPLUS_INCOME,
+        )) || '950';
+      lines.push({
+        accountCode: surplusAccount,
+        debit: amount,
+        credit: 0,
+        description: `Cierre sobrante en investigación AFT ${asset.assetCode}`,
+      });
+      lines.push({
+        accountCode: incomeAccount,
+        debit: 0,
+        credit: amount,
+        description: `Ingreso por sobrante de AFT ${asset.assetCode}`,
+      });
+      description = `Resolución sobrante AFT ${asset.assetCode}: reconocimiento de ingreso`;
+    }
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'fixed-assets',
+      String(asset.id),
+      {
+        date: resolutionDate,
+        description: `${description}${data.notes ? ` - ${data.notes}` : ''}`,
+        type: 'fixed-assets',
+        reference: `INV-${asset.assetCode}`,
+        createdBy: userName || 'Sistema',
+        lines,
+      },
+    );
+
+    // ── Cuenta por Cobrar al responsable ──
+    if (data.resolution === 'responsible') {
+      try {
+        const dueDate = new Date(resolutionDate);
+        dueDate.setDate(dueDate.getDate() + 30);
+        await this.financeService.createReceivable(companyId, {
+          invoiceNumber: `AFT-FALTANTE-${asset.assetCode}`,
+          customerName:
+            data.responsibleName || asset.responsiblePerson || 'Responsable AFT',
+          originalAmount: amount,
+          dueDate: dueDate.toISOString().split('T')[0],
+          status: 'pending',
+          currency: 'CUP',
+          notes: `CxC por faltante de AFT ${asset.assetCode} - ${asset.name}`,
+        });
+      } catch (error) {
+        this.logger.error(`Error CxC por faltante AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    const remaining = pendingAmount - amount;
+    asset.investigationAmount = remaining > 0 ? remaining : null;
+    asset.investigationStatus = remaining > 0 ? 'pending' : 'resolved';
+    asset.investigationResolution = data.resolution;
+    asset.investigationResolvedAt = remaining > 0 ? null : resolutionDate;
+    await this.assetRepo.save(asset);
+
+    await this.auditService.log({
+      companyId,
+      userName: userName || 'System',
+      action: AuditAction.UPDATE,
+      resource: AuditResource.FIXED_ASSET,
+      resourceId: String(asset.id),
+      resourceName: `Resolución investigación AFT: ${asset.assetCode}`,
+      oldValues: { investigationStatus: 'pending', investigationAmount: pendingAmount },
+      newValues: {
+        investigationStatus: asset.investigationStatus,
+        investigationResolution: data.resolution,
+        amount,
+        resolutionDate,
+        notes: data.notes,
+      },
+    });
+
+    return {
+      asset,
+      resolution: {
+        type: asset.investigationType,
+        resolution: data.resolution,
+        amount,
+        remaining: remaining > 0 ? remaining : 0,
+        resolutionDate,
       },
     };
   }
@@ -780,6 +1429,9 @@ export class FixedAssetsService {
         asset.acquisitionValue,
         Math.max(0, asset.acquisitionValue - asset.currentValue),
       );
+    }
+    if (data.appraisalReference) {
+      asset.appraisalReference = data.appraisalReference;
     }
     await this.assetRepo.save(asset);
 

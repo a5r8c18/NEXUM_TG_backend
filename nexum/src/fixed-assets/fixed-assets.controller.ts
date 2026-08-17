@@ -17,7 +17,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
-import { CreateFixedAssetDto, UpdateFixedAssetDto, ProcessDepreciationDto, DisposeAssetDto, RevalueAssetDto, TransferAssetDto, CreateUpdateAreaDto } from './dto/fixed-asset.dto';
+import { CreateFixedAssetDto, UpdateFixedAssetDto, ProcessDepreciationDto, DisposeAssetDto, RevalueAssetDto, TransferAssetDto, CreateUpdateAreaDto, ResolveInvestigationDto, AddImprovementDto } from './dto/fixed-asset.dto';
 import * as ExcelJS from 'exceljs';
 import { PDFDocument, rgb } from 'pdf-lib';
 
@@ -75,6 +75,12 @@ export class FixedAssetsController {
   removeArea(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
     return this.fixedAssetsService.deleteArea(companyId, parseInt(id));
+  }
+
+  @Get('investigations')
+  findPendingInvestigations(@Req() req: Request) {
+    const companyId = getCompanyId(req);
+    return this.fixedAssetsService.findPendingInvestigations(companyId);
   }
 
   @Get('statistics')
@@ -255,6 +261,46 @@ export class FixedAssetsController {
     const companyId = getCompanyId(req);
     const userName = (req as any).user?.name || 'System';
     return this.fixedAssetsService.disposeAsset(companyId, parseInt(id), body, userName);
+  }
+
+  @Post(':id/resolve-investigation')
+  resolveInvestigation(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: ResolveInvestigationDto,
+  ) {
+    const companyId = getCompanyId(req);
+    const userName = (req as any).user?.name || 'System';
+    return this.fixedAssetsService.resolveInvestigation(companyId, parseInt(id), body, userName);
+  }
+
+  @Post(':id/improvement')
+  addImprovement(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: AddImprovementDto,
+  ) {
+    const companyId = getCompanyId(req);
+    const userName = (req as any).user?.name || 'System';
+    return this.fixedAssetsService.addImprovement(companyId, parseInt(id), body, userName);
+  }
+
+  @Get(':id/acta/:type')
+  async exportActa(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('type') type: string,
+    @Res() res: Response,
+  ) {
+    const companyId = getCompanyId(req);
+    const { pdf, fileName } = await this.fixedAssetsService.generateActa(
+      companyId,
+      parseInt(id),
+      type,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
+    res.send(Buffer.from(pdf));
   }
 
   @Post(':id/revalue')

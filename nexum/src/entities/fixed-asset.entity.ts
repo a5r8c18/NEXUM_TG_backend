@@ -98,6 +98,32 @@ export class FixedAsset {
   @Column({ name: 'disposal_reason', type: 'text', nullable: true })
   disposalReason: string | null;
 
+  // ── Faltantes/Sobrantes en investigación (Res. 235-2005 MFP) ──
+  // 'shortage' → saldo pendiente en 332; 'surplus' → saldo pendiente en 555.
+  @Column({ name: 'investigation_type', type: 'varchar', length: 20, nullable: true })
+  investigationType: string | null;
+
+  @Column({ name: 'investigation_status', type: 'varchar', length: 20, nullable: true })
+  investigationStatus: string | null;
+
+  @Column({
+    name: 'investigation_amount',
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    nullable: true,
+  })
+  investigationAmount: number | null;
+
+  @Column({ name: 'investigation_resolution', type: 'varchar', length: 30, nullable: true })
+  investigationResolution: string | null;
+
+  @Column({ name: 'investigation_resolved_at', type: 'date', nullable: true })
+  investigationResolvedAt: string | null;
+
+  @Column({ name: 'appraisal_reference', type: 'varchar', length: 100, nullable: true })
+  appraisalReference: string | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   location: string | null;
 
