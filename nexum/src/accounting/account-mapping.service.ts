@@ -43,6 +43,7 @@ export class AccountMappingService {
     [MappingType.FIXED_ASSET_SALE_PROCEEDS]: '135-0020', // Cuentas por Cobrar - Fuera del Órgano (venta a crédito)
     [MappingType.FIXED_ASSET_DONATION_RECEIVED]: '620', // Donaciones Recibidas-Nacionales
     [MappingType.FIXED_ASSET_DONATION_DELIVERED]: '626', // Donaciones Entregadas-Nacionales
+    [MappingType.FIXED_ASSET_REVALUATION]: '613', // Revalorización de Activos Fijos Tangibles
     [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción (default)
     [MappingType.PAYROLL_PROCESSING_PRODUCTION]: '700-0020', // Gastos del Período — Producción en Proceso
     [MappingType.PAYROLL_PROCESSING_ASSOCIATED]: '731', // Gastos Asociados a la Producción

@@ -798,6 +798,14 @@ export class FixedAssetsService {
         description: string;
       }> = [];
 
+      // Cuenta patrimonial 613 Revalorización de AFT (mixta): se acredita el
+      // superávit y se debita el déficit, conforme al Nomenclador Cubano.
+      const revaluationAccount =
+        (await this.accountMappingService.getAccountForMapping(
+          companyId,
+          MappingType.FIXED_ASSET_REVALUATION,
+        )) || '613';
+
       if (revaluationDifference > 0) {
         // Superávit de revalorización
         lines.push({
@@ -807,16 +815,16 @@ export class FixedAssetsService {
           description: `Revalorización AFT ${asset.assetCode} - ${data.reason}`,
         });
         lines.push({
-          accountCode: '846', // Superávit de Revalorización de AFT
+          accountCode: revaluationAccount,
           debit: 0,
           credit: revaluationDifference,
           description: `Superávit revalorización AFT ${asset.assetCode}`,
         });
       } else {
-        // Déficit de revalorización (pérdida)
+        // Déficit de revalorización
         const deficit = Math.abs(revaluationDifference);
         lines.push({
-          accountCode: '845', // Faltantes y Pérdidas de AFT
+          accountCode: revaluationAccount,
           debit: deficit,
           credit: 0,
           description: `Déficit revalorización AFT ${asset.assetCode} - ${data.reason}`,
