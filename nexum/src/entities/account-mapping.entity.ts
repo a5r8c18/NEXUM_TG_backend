@@ -28,6 +28,8 @@ export enum MappingType {
   FIXED_ASSET_DISPOSAL_GAIN = 'fixed_asset_disposal_gain',
   FIXED_ASSET_DISPOSAL_LOSS = 'fixed_asset_disposal_loss',
   FIXED_ASSET_SALE_PROCEEDS = 'fixed_asset_sale_proceeds',
+  FIXED_ASSET_DONATION_RECEIVED = 'fixed_asset_donation_received', // 620 Donaciones Recibidas-Nacionales
+  FIXED_ASSET_DONATION_DELIVERED = 'fixed_asset_donation_delivered', // 626 Donaciones Entregadas-Nacionales
   PAYROLL_PROCESSING = 'payroll_processing',
   PAYROLL_PROCESSING_PRODUCTION = 'payroll_processing_production',
   PAYROLL_PROCESSING_ASSOCIATED = 'payroll_processing_associated',

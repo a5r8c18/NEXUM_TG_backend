@@ -110,6 +110,7 @@ export class FixedAssetsService {
       subgroupDetail?: string;
       acquisitionValue: number;
       acquisitionDate: string;
+      acquisitionType?: 'compra' | 'donacion' | 'sobrante';
       location?: string;
       areaId?: number;
       responsiblePerson?: string;
@@ -143,6 +144,8 @@ export class FixedAssetsService {
       }
     }
 
+    const acquisitionType = data.acquisitionType || 'compra';
+
     let supplierName = 'Proveedor AFT';
     let supplierNit = 'N/D';
     let accountingWarning: string | null = null;
@@ -169,6 +172,7 @@ export class FixedAssetsService {
       asset.subgroupDetail = data.subgroupDetail || '';
       asset.acquisitionValue = data.acquisitionValue;
       asset.acquisitionDate = data.acquisitionDate;
+      asset.acquisitionType = acquisitionType;
       asset.areaId = data.areaId || null;
       asset.location = data.location || '';
       asset.responsiblePerson = responsiblePerson;
@@ -193,11 +197,31 @@ export class FixedAssetsService {
               companyId,
               MappingType.FIXED_ASSET_ACQUISITION,
             )) || '240';
-          const payableAccount =
-            (await this.accountMappingService.getAccountForMapping(
-              companyId,
-              MappingType.PURCHASE_ORDER,
-            )) || '410';
+          // ── Contrapartida según el concepto de alta ──
+          let counterpartAccount: string;
+          let counterpartDescription: string;
+          if (acquisitionType === 'donacion') {
+            counterpartAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.FIXED_ASSET_DONATION_RECEIVED,
+              )) || '620';
+            counterpartDescription = 'Donación recibida de AFT';
+          } else if (acquisitionType === 'sobrante') {
+            counterpartAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.INVENTORY_SURPLUS_INVESTIGATION,
+              )) || '555';
+            counterpartDescription = 'Sobrante de AFT en investigación';
+          } else {
+            counterpartAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.PURCHASE_ORDER,
+              )) || '410';
+            counterpartDescription = 'Obligación por compra de AFT';
+          }
 
           await this.voucherService.createVoucherFromModule(
             companyId,
@@ -205,7 +229,7 @@ export class FixedAssetsService {
             String(asset.id),
             {
               date: asset.acquisitionDate || new Date().toISOString().split('T')[0],
-              description: `Adquisición AFT: ${asset.name} (${asset.assetCode})`,
+              description: `${this.getAcquisitionTypeLabel(acquisitionType)}: ${asset.name} (${asset.assetCode})`,
               type: 'fixed-assets',
               reference: `AFT-${asset.assetCode}`,
               createdBy: 'Sistema',
@@ -217,31 +241,33 @@ export class FixedAssetsService {
                   description: `Alta AFT ${asset.assetCode}`,
                 },
                 {
-                  accountCode: payableAccount, // Cuentas por Pagar
+                  accountCode: counterpartAccount,
                   debit: 0,
                   credit: acquisitionValue,
-                  description: `Obligación por adquisición AFT`,
+                  description: counterpartDescription,
                 },
               ],
             },
             manager,
           );
 
-          // ── Cuenta por Pagar asociada a la adquisición ──
-          const dueDate = new Date(asset.acquisitionDate);
-          dueDate.setDate(dueDate.getDate() + 30);
+          // ── Cuenta por Pagar sólo cuando el alta es por compra ──
+          if (acquisitionType === 'compra') {
+            const dueDate = new Date(asset.acquisitionDate);
+            dueDate.setDate(dueDate.getDate() + 30);
 
-          await this.financeService.createPayable(companyId, {
-            purchaseNumber: asset.assetCode,
-            supplierName,
-            supplierNit,
-            supplierId: data.supplierId || undefined,
-            originalAmount: acquisitionValue,
-            dueDate: dueDate.toISOString().split('T')[0],
-            status: 'pending',
-            currency: 'CUP',
-            notes: `CxP generada por adquisición AFT ${asset.assetCode} - ${asset.name}`,
-          }, manager);
+            await this.financeService.createPayable(companyId, {
+              purchaseNumber: asset.assetCode,
+              supplierName,
+              supplierNit,
+              supplierId: data.supplierId || undefined,
+              originalAmount: acquisitionValue,
+              dueDate: dueDate.toISOString().split('T')[0],
+              status: 'pending',
+              currency: 'CUP',
+              notes: `CxP generada por compra de AFT ${asset.assetCode} - ${asset.name}`,
+            }, manager);
+          }
         } catch (error) {
           this.logger.error(`Error contabilización/finanzas AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
           // El comprobante de adquisición AFT es parte de la operación; si no se
@@ -395,7 +421,14 @@ export class FixedAssetsService {
     id: number,
     data: {
       reason: string;
-      disposalType: 'deterioro' | 'obsolescencia' | 'rotura' | 'faltante' | 'venta' | 'donacion';
+      disposalType:
+        | 'faltante'
+        | 'deterioro'
+        | 'venta'
+        | 'devolucion_compra'
+        | 'obsolescencia'
+        | 'rotura'
+        | 'donacion';
       disposalDate?: string;
       bankAccountId?: string;
       saleAmount?: number;
@@ -418,6 +451,9 @@ export class FixedAssetsService {
     asset.status = 'disposed';
     asset.currentValue = 0;
     asset.accumulatedDepreciation = acquisitionValue;
+    asset.disposalType = data.disposalType;
+    asset.disposalDate = disposalDate;
+    asset.disposalReason = data.reason;
     await this.assetRepo.save(asset);
 
     // ── Comprobante contable de baja ──
@@ -499,8 +535,53 @@ export class FixedAssetsService {
               description: `Pérdida venta AFT ${asset.assetCode}`,
             });
           }
+        } else if (data.disposalType === 'faltante') {
+          // Débito: Faltantes de Bienes en Investigación por el valor neto
+          if (residualLoss > 0) {
+            const shortageAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.INVENTORY_SHORTAGE_INVESTIGATION,
+              )) || '332';
+            lines.push({
+              accountCode: shortageAccount,
+              debit: residualLoss,
+              credit: 0,
+              description: `Faltante de AFT ${asset.assetCode} en investigación`,
+            });
+          }
+        } else if (data.disposalType === 'devolucion_compra') {
+          // Débito: Cuentas por Pagar — se revierte la obligación con el proveedor
+          if (residualLoss > 0) {
+            const payableAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.PURCHASE_ORDER,
+              )) || '410';
+            lines.push({
+              accountCode: payableAccount,
+              debit: residualLoss,
+              credit: 0,
+              description: `Devolución de compra de AFT ${asset.assetCode}`,
+            });
+          }
+        } else if (data.disposalType === 'donacion') {
+          // Débito: Donaciones Entregadas por el valor neto
+          if (residualLoss > 0) {
+            const donationAccount =
+              (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.FIXED_ASSET_DONATION_DELIVERED,
+              )) || '626';
+            lines.push({
+              accountCode: donationAccount,
+              debit: residualLoss,
+              credit: 0,
+              description: `Donación entregada de AFT ${asset.assetCode}`,
+            });
+          }
         } else {
-          // Débito: Faltantes y Pérdidas de AFT por valor residual
+          // Deterioro / obsolescencia / rotura → Faltantes y Pérdidas de AFT
           if (residualLoss > 0) {
             const lossAccount =
               (await this.accountMappingService.getAccountForMapping(
@@ -530,7 +611,7 @@ export class FixedAssetsService {
           String(asset.id),
           {
             date: disposalDate,
-            description: `Baja de AFT: ${asset.name} (${asset.assetCode}) - ${data.disposalType}: ${data.reason}`,
+            description: `${this.getDisposalTypeLabel(data.disposalType)}: ${asset.name} (${asset.assetCode}) - ${data.reason}`,
             type: 'fixed-assets',
             reference: `BAJA-${asset.assetCode}`,
             createdBy: userName || 'Sistema',
@@ -543,8 +624,32 @@ export class FixedAssetsService {
         // Revert asset status if accounting fails
         asset.status = oldStatus;
         asset.currentValue = currentValue;
+        asset.accumulatedDepreciation = accumulatedDepreciation;
+        asset.disposalType = null;
+        asset.disposalDate = null;
+        asset.disposalReason = null;
         await this.assetRepo.save(asset);
         throw new BadRequestException(`Error al generar comprobante contable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // ── Devolución de compra: cancelar la CxP generada en el alta ──
+    if (data.disposalType === 'devolucion_compra') {
+      try {
+        const payables = await this.financeService.findAllPayables(companyId);
+        const payable = payables.find(
+          (p) => p.purchaseNumber === asset.assetCode && p.status !== 'cancelled',
+        );
+        if (payable) {
+          await this.financeService.updatePayable(companyId, payable.id, {
+            status: 'cancelled',
+            balanceAmount: 0,
+            notes: `${payable.notes || ''} | Cancelada por devolución de compra AFT ${asset.assetCode}`.trim(),
+          });
+          this.logger.log(`CxP ${payable.apNumber} cancelada por devolución AFT ${asset.assetCode}`);
+        }
+      } catch (error) {
+        this.logger.error(`Error cancelando CxP por devolución AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -1090,6 +1195,28 @@ export class FixedAssetsService {
       where: { companyId, groupNumber, subgroupName: subgroup, isActive: true },
     });
     return entry ? Number(entry.depreciationRate) : 0;
+  }
+
+  private getAcquisitionTypeLabel(type: string): string {
+    const labels: Record<string, string> = {
+      compra: 'Compra de AFT',
+      donacion: 'Alta de AFT por donación',
+      sobrante: 'Alta de AFT por sobrante',
+    };
+    return labels[type] || 'Alta de AFT';
+  }
+
+  private getDisposalTypeLabel(type: string): string {
+    const labels: Record<string, string> = {
+      faltante: 'Baja de AFT por faltante',
+      deterioro: 'Baja de AFT por deterioro',
+      venta: 'Venta de AFT',
+      devolucion_compra: 'Devolución de compra de AFT',
+      obsolescencia: 'Baja de AFT por obsolescencia',
+      rotura: 'Baja de AFT por rotura',
+      donacion: 'Baja de AFT por donación entregada',
+    };
+    return labels[type] || 'Baja de AFT';
   }
 
   private async getCostCenterWithExpenseAccount(

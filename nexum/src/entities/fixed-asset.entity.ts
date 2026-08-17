@@ -86,6 +86,18 @@ export class FixedAsset {
   @Column({ name: 'acquisition_date', type: 'date' })
   acquisitionDate: string;
 
+  @Column({ name: 'acquisition_type', type: 'varchar', length: 30, default: 'compra' })
+  acquisitionType: string;
+
+  @Column({ name: 'disposal_type', type: 'varchar', length: 30, nullable: true })
+  disposalType: string | null;
+
+  @Column({ name: 'disposal_date', type: 'date', nullable: true })
+  disposalDate: string | null;
+
+  @Column({ name: 'disposal_reason', type: 'text', nullable: true })
+  disposalReason: string | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   location: string | null;
 

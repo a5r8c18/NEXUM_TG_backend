@@ -48,6 +48,12 @@ export class CreateFixedAssetDto {
   acquisitionDate: string;
 
   @IsOptional()
+  @IsIn(['compra', 'donacion', 'sobrante'], {
+    message: 'Concepto de alta inválido: debe ser compra, donacion o sobrante',
+  })
+  acquisitionType?: 'compra' | 'donacion' | 'sobrante';
+
+  @IsOptional()
   @IsString()
   location?: string;
 
@@ -131,10 +137,25 @@ export class DisposeAssetDto {
   reason: string;
 
   @IsIn(
-    ['deterioro', 'obsolescencia', 'rotura', 'faltante', 'venta', 'donacion'],
-    { message: 'Tipo de baja inválido' },
+    [
+      'faltante',
+      'deterioro',
+      'venta',
+      'devolucion_compra',
+      'obsolescencia',
+      'rotura',
+      'donacion',
+    ],
+    { message: 'Concepto de baja inválido' },
   )
-  disposalType: 'deterioro' | 'obsolescencia' | 'rotura' | 'faltante' | 'venta' | 'donacion';
+  disposalType:
+    | 'faltante'
+    | 'deterioro'
+    | 'venta'
+    | 'devolucion_compra'
+    | 'obsolescencia'
+    | 'rotura'
+    | 'donacion';
 
   @IsOptional()
   @IsDateString()

@@ -41,6 +41,8 @@ export class AccountMappingService {
     [MappingType.FIXED_ASSET_DISPOSAL_GAIN]: '950', // Otros Ingresos / Superávit por baja/venta AFT
     [MappingType.FIXED_ASSET_DISPOSAL_LOSS]: '845', // Faltantes y Pérdidas de AFT
     [MappingType.FIXED_ASSET_SALE_PROCEEDS]: '135-0020', // Cuentas por Cobrar - Fuera del Órgano (venta a crédito)
+    [MappingType.FIXED_ASSET_DONATION_RECEIVED]: '620', // Donaciones Recibidas-Nacionales
+    [MappingType.FIXED_ASSET_DONATION_DELIVERED]: '626', // Donaciones Entregadas-Nacionales
     [MappingType.PAYROLL_PROCESSING]: '731', // Gastos Asociados a la Producción (default)
     [MappingType.PAYROLL_PROCESSING_PRODUCTION]: '700-0020', // Gastos del Período — Producción en Proceso
     [MappingType.PAYROLL_PROCESSING_ASSOCIATED]: '731', // Gastos Asociados a la Producción
