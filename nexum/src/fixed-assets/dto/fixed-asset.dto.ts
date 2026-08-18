@@ -82,11 +82,15 @@ export class CreateFixedAssetDto {
   counterpartAccountCode?: string;
 }
 
+/**
+ * Datos editables de un AFT ya registrado.
+ *
+ * No incluye `assetCode`, `groupNumber`, `subgroup`, `acquisitionValue` ni
+ * `acquisitionDate`: son datos con efecto contable ya asentado en las cuentas
+ * 240 y 375 del Nomenclador 2016. El valor sólo puede variar por mejora
+ * capitalizable o avalúo, y la salida del registro por baja.
+ */
 export class UpdateFixedAssetDto {
-  @IsOptional()
-  @IsString()
-  assetCode?: string;
-
   @IsOptional()
   @IsString()
   name?: string;
@@ -96,27 +100,8 @@ export class UpdateFixedAssetDto {
   description?: string;
 
   @IsOptional()
-  @IsInt()
-  @IsPositive()
-  groupNumber?: number;
-
-  @IsOptional()
-  @IsString()
-  subgroup?: string;
-
-  @IsOptional()
   @IsString()
   subgroupDetail?: string;
-
-  @IsOptional()
-  @IsNumber()
-  @IsPositive()
-  @Max(999999999.99, { message: 'El valor de adquisición no puede exceder 999,999,999.99' })
-  acquisitionValue?: number;
-
-  @IsOptional()
-  @IsDateString()
-  acquisitionDate?: string;
 
   @IsOptional()
   @IsString()
@@ -132,10 +117,16 @@ export class UpdateFixedAssetDto {
 
   @IsOptional()
   @IsString()
+  responsiblePerson?: string;
+
+  @IsOptional()
+  @IsString()
   costCenterId?: string;
 
   @IsOptional()
-  @IsIn(['active', 'disposed', 'fully_depreciated'])
+  @IsIn(['active', 'disposed', 'fully_depreciated', 'transferred'], {
+    message: 'Estado inválido: active, disposed, fully_depreciated o transferred',
+  })
   status?: string;
 }
 

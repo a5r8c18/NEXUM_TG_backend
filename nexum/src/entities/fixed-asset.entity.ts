@@ -124,6 +124,18 @@ export class FixedAsset {
   @Column({ name: 'appraisal_reference', type: 'varchar', length: 100, nullable: true })
   appraisalReference: string | null;
 
+  // ── Superávit de revalorización acumulado en la cuenta 613 (Nomenclador 2016) ──
+  // Un déficit posterior sólo puede debitarse contra 613 hasta agotar este saldo;
+  // el exceso se reconoce como gasto por pérdidas (845).
+  @Column({
+    name: 'revaluation_surplus',
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    default: 0,
+  })
+  revaluationSurplus: number;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   location: string | null;
 
