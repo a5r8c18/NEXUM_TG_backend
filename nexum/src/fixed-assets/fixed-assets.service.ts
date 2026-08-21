@@ -1213,12 +1213,16 @@ export class FixedAssetsService {
               accountCode: assetAccount,
               debit: amount,
               credit: 0,
+              areaId: asset.areaId ?? null,
+              costCenterId: asset.costCenterId ?? null,
               description: `Capitalización mejora AFT ${asset.assetCode}`,
             },
             {
               accountCode: counterpartAccount,
               debit: 0,
               credit: amount,
+              areaId: asset.areaId ?? null,
+              costCenterId: asset.costCenterId ?? null,
               description: data.bankAccountId
                 ? `Pago de mejora AFT ${asset.assetCode}`
                 : `Obligación por mejora AFT ${asset.assetCode}`,
@@ -1418,6 +1422,8 @@ export class FixedAssetsService {
       debit: number;
       credit: number;
       description: string;
+      areaId?: number | null;
+      costCenterId?: string | null;
     }> = [];
     let description: string;
 
@@ -1478,6 +1484,11 @@ export class FixedAssetsService {
         description: `Ingreso por sobrante de AFT ${asset.assetCode}`,
       });
       description = `Resolución sobrante AFT ${asset.assetCode}: reconocimiento de ingreso`;
+    }
+
+    for (const line of lines) {
+      line.areaId = asset.areaId ?? null;
+      line.costCenterId = asset.costCenterId ?? null;
     }
 
     await this.voucherService.createVoucherFromModule(
@@ -1608,6 +1619,8 @@ export class FixedAssetsService {
       debit: number;
       credit: number;
       description: string;
+      areaId?: number | null;
+      costCenterId?: string | null;
     }> = [];
 
     let surplusApplied = 0;
@@ -1659,6 +1672,12 @@ export class FixedAssetsService {
         credit: deficit,
         description: `Reducción valor AFT ${asset.assetCode}`,
       });
+    }
+
+    // Asociar el área y centro de costo del activo a cada partida
+    for (const line of lines) {
+      line.areaId = asset.areaId ?? null;
+      line.costCenterId = asset.costCenterId ?? null;
     }
 
     // ── Operación atómica: valores del activo + comprobante contable ──
