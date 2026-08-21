@@ -108,6 +108,7 @@ export class VoucherService {
         .createQueryBuilder('v')
         .leftJoinAndSelect('v.lines', 'lines')
         .leftJoinAndSelect('lines.costCenter', 'costCenter')
+        .leftJoinAndSelect('lines.area', 'area')
         .where('v.companyId = :companyId', { companyId });
 
       if (filters?.status)
@@ -152,6 +153,7 @@ export class VoucherService {
       .createQueryBuilder('v')
       .leftJoinAndSelect('v.lines', 'lines')
       .leftJoinAndSelect('lines.costCenter', 'costCenter')
+        .leftJoinAndSelect('lines.area', 'area')
       .where('v.companyId = :companyId', { companyId });
 
     if (filters.status)
@@ -179,7 +181,7 @@ export class VoucherService {
   async findOneVoucher(companyId: number, id: string) {
     const voucher = await this.voucherRepo.findOne({
       where: { id, companyId },
-      relations: ['lines', 'lines.costCenter'],
+      relations: ['lines', 'lines.costCenter', 'lines.area'],
     });
     if (!voucher) throw new NotFoundException(`Voucher #${id} no encontrado`);
     return voucher;
@@ -314,6 +316,7 @@ export class VoucherService {
             credit: line.credit,
             description: line.description,
             costCenterId: line.costCenterId,
+            areaId: line.areaId,
             reference: line.reference,
             lineOrder: index + 1,
           }),
@@ -378,7 +381,9 @@ export class VoucherService {
         debit: number;
         credit: number;
         description?: string;
-        costCenterId?: string;
+        costCenterId?: string | null;
+        /** Área de AFT asociada a la partida (submayor por área) */
+        areaId?: number | null;
         /** Subcuenta analítica explícita; si se indica, se usa en lugar de resolver accountCode */
         subaccountCode?: string | null;
         /** Elemento de gasto (clasificador cubano) — requerido en cuentas de gasto */
@@ -546,6 +551,7 @@ export class VoucherService {
             credit: line.credit,
             description: line.description,
             costCenterId: line.costCenterId,
+            areaId: line.areaId,
             reference: line.reference,
             lineOrder: index + 1,
           }),
@@ -1018,6 +1024,7 @@ export class VoucherService {
           credit: line.credit || 0,
           description: line.description || null,
           costCenterId: line.costCenterId || null,
+          areaId: line.areaId || null,
           reference: line.reference || null,
         };
       }),

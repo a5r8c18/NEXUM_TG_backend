@@ -77,6 +77,8 @@ export class CompaniesService {
       email?: string;
       logo_path?: string;
       is_active?: boolean;
+      tenantId?: string;
+      tenantType?: string;
     },
   ) {
     const company = await this.companyRepo.findOneBy({ id });
@@ -98,6 +100,8 @@ export class CompaniesService {
     if (data.email !== undefined) company.email = data.email;
     if (data.logo_path !== undefined) company.logoPath = data.logo_path;
     if (data.is_active !== undefined) company.isActive = data.is_active;
+    if (data.tenantId !== undefined) company.tenantId = data.tenantId;
+    if (data.tenantType !== undefined) company.tenantType = data.tenantType;
 
     return this.companyRepo.save(company);
   }

@@ -171,6 +171,12 @@ export class FixedAsset {
   @JoinColumn({ name: 'cost_center_id' })
   costCenter: CostCenter | null;
 
+  @Column({ name: 'asset_account_code', type: 'varchar', length: 50, nullable: true })
+  assetAccountCode: string | null;
+
+  @Column({ name: 'counterpart_account_code', type: 'varchar', length: 50, nullable: true })
+  counterpartAccountCode: string | null;
+
   @Column({ length: 20, default: 'active' })
   status: string;
 

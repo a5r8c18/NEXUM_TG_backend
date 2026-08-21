@@ -260,9 +260,13 @@ export class ResolveInvestigationDto {
 }
 
 export class TransferAssetDto {
-  @IsInt({ message: 'El ID de la entidad destino debe ser un entero' })
-  @IsPositive({ message: 'El ID de la entidad destino debe ser mayor que 0' })
-  targetCompanyId: number;
+  @IsOptional()
+  @IsInt({ message: 'El ID del área destino debe ser un entero' })
+  targetAreaId?: number;
+
+  @IsOptional()
+  @IsString({ message: 'El centro de costo destino debe ser texto' })
+  targetCostCenterId?: string;
 
   @IsString({ message: 'El motivo de transferencia debe ser texto' })
   @IsNotEmpty({ message: 'El motivo de transferencia es obligatorio' })
@@ -270,26 +274,6 @@ export class TransferAssetDto {
 
   @IsDateString({}, { message: 'La fecha de transferencia debe tener formato de fecha válido' })
   transferDate: string;
-
-  @IsOptional()
-  @IsString()
-  newLocation?: string;
-
-  @IsOptional()
-  @IsString()
-  newResponsiblePerson?: string;
-
-  @IsOptional()
-  @IsString()
-  newEmployeeId?: string;
-
-  @IsOptional()
-  @IsString()
-  assetAccountCode?: string;
-
-  @IsOptional()
-  @IsString()
-  transferAccountCode?: string;
 }
 
 export class CreateUpdateAreaDto {

@@ -201,20 +201,24 @@ export class AccountService {
   }
 
   async getSubaccountsByAccount(companyId: number, accountId: string) {
-    // Buscar subcuentas directamente usando parentAccountId
-    const subaccounts = await this.accountRepo.find({
-      where: {
-        companyId,
-        level: 4,
-        parentAccountId: accountId,
-        isActive: true,
-      },
-      order: {
-        code: 'ASC',
-      },
+    const account = await this.accountRepo.findOne({
+      where: { id: accountId, companyId },
     });
+    if (!account) return [];
 
-    return subaccounts;
+    // Las subcuentas pueden estar enlazadas por parentAccountId o, en los
+    // catálogos cargados por semilla/importación, solo por parentCode.
+    return this.accountRepo
+      .createQueryBuilder('a')
+      .where('a.companyId = :companyId', { companyId })
+      .andWhere('a.isActive = true')
+      .andWhere('a.id != :accountId', { accountId })
+      .andWhere(
+        '(a.parentAccountId = :accountId OR a.parentCode = :parentCode)',
+        { accountId, parentCode: account.code },
+      )
+      .orderBy('a.code', 'ASC')
+      .getMany();
   }
 
   async createSubaccount(

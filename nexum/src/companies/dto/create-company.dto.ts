@@ -24,6 +24,10 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsString()
   logo_path?: string;
+
+  @IsOptional()
+  @IsString()
+  tenant_type?: string;
 }
 
 export class UpdateCompanyDto {
@@ -50,4 +54,8 @@ export class UpdateCompanyDto {
   @IsOptional()
   @IsString()
   logo_path?: string;
+
+  @IsOptional()
+  @IsString()
+  tenant_type?: string;
 }

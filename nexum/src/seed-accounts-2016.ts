@@ -1674,6 +1674,16 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
       allWithSubs.push(...subs);
     }
 
+    // 10.b Pago a Cuenta de Utilidades Sector Cooperativo (693)
+    if (code === '693') {
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, {
+        '0010': 'Anticipo a Cooperativistas',
+        '0020': 'Pago de Tributos',
+        '0030': 'Otros',
+      });
+      allWithSubs.push(...subs);
+    }
+
     // 11. Producción en Proceso (700-724) y Producción Propia para Insumos (725)
     if (!isNaN(codeNum) && codeNum >= 700 && codeNum <= 724) {
       const subs = generateProductionProcessSubaccounts(code, parentName, type, nature);
@@ -1725,10 +1735,11 @@ async function seedAccounts2016() {
     }
 
     for (const company of companies) {
-      // Determinar el tipo de empresa (asumiendo que tienes un campo 'type' en Company)
-      // Si no, puedes pasar un parámetro o decidir según el nombre.
-      // Por defecto, usamos 'state' para empresas estatales.
-      const companyType: 'state' | 'non-state' = (company as any).type === 'non-state' ? 'non-state' : 'state';
+      // El tipo de empresa se lee de tenantType ('state' | 'non-state').
+      // Si no está definido, se toma la variable de entorno DEFAULT_COMPANY_TYPE
+      // o 'state' por omisión.
+      const rawType = (company as any).tenantType ?? process.env.DEFAULT_COMPANY_TYPE ?? 'state';
+      const companyType: 'state' | 'non-state' = rawType === 'non-state' ? 'non-state' : 'state';
 
       console.log(`🏢 Processing company: ${company.name} (ID: ${company.id}, Type: ${companyType})`);
 

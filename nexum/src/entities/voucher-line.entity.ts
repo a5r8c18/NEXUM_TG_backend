@@ -8,6 +8,7 @@ import {
 import { Voucher } from './voucher.entity';
 import { Account } from './account.entity';
 import { CostCenter } from './cost-center.entity';
+import { FixedAssetArea } from './fixed-asset-area.entity';
 
 @Entity('voucher_lines')
 export class VoucherLine {
@@ -69,6 +70,13 @@ export class VoucherLine {
   @ManyToOne(() => CostCenter, { nullable: true })
   @JoinColumn({ name: 'cost_center_id' })
   costCenter: CostCenter;
+
+  @Column({ name: 'area_id', type: 'int', nullable: true })
+  areaId: number | null;
+
+  @ManyToOne(() => FixedAssetArea, { nullable: true })
+  @JoinColumn({ name: 'area_id' })
+  area: FixedAssetArea | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   reference: string | null;

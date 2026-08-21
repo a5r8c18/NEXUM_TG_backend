@@ -37,6 +37,10 @@ export class VoucherLineDto {
   @IsString()
   costCenterId?: string;
 
+  @IsOptional()
+  @IsNumber({}, { message: 'El área debe ser un número' })
+  areaId?: number;
+
   @IsNumber({}, { message: 'El débito debe ser un número' })
   @Min(0, { message: 'El débito no puede ser negativo' })
   debit: number;

@@ -162,6 +162,11 @@ export class FixedAssetsService {
 
     const acquisitionType = data.acquisitionType || 'compra';
 
+    const area = data.areaId
+      ? await this.areaRepo.findOneBy({ id: data.areaId, companyId })
+      : null;
+    const areaName = area?.name ?? 'N/D';
+
     let supplierName = 'Proveedor AFT';
     let supplierNit = 'N/D';
     let accountingWarning: string | null = null;
@@ -195,6 +200,8 @@ export class FixedAssetsService {
       asset.employeeId = data.employeeId || null;
       asset.costCenterId = data.costCenterId || null;
       asset.supplierId = data.supplierId || null;
+      asset.assetAccountCode = data.assetAccountCode || null;
+      asset.counterpartAccountCode = data.counterpartAccountCode || null;
       asset.depreciationRate = depRate;
       asset.currentValue = data.acquisitionValue;
       asset.accumulatedDepreciation = 0;
@@ -256,7 +263,7 @@ export class FixedAssetsService {
             String(asset.id),
             {
               date: asset.acquisitionDate || new Date().toISOString().split('T')[0],
-              description: `${this.getAcquisitionTypeLabel(acquisitionType)}: ${asset.name} (${asset.assetCode})`,
+              description: `${this.getAcquisitionTypeLabel(acquisitionType)}: ${asset.name} (${asset.assetCode}) - Área: ${areaName}`,
               type: 'fixed-assets',
               reference: `AFT-${asset.assetCode}`,
               createdBy: 'Sistema',
@@ -265,12 +272,16 @@ export class FixedAssetsService {
                   accountCode: assetAccount, // Activos Fijos Tangibles
                   debit: acquisitionValue,
                   credit: 0,
+                  areaId: data.areaId || null,
+                  costCenterId: data.costCenterId || null,
                   description: `Alta AFT ${asset.assetCode}`,
                 },
                 {
                   accountCode: counterpartAccount,
                   debit: 0,
                   credit: acquisitionValue,
+                  areaId: data.areaId || null,
+                  costCenterId: data.costCenterId || null,
                   description: counterpartDescription,
                 },
               ],
@@ -507,7 +518,10 @@ export class FixedAssetsService {
     },
     userName?: string,
   ) {
-    const asset = await this.assetRepo.findOneBy({ id, companyId });
+    const asset = await this.assetRepo.findOne({
+      where: { id, companyId },
+      relations: ['area'],
+    });
     if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
     if (asset.status === 'disposed') {
       throw new BadRequestException(`El activo ${asset.assetCode} ya fue dado de baja`);
@@ -578,6 +592,8 @@ export class FixedAssetsService {
           debit: number;
           credit: number;
           description: string;
+          areaId?: number | null;
+          costCenterId?: string | null;
         }> = [];
 
         // Débito: Depreciación Acumulada por lo ya depreciado
@@ -739,13 +755,18 @@ export class FixedAssetsService {
           description: `Baja AFT ${asset.assetCode}: ${asset.name}`,
         });
 
+        for (const line of lines) {
+          line.areaId = asset.areaId ?? null;
+          line.costCenterId = asset.costCenterId ?? null;
+        }
+
         await this.voucherService.createVoucherFromModule(
           companyId,
           'fixed-assets',
           String(asset.id),
           {
             date: disposalDate,
-            description: `${this.getDisposalTypeLabel(data.disposalType)}: ${asset.name} (${asset.assetCode}) - ${data.reason}`,
+            description: `${this.getDisposalTypeLabel(data.disposalType)}: ${asset.name} (${asset.assetCode}) - Área: ${asset.area?.name ?? 'N/D'} - ${data.reason}`,
             type: 'fixed-assets',
             reference: `BAJA-${asset.assetCode}`,
             createdBy: userName || 'Sistema',
@@ -1748,66 +1769,50 @@ export class FixedAssetsService {
     };
   }
 
-  // ── Transferencia de Activo Fijo entre Entidades (NCC Cuba - Res. 340) ──
-  // Transfiere un activo fijo de una entidad a otra
-  // Genera comprobantes contables:
-  //   Entidad origen: Salida de AFT (crédito cuenta 240)
-  //   Entidad destino: Entrada de AFT (débito cuenta 240)
+  // ── Transferencia de Activo Fijo a otra Área / Centro de Costo ──
+  // Registra el movimiento interno del AFT y su contabilización por la
+  // cuenta 696 "Operaciones entre Dependencias" (misma entidad).
   async transferAsset(
     companyId: number,
     id: number,
     data: {
-      targetCompanyId: number;
+      targetAreaId?: number;
+      targetCostCenterId?: string;
       reason: string;
       transferDate: string;
-      newLocation?: string;
-      newResponsiblePerson?: string;
-      newEmployeeId?: string;
-      assetAccountCode?: string;
-      transferAccountCode?: string;
     },
     userName?: string,
   ) {
-    const asset = await this.assetRepo.findOneBy({ id, companyId });
+    const asset = await this.assetRepo.findOne({
+      where: { id, companyId },
+      relations: ['area'],
+    });
     if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
     if (asset.status === 'disposed') {
       throw new BadRequestException(`El activo ${asset.assetCode} ya fue dado de baja`);
     }
-    if (data.targetCompanyId === companyId) {
-      throw new BadRequestException('No se puede transferir un activo a la misma entidad');
-    }
 
-    const oldCompanyId = asset.companyId;
-    const oldLocation = asset.location;
-    const oldEmployeeId = asset.employeeId;
+    const oldAreaId = asset.areaId;
+    const oldCostCenterId = asset.costCenterId;
     const oldResponsiblePerson = asset.responsiblePerson;
+    const oldAreaName = asset.area?.name ?? 'N/D';
 
-    // ── Comprobante contable de salida (entidad origen) ──
+    const targetArea = data.targetAreaId
+      ? await this.areaRepo.findOneBy({ id: data.targetAreaId, companyId })
+      : null;
+    const newAreaName = targetArea?.name ?? 'N/D';
+
+    // ── Comprobante contable de traspaso ──
     let assetAccount: string;
-    let accumulatedDepreciationAccount: string = '375';
-    let transferAccount: string = '696';
     try {
       const acquisitionValue = Number(asset.acquisitionValue);
-      const currentValue = Number(asset.currentValue);
-      const accumulatedDepreciation = acquisitionValue - currentValue;
 
       assetAccount =
-        data.assetAccountCode ||
+        asset.assetAccountCode ||
         (await this.accountMappingService.getAccountForMapping(
           companyId,
           MappingType.FIXED_ASSET_ACQUISITION,
         )) || '240';
-      accumulatedDepreciationAccount =
-        (await this.accountMappingService.getAccountForMapping(
-          companyId,
-          MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION,
-        )) || '375';
-      transferAccount =
-        data.transferAccountCode ||
-        (await this.accountMappingService.getAccountForMapping(
-          companyId,
-          MappingType.FIXED_ASSET_TRANSFER,
-        )) || '696';
 
       await this.voucherService.createVoucherFromModule(
         companyId,
@@ -1815,127 +1820,73 @@ export class FixedAssetsService {
         String(asset.id),
         {
           date: data.transferDate,
-          description: `Transferencia AFT: ${asset.name} (${asset.assetCode}) a entidad ${data.targetCompanyId} - ${data.reason}`,
+          description: `Traspaso AFT: ${asset.name} (${asset.assetCode}) desde área ${oldAreaName} a ${newAreaName} - ${data.reason}`,
           type: 'fixed-assets',
-          reference: `TRN-OUT-${asset.assetCode}`,
-          createdBy: userName || 'Sistema',
-          lines: [
-            {
-              accountCode: transferAccount,
-              debit: currentValue,
-              credit: 0,
-              description: `Cuenta puente traspaso AFT ${asset.assetCode}`,
-            },
-            {
-              accountCode: accumulatedDepreciationAccount,
-              debit: accumulatedDepreciation,
-              credit: 0,
-              description: `Dep. acumulada AFT ${asset.assetCode} transferida`,
-            },
-            {
-              accountCode: assetAccount,
-              debit: 0,
-              credit: acquisitionValue,
-              description: `Salida AFT ${asset.assetCode} por transferencia`,
-            },
-          ],
-        },
-      );
-      this.logger.log(`Comprobante de salida AFT ${asset.assetCode} generado`);
-    } catch (error) {
-      this.logger.error(`Error contabilización salida AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
-      throw new BadRequestException(`Error al generar comprobante de salida: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    // ── Cambiar companyId y responsable del activo ──
-    asset.companyId = data.targetCompanyId;
-    if (data.newLocation) asset.location = data.newLocation;
-    if (data.newEmployeeId) {
-      const newEmployee = await this.employeeRepo.findOne({
-        where: { id: data.newEmployeeId, companyId: data.targetCompanyId },
-      });
-      if (newEmployee) {
-        asset.employeeId = data.newEmployeeId;
-        asset.responsiblePerson = `${newEmployee.firstName} ${newEmployee.lastName}`.trim();
-      }
-    } else if (data.newResponsiblePerson) {
-      asset.responsiblePerson = data.newResponsiblePerson;
-    }
-    await this.assetRepo.save(asset);
-
-    // ── Comprobante contable de entrada (entidad destino) ──
-    try {
-      const acquisitionValue = Number(asset.acquisitionValue);
-      const currentValue = Number(asset.currentValue);
-      const accumulatedDepreciation = acquisitionValue - currentValue;
-
-      await this.voucherService.createVoucherFromModule(
-        data.targetCompanyId,
-        'fixed-assets',
-        String(asset.id),
-        {
-          date: data.transferDate,
-          description: `Recepción AFT por transferencia: ${asset.name} (${asset.assetCode}) desde entidad ${companyId} - ${data.reason}`,
-          type: 'fixed-assets',
-          reference: `TRN-IN-${asset.assetCode}`,
+          reference: `TRN-${asset.assetCode}`,
           createdBy: userName || 'Sistema',
           lines: [
             {
               accountCode: assetAccount,
               debit: acquisitionValue,
               credit: 0,
-              description: `Entrada AFT ${asset.assetCode} por transferencia`,
+              areaId: data.targetAreaId ?? null,
+              costCenterId: data.targetCostCenterId ?? null,
+              description: `Entrada AFT ${asset.assetCode} - ${newAreaName}`,
             },
             {
-              accountCode: accumulatedDepreciationAccount,
+              accountCode: assetAccount,
               debit: 0,
-              credit: accumulatedDepreciation,
-              description: `Dep. acumulada AFT ${asset.assetCode} recibida`,
-            },
-            {
-              accountCode: transferAccount,
-              debit: 0,
-              credit: currentValue,
-              description: `Cuenta puente traspaso AFT ${asset.assetCode}`,
+              credit: acquisitionValue,
+              areaId: asset.areaId,
+              costCenterId: asset.costCenterId,
+              description: `Salida AFT ${asset.assetCode} - ${oldAreaName}`,
             },
           ],
         },
       );
-      this.logger.log(`Comprobante de entrada AFT ${asset.assetCode} generado`);
+      this.logger.log(`Comprobante de traspaso AFT ${asset.assetCode} generado`);
     } catch (error) {
-      this.logger.error(`Error contabilización entrada AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
-      // Revert companyId if accounting fails
-      asset.companyId = oldCompanyId;
-      if (data.newLocation) asset.location = oldLocation;
-      asset.employeeId = oldEmployeeId;
-      asset.responsiblePerson = oldResponsiblePerson;
-      await this.assetRepo.save(asset);
-      throw new BadRequestException(`Error al generar comprobante de entrada: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(`Error contabilización traspaso AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new BadRequestException(`Error al generar comprobante de traspaso: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // ── Actualizar inventario AFT en ambas entidades ──
-    await this.upsertFixedAssetInventory({ ...asset, companyId: oldCompanyId, status: 'transferred' } as FixedAsset);
-    await this.upsertFixedAssetInventory(asset);
+    // ── Actualizar área, centro de costo y responsable del activo ──
+    asset.areaId = data.targetAreaId ?? null;
+    asset.costCenterId = data.targetCostCenterId ?? null;
+
+    if (data.targetCostCenterId) {
+      const costCenter = await this.getCostCenterWithExpenseAccount(
+        companyId,
+        data.targetCostCenterId,
+      );
+      asset.responsiblePerson = costCenter?.expenseAccountCode || '';
+    }
+
+    asset.status = 'transferred';
+    await this.assetRepo.save(asset);
+
+    // (Traspaso contabilizado en un solo comprobante arriba)
+
+    // ── Actualizar inventario AFT ──
+    await this.upsertFixedAssetInventory(asset, 'transferred');
 
     // ── Auditoría de la transferencia ──
     await this.auditService.log({
-      companyId: oldCompanyId,
+      companyId,
       userName: userName || 'System',
       action: AuditAction.UPDATE,
       resource: AuditResource.FIXED_ASSET,
       resourceId: String(asset.id),
       resourceName: `Transferencia AFT: ${asset.assetCode} - ${asset.name}`,
       oldValues: {
-        companyId: oldCompanyId,
-        location: oldLocation,
+        areaId: oldAreaId,
+        costCenterId: oldCostCenterId,
         responsiblePerson: oldResponsiblePerson,
-        employeeId: oldEmployeeId,
       },
       newValues: {
-        companyId: data.targetCompanyId,
-        location: data.newLocation || asset.location,
+        areaId: data.targetAreaId ?? null,
+        costCenterId: data.targetCostCenterId ?? null,
         responsiblePerson: asset.responsiblePerson,
-        employeeId: asset.employeeId,
         reason: data.reason,
       },
     });
@@ -1943,8 +1894,9 @@ export class FixedAssetsService {
     return {
       asset,
       transfer: {
-        fromCompanyId: oldCompanyId,
-        toCompanyId: data.targetCompanyId,
+        companyId,
+        areaId: data.targetAreaId ?? null,
+        costCenterId: data.targetCostCenterId ?? null,
         transferDate: data.transferDate,
         reason: data.reason,
       },
