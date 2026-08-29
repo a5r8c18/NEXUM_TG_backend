@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Injectable, NotFoundException, Res } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { Response } from 'express';
 import * as XLSX from 'xlsx';
 import * as ExcelJS from 'exceljs';
@@ -15,6 +15,14 @@ import { FiscalYear } from '../entities/fiscal-year.entity';
 import { Company } from '../entities/company.entity';
 import { CacheService } from '../cache/cache.service';
 import { Efe5920Data, Efe5921Data, Efe5922Data, Efe5923Data, Efe5924Data, FlujoEfectivoData } from './pdf.service';
+
+/** Opciones comunes a todos los informes contables. */
+export interface ReportOptions {
+  /** Incluye comprobantes en borrador (sin contabilizar). */
+  includeDrafts?: boolean;
+  /** Excluye los asientos de cierre del ejercicio. */
+  beforeClosing?: boolean;
+}
 
 @Injectable()
 export class ReportService {
@@ -37,112 +45,332 @@ export class ReportService {
   ) {}
 
   // ══════════════════════════════════════════════════════════
+  // ── OPCIONES COMUNES DE LOS INFORMES ──
+  // ══════════════════════════════════════════════════════════
+
+  /**
+   * Estados de comprobante que integran un informe. Los anulados nunca se
+   * incluyen; los borradores solo cuando se piden explícitamente.
+   */
+  private voucherStatuses(includeDrafts?: boolean): string[] {
+    return includeDrafts ? ['posted', 'draft'] : ['posted'];
+  }
+
+  /** Sufijo de clave de caché para no mezclar resultados de distintas opciones. */
+  private optionsCacheKey(opts?: ReportOptions): string {
+    return `${opts?.includeDrafts ? 'drafts' : 'posted'}:${opts?.beforeClosing ? 'preclose' : 'full'}`;
+  }
+
+  /**
+   * Aplica los filtros comunes (estado y exclusión de asientos de cierre) a
+   * una consulta que ya tenga el alias `v` sobre `vouchers`.
+   */
+  private applyVoucherFilters(
+    qb: SelectQueryBuilder<any>,
+    opts?: ReportOptions,
+  ) {
+    qb.andWhere('v.status IN (:...statuses)', {
+      statuses: this.voucherStatuses(opts?.includeDrafts),
+    });
+    if (opts?.beforeClosing) {
+      qb.andWhere('v.type != :closingType', { closingType: 'cierre' });
+    }
+    return qb;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── UTILIDADES DE PDF ──
+  // ══════════════════════════════════════════════════════════
+
+  /** Nota aclaratoria para el encabezado cuando hay opciones activas. */
+  private optionsNote(opts?: ReportOptions): string {
+    const notes: string[] = [];
+    if (opts?.includeDrafts) notes.push('Incluye comprobantes sin contabilizar');
+    if (opts?.beforeClosing) notes.push('Antes de cierre');
+    return notes.length ? `  ·  ${notes.join('  ·  ')}` : '';
+  }
+
+  /** Escribe el PDF en la respuesta o lo devuelve como buffer. */
+  private sendPdf(doc: jsPDF, filename: string, res?: Response) {
+    const buffer = Buffer.from(doc.output('arraybuffer'));
+    if (res) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filename}"`,
+      );
+      res.setHeader('Content-Length', buffer.length);
+      res.end(buffer);
+      return;
+    }
+    return { success: true, filename, buffer };
+  }
+
+  /**
+   * Construye un PDF tabular por secciones con salto de página automático y
+   * repetición de encabezado. Lo usan los informes de estructura
+   * "secciones + totales" (situación, rendimiento, gastos).
+   */
+  private buildSectionPdf(opts: {
+    title: string;
+    subtitle: string;
+    companyName?: string;
+    headers: string[];
+    widths: number[];
+    aligns: ('left' | 'right')[];
+    sections: {
+      title: string;
+      rows: string[][];
+      totalLabel?: string;
+      totalValues?: string[];
+    }[];
+    grandTotalLabel?: string;
+    grandTotalValues?: string[];
+  }): jsPDF {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const startX = 14;
+    const rowHeight = 6;
+    const bottomLimit = pageHeight - 16;
+
+    const colX: number[] = [];
+    opts.widths.reduce((x, w) => {
+      colX.push(x);
+      return x + w;
+    }, startX);
+    const tableWidth = opts.widths.reduce((a, b) => a + b, 0);
+
+    const cellX = (i: number) =>
+      opts.aligns[i] === 'right' ? colX[i] + opts.widths[i] - 2 : colX[i] + 2;
+
+    const writeRow = (cells: string[], y: number, bold: boolean) => {
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      cells.forEach((cell, i) => {
+        if (i >= opts.widths.length) return;
+        const text =
+          doc.splitTextToSize(cell ?? '', opts.widths[i] - 4)[0] ?? '';
+        doc.text(text, cellX(i), y + 4.2, { align: opts.aligns[i] });
+      });
+    };
+
+    const drawPageHeader = (): number => {
+      let y = 16;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text(opts.title.toUpperCase(), pageWidth / 2, y, { align: 'center' });
+
+      y += 6;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      if (opts.companyName) {
+        doc.text(opts.companyName, pageWidth / 2, y, { align: 'center' });
+        y += 5;
+      }
+      doc.text(opts.subtitle, pageWidth / 2, y, { align: 'center' });
+
+      y += 4;
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.setFillColor(230, 230, 230);
+      doc.rect(startX, y, tableWidth, rowHeight, 'FD');
+      writeRow(opts.headers, y, true);
+      doc.setFont('helvetica', 'normal');
+      return y + rowHeight;
+    };
+
+    let y = drawPageHeader();
+    const ensureSpace = (needed: number) => {
+      if (y + needed > bottomLimit) {
+        doc.addPage();
+        y = drawPageHeader();
+      }
+    };
+
+    doc.setFontSize(8);
+    opts.sections.forEach((section) => {
+      ensureSpace(rowHeight * 2);
+      doc.setFillColor(245, 245, 245);
+      doc.rect(startX, y, tableWidth, rowHeight, 'FD');
+      writeRow([section.title], y, true);
+      y += rowHeight;
+
+      if (section.rows.length === 0) {
+        doc.rect(startX, y, tableWidth, rowHeight);
+        writeRow(['Sin movimientos en el período'], y, false);
+        y += rowHeight;
+      }
+
+      section.rows.forEach((row) => {
+        ensureSpace(rowHeight);
+        opts.widths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+        writeRow(row, y, false);
+        y += rowHeight;
+      });
+
+      if (section.totalLabel) {
+        ensureSpace(rowHeight);
+        opts.widths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+        writeRow(
+          [section.totalLabel, ...(section.totalValues ?? [])],
+          y,
+          true,
+        );
+        y += rowHeight;
+      }
+      y += 2;
+    });
+
+    if (opts.grandTotalLabel) {
+      ensureSpace(rowHeight);
+      doc.setFillColor(220, 228, 240);
+      doc.rect(startX, y, tableWidth, rowHeight, 'FD');
+      writeRow(
+        [opts.grandTotalLabel, ...(opts.grandTotalValues ?? [])],
+        y,
+        true,
+      );
+      y += rowHeight;
+    }
+
+    const pages = doc.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.text(
+        `Generado: ${new Date().toLocaleString('es-ES')}`,
+        startX,
+        pageHeight - 8,
+      );
+      doc.text(`Página ${p} de ${pages}`, startX + tableWidth, pageHeight - 8, {
+        align: 'right',
+      });
+    }
+
+    return doc;
+  }
+
+  // ══════════════════════════════════════════════════════════
   // ── TRIAL BALANCE ──
   // ══════════════════════════════════════════════════════════
 
-  async getTrialBalance(companyId: number, fromDate?: string, toDate?: string) {
-    const cacheKey = `reports:${companyId}:trial-balance:${fromDate || 'all'}:${toDate || 'all'}`;
-    return this.cacheService.getOrSet(cacheKey, () => this._getTrialBalance(companyId, fromDate, toDate), ReportService.CACHE_TTL);
+  async getTrialBalance(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ) {
+    const cacheKey = `reports:${companyId}:trial-balance:${fromDate || 'all'}:${toDate || 'all'}:${this.optionsCacheKey(options)}`;
+    return this.cacheService.getOrSet(
+      cacheKey,
+      () => this._getTrialBalance(companyId, fromDate, toDate, options),
+      ReportService.CACHE_TTL,
+    );
   }
 
-  private async _getTrialBalance(companyId: number, fromDate?: string, toDate?: string) {
-    // Default date range: if not provided, use full year range to avoid PostgreSQL NULL type inference error
-    const effectiveFromDate = fromDate || '1900-01-01';
-    const effectiveToDate = toDate || '2999-12-31';
-    const hasDateFilter = !!(fromDate || toDate);
+  private async _getTrialBalance(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ) {
+    // Rango efectivo. Si no se indica, se abarca todo el histórico para que
+    // ninguna cuenta con movimientos quede fuera del balance.
+    const periodFrom = fromDate || '1900-01-01';
+    const periodTo = toDate || '2999-12-31';
 
-    const trialBalanceQuery = this.voucherLineRepo
-      .createQueryBuilder('vl')
-      .select('vl.account_code', 'accountCode')
-      .addSelect('vl.account_name', 'accountName')
-      .addSelect('a.nature', 'nature')
-      .addSelect('a.type', 'accountType')
-      // Opening balance calculation
-      .addSelect(
-        `CASE 
-          WHEN a.nature = 'deudora'
-          THEN COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0) - 
-               COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0)
-          ELSE COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0) - 
-               COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0)
-        END`,
-        'openingBalance',
-      )
-      // Period debit
-      .addSelect(
-        `COALESCE(SUM(CASE 
-          WHEN v.date >= :fromDate AND v.date <= :toDate 
-          THEN vl.debit ELSE 0 END), 0)`,
-        'periodDebit',
-      )
-      // Period credit
-      .addSelect(
-        `COALESCE(SUM(CASE 
-          WHEN v.date >= :fromDate AND v.date <= :toDate 
-          THEN vl.credit ELSE 0 END), 0)`,
-        'periodCredit',
-      )
-      // Closing balance calculation
-      .addSelect(
-        `CASE 
-          WHEN a.nature = 'deudora'
-          THEN (COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0) - 
-                COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0)) +
-               (COALESCE(SUM(CASE 
-                 WHEN v.date >= :fromDate AND v.date <= :toDate 
-                 THEN vl.debit ELSE 0 END), 0) - 
-                COALESCE(SUM(CASE 
-                 WHEN v.date >= :fromDate AND v.date <= :toDate 
-                 THEN vl.credit ELSE 0 END), 0))
-          ELSE (COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.credit ELSE 0 END), 0) - 
-                COALESCE(SUM(CASE WHEN v.date < :fromDate THEN vl.debit ELSE 0 END), 0)) +
-               (COALESCE(SUM(CASE 
-                 WHEN v.date >= :fromDate AND v.date <= :toDate 
-                 THEN vl.credit ELSE 0 END), 0) - 
-                COALESCE(SUM(CASE 
-                 WHEN v.date >= :fromDate AND v.date <= :toDate 
-                 THEN vl.debit ELSE 0 END), 0))
-        END`,
-        'closingBalance',
-      )
-      .innerJoin('vl.voucher', 'v')
-      .innerJoin('vl.account', 'a')
-      .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' });
+    // "Acumulado" = desde el inicio del ejercicio contable (1 de enero del año
+    // de la fecha inicial) hasta la fecha final del período consultado.
+    const accumulatedFrom = fromDate
+      ? `${fromDate.slice(0, 4)}-01-01`
+      : '1900-01-01';
 
-    if (hasDateFilter) {
-      trialBalanceQuery.andWhere('v.date >= :fromDate AND v.date <= :toDate');
-    }
+    // Naturaleza de respaldo según el Nomenclador de Cuentas 2016 cuando la
+    // cuenta no está catalogada: elementos 1-3 y 8 son deudoras, el resto
+    // acreedoras.
+    const natureFallback = `CASE WHEN LEFT(vl.account_code, 1) IN ('1','2','3','8')
+                                 THEN 'deudora' ELSE 'acreedora' END`;
 
-    trialBalanceQuery
-      .groupBy('vl.account_code')
-      .addGroupBy('vl.account_name')
-      .addGroupBy('a.nature')
-      .addGroupBy('a.type')
-      .having(
-        `COALESCE(SUM(vl.debit), 0) > 0 OR COALESCE(SUM(vl.credit), 0) > 0`,
-      )
-      .orderBy('vl.account_code', 'ASC');
+    const statuses = this.voucherStatuses(options?.includeDrafts);
+    // 'cierre' se excluye cuando se pide el balance previo al cierre.
+    const excludedTypes = options?.beforeClosing ? ['cierre'] : [];
 
-    trialBalanceQuery.setParameters({
-      fromDate: effectiveFromDate,
-      toDate: effectiveToDate,
-    });
+    const rows: any[] = await this.voucherLineRepo.query(
+      `
+      SELECT
+        vl.account_code AS "accountCode",
+        MAX(COALESCE(a.name, vl.account_name)) AS "accountName",
+        MAX(COALESCE(a.nature, ${natureFallback})) AS "nature",
+        MAX(COALESCE(a.type, '')) AS "accountType",
+        COALESCE(SUM(CASE WHEN v.date >= $2 AND v.date <= $3 THEN vl.debit ELSE 0 END), 0) AS "periodDebit",
+        COALESCE(SUM(CASE WHEN v.date >= $2 AND v.date <= $3 THEN vl.credit ELSE 0 END), 0) AS "periodCredit",
+        COALESCE(SUM(CASE WHEN v.date >= $4 AND v.date <= $3 THEN vl.debit ELSE 0 END), 0) AS "accumulatedDebit",
+        COALESCE(SUM(CASE WHEN v.date >= $4 AND v.date <= $3 THEN vl.credit ELSE 0 END), 0) AS "accumulatedCredit",
+        COALESCE(SUM(CASE WHEN v.date < $2 THEN vl.debit ELSE 0 END), 0) AS "openingDebit",
+        COALESCE(SUM(CASE WHEN v.date < $2 THEN vl.credit ELSE 0 END), 0) AS "openingCredit"
+      FROM voucher_lines vl
+      INNER JOIN vouchers v ON v.id = vl.voucher_id
+      LEFT JOIN accounts a ON a.id = vl.account_id
+      WHERE v.company_id = $1
+        AND v.status = ANY($5)
+        AND NOT (v.type = ANY($6))
+        AND v.date <= $3
+      GROUP BY vl.account_code
+      ORDER BY vl.account_code ASC
+      `,
+      [
+        companyId,
+        periodFrom,
+        periodTo,
+        accumulatedFrom,
+        statuses,
+        excludedTypes,
+      ],
+    );
 
-    const results = await trialBalanceQuery.getRawMany();
+    return rows
+      .map((row: any) => {
+        const nature: 'deudora' | 'acreedora' =
+          row.nature === 'acreedora' ? 'acreedora' : 'deudora';
+        const periodDebit = Number(row.periodDebit || 0);
+        const periodCredit = Number(row.periodCredit || 0);
+        const accumulatedDebit = Number(row.accumulatedDebit || 0);
+        const accumulatedCredit = Number(row.accumulatedCredit || 0);
+        const openingDebit = Number(row.openingDebit || 0);
+        const openingCredit = Number(row.openingCredit || 0);
 
-    return results
-      .map((row: any) => ({
-        accountCode: row.accountCode,
-        accountName: row.accountName,
-        nature: row.nature || 'deudora',
-        accountType: row.accountType || '',
-        openingBalance: Number(row.openingBalance || 0),
-        periodDebit: Number(row.periodDebit || 0),
-        periodCredit: Number(row.periodCredit || 0),
-        closingBalance: Number(row.closingBalance || 0),
-      }))
-      .filter((row) => row.closingBalance !== 0 || row.periodDebit !== 0 || row.periodCredit !== 0);
+        const openingBalance =
+          nature === 'deudora'
+            ? openingDebit - openingCredit
+            : openingCredit - openingDebit;
+        const closingBalance =
+          nature === 'deudora'
+            ? openingBalance + (periodDebit - periodCredit)
+            : openingBalance + (periodCredit - periodDebit);
+
+        return {
+          accountCode: row.accountCode,
+          accountName: row.accountName || row.accountCode,
+          nature,
+          accountType: row.accountType || '',
+          openingBalance,
+          periodDebit,
+          periodCredit,
+          accumulatedDebit,
+          accumulatedCredit,
+          closingBalance,
+        };
+      })
+      .filter(
+        (row) =>
+          row.periodDebit !== 0 ||
+          row.periodCredit !== 0 ||
+          row.accumulatedDebit !== 0 ||
+          row.accumulatedCredit !== 0 ||
+          row.openingBalance !== 0 ||
+          row.closingBalance !== 0,
+      );
   }
 
   async exportTrialBalanceExcel(
@@ -150,8 +378,14 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
-    const data = await this.getTrialBalance(companyId, fromDate, toDate);
+    const data = await this.getTrialBalance(
+      companyId,
+      fromDate,
+      toDate,
+      options,
+    );
 
     if (!data || data.length === 0) {
       throw new NotFoundException('No hay datos para generar el reporte');
@@ -160,46 +394,68 @@ export class ReportService {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Balance de Comprobación');
 
-    // Headers
+    // Cabecera de dos niveles: Cuenta (Número | Descripción),
+    // Periodo (Débito | Crédito), Acumulado (Débito | Crédito).
     worksheet.columns = [
-      { header: 'Código', key: 'accountCode', width: 15 },
-      { header: 'Nombre Cuenta', key: 'accountName', width: 30 },
-      { header: 'Naturaleza', key: 'nature', width: 12 },
-      { header: 'Saldo Inicial', key: 'openingBalance', width: 15 },
-      { header: 'Débito Período', key: 'periodDebit', width: 15 },
-      { header: 'Crédito Período', key: 'periodCredit', width: 15 },
-      { header: 'Saldo Final', key: 'closingBalance', width: 15 },
+      { key: 'accountCode', width: 16 },
+      { key: 'accountName', width: 45 },
+      { key: 'periodDebit', width: 18 },
+      { key: 'periodCredit', width: 18 },
+      { key: 'accumulatedDebit', width: 18 },
+      { key: 'accumulatedCredit', width: 18 },
     ];
+
+    worksheet.getRow(1).values = ['Cuenta', '', 'Periodo', '', 'Acumulado', ''];
+    worksheet.getRow(2).values = [
+      'Número',
+      'Descripción',
+      'Débito',
+      'Crédito',
+      'Débito',
+      'Crédito',
+    ];
+    worksheet.mergeCells('A1:B1');
+    worksheet.mergeCells('C1:D1');
+    worksheet.mergeCells('E1:F1');
 
     // Data
     data.forEach((row) => {
       worksheet.addRow({
         accountCode: row.accountCode,
         accountName: row.accountName,
-        nature: row.nature,
-        openingBalance: row.openingBalance,
         periodDebit: row.periodDebit,
         periodCredit: row.periodCredit,
-        closingBalance: row.closingBalance,
+        accumulatedDebit: row.accumulatedDebit,
+        accumulatedCredit: row.accumulatedCredit,
       });
     });
 
     // Totals
     const totalRow = worksheet.addRow({
       accountCode: 'TOTALES',
-      openingBalance: data.reduce((sum, row) => sum + row.openingBalance, 0),
       periodDebit: data.reduce((sum, row) => sum + row.periodDebit, 0),
       periodCredit: data.reduce((sum, row) => sum + row.periodCredit, 0),
-      closingBalance: data.reduce((sum, row) => sum + row.closingBalance, 0),
+      accumulatedDebit: data.reduce(
+        (sum, row) => sum + row.accumulatedDebit,
+        0,
+      ),
+      accumulatedCredit: data.reduce(
+        (sum, row) => sum + row.accumulatedCredit,
+        0,
+      ),
     });
 
     // Style
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFE6B8' },
-    };
+    [1, 2].forEach((rowNumber) => {
+      const row = worksheet.getRow(rowNumber);
+      row.font = { bold: true };
+      row.alignment = { horizontal: 'center', vertical: 'middle' };
+      row.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE6B8' },
+      };
+    });
     totalRow.font = { bold: true };
     totalRow.fill = {
       type: 'pattern',
@@ -229,12 +485,24 @@ export class ReportService {
   // ── BALANCE SHEET ──
   // ══════════════════════════════════════════════════════════
 
-  async getBalanceSheet(companyId: number, asOfDate?: string) {
-    const cacheKey = `reports:${companyId}:balance-sheet:${asOfDate || 'all'}`;
-    return this.cacheService.getOrSet(cacheKey, () => this._getBalanceSheet(companyId, asOfDate), ReportService.CACHE_TTL);
+  async getBalanceSheet(
+    companyId: number,
+    asOfDate?: string,
+    options?: ReportOptions,
+  ) {
+    const cacheKey = `reports:${companyId}:balance-sheet:${asOfDate || 'all'}:${this.optionsCacheKey(options)}`;
+    return this.cacheService.getOrSet(
+      cacheKey,
+      () => this._getBalanceSheet(companyId, asOfDate, options),
+      ReportService.CACHE_TTL,
+    );
   }
 
-  private async _getBalanceSheet(companyId: number, asOfDate?: string) {
+  private async _getBalanceSheet(
+    companyId: number,
+    asOfDate?: string,
+    options?: ReportOptions,
+  ) {
     const qb = this.voucherLineRepo
       .createQueryBuilder('vl')
       .select('a.type', 'accountType')
@@ -250,8 +518,9 @@ export class ReportService {
       )
       .innerJoin('vl.voucher', 'v')
       .innerJoin('vl.account', 'a')
-      .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' });
+      .where('v.companyId = :companyId', { companyId });
+
+    this.applyVoucherFilters(qb, options);
 
     if (asOfDate) {
       qb.andWhere('v.date <= :asOfDate', { asOfDate });
@@ -310,8 +579,9 @@ export class ReportService {
     companyId: number,
     asOfDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
-    const data = await this.getBalanceSheet(companyId, asOfDate);
+    const data = await this.getBalanceSheet(companyId, asOfDate, options);
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Balance General');
@@ -396,15 +666,21 @@ export class ReportService {
     companyId: number,
     fromDate?: string,
     toDate?: string,
+    options?: ReportOptions,
   ) {
-    const cacheKey = `reports:${companyId}:income-statement:${fromDate || 'all'}:${toDate || 'all'}`;
-    return this.cacheService.getOrSet(cacheKey, () => this._getIncomeStatement(companyId, fromDate, toDate), ReportService.CACHE_TTL);
+    const cacheKey = `reports:${companyId}:income-statement:${fromDate || 'all'}:${toDate || 'all'}:${this.optionsCacheKey(options)}`;
+    return this.cacheService.getOrSet(
+      cacheKey,
+      () => this._getIncomeStatement(companyId, fromDate, toDate, options),
+      ReportService.CACHE_TTL,
+    );
   }
 
   private async _getIncomeStatement(
     companyId: number,
     fromDate?: string,
     toDate?: string,
+    options?: ReportOptions,
   ) {
     const qb = this.voucherLineRepo
       .createQueryBuilder('vl')
@@ -416,8 +692,9 @@ export class ReportService {
       .innerJoin('vl.voucher', 'v')
       .innerJoin('vl.account', 'a')
       .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' })
       .andWhere('a.type IN (:...types)', { types: ['income', 'expense'] });
+
+    this.applyVoucherFilters(qb, options);
 
     if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
     if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
@@ -465,8 +742,14 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
-    const data = await this.getIncomeStatement(companyId, fromDate, toDate);
+    const data = await this.getIncomeStatement(
+      companyId,
+      fromDate,
+      toDate,
+      options,
+    );
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Estado de Resultados');
@@ -541,15 +824,21 @@ export class ReportService {
     companyId: number,
     fromDate?: string,
     toDate?: string,
+    options?: ReportOptions,
   ) {
-    const cacheKey = `reports:${companyId}:expense-breakdown:${fromDate || 'all'}:${toDate || 'all'}`;
-    return this.cacheService.getOrSet(cacheKey, () => this._getExpenseBreakdown(companyId, fromDate, toDate), ReportService.CACHE_TTL);
+    const cacheKey = `reports:${companyId}:expense-breakdown:${fromDate || 'all'}:${toDate || 'all'}:${this.optionsCacheKey(options)}`;
+    return this.cacheService.getOrSet(
+      cacheKey,
+      () => this._getExpenseBreakdown(companyId, fromDate, toDate, options),
+      ReportService.CACHE_TTL,
+    );
   }
 
   private async _getExpenseBreakdown(
     companyId: number,
     fromDate?: string,
     toDate?: string,
+    options?: ReportOptions,
   ) {
     const qb = this.voucherLineRepo
       .createQueryBuilder('vl')
@@ -559,9 +848,10 @@ export class ReportService {
       .innerJoin('vl.voucher', 'v')
       .innerJoin('vl.account', 'a')
       .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' })
       .andWhere('a.type = :type', { type: 'expense' })
       .andWhere('vl.element IS NOT NULL');
+
+    this.applyVoucherFilters(qb, options);
 
     if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
     if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
@@ -594,8 +884,14 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
-    const data = await this.getExpenseBreakdown(companyId, fromDate, toDate);
+    const data = await this.getExpenseBreakdown(
+      companyId,
+      fromDate,
+      toDate,
+      options,
+    );
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Desglose de Gastos');
@@ -732,247 +1028,250 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
-    const accounts = await this.getTrialBalance(companyId, fromDate, toDate);
+    const accounts = await this.getTrialBalance(
+      companyId,
+      fromDate,
+      toDate,
+      options,
+    );
 
     if (!accounts || accounts.length === 0) {
       throw new NotFoundException('No hay datos para generar el reporte');
     }
 
-    // Calculate totals
     const totals = accounts.reduce(
-      (acc, account) => ({
-        openingBalance: acc.openingBalance + account.openingBalance,
-        debit: acc.debit + account.periodDebit,
-        credit: acc.credit + account.periodCredit,
-        closingBalance: acc.closingBalance + account.closingBalance,
+      (acc, a) => ({
+        periodDebit: acc.periodDebit + a.periodDebit,
+        periodCredit: acc.periodCredit + a.periodCredit,
+        accumulatedDebit: acc.accumulatedDebit + a.accumulatedDebit,
+        accumulatedCredit: acc.accumulatedCredit + a.accumulatedCredit,
       }),
-      { openingBalance: 0, debit: 0, credit: 0, closingBalance: 0 },
+      {
+        periodDebit: 0,
+        periodCredit: 0,
+        accumulatedDebit: 0,
+        accumulatedCredit: 0,
+      },
     );
 
-    const doc = new jsPDF();
+    const company = await this.companyRepo.findOne({ where: { id: companyId } });
 
-    // Setup fonts (using default jsPDF fonts)
-    doc.setFontSize(20);
-    doc.text('Balance de Comprobación', 105, 20, { align: 'center' });
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
 
-    doc.setFontSize(12);
-    doc.text(
-      `Período: ${fromDate || 'Inicio'} - ${toDate || 'Actual'}`,
-      20,
-      35,
-    );
+    // Geometría de la tabla: Cuenta (Número | Descripción),
+    // Periodo (Débito | Crédito), Acumulado (Débito | Crédito).
+    const startX = 12;
+    const colWidths = [28, 95, 36, 36, 36, 36];
+    const tableWidth = colWidths.reduce((a, b) => a + b, 0);
+    const colX: number[] = [];
+    colWidths.reduce((x, w) => {
+      colX.push(x);
+      return x + w;
+    }, startX);
+    const rowHeight = 6;
 
-    // Table headers
-    const headers = [
-      'Código',
-      'Cuenta',
-      'Saldo Inicial',
-      'Débito',
-      'Crédito',
-      'Saldo Final',
-    ];
-    const headerY = 55;
-    const cellWidth = [25, 60, 25, 25, 25, 25];
-    const startX = 20;
+    const right = (i: number) => colX[i] + colWidths[i] - 2;
 
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    headers.forEach((header, i) => {
-      const x = startX + cellWidth.slice(0, i).reduce((a, b) => a + b, 0);
-      doc.text(header, x, headerY);
-    });
-
-    // Table data
-    doc.setFont('helvetica', 'normal');
-    let y = headerY + 10;
-
-    accounts.forEach((account: any) => {
-      if (y > 270) {
-        doc.addPage();
-        y = 20;
-
-        // Repeat headers on new page
-        doc.setFont('helvetica', 'bold');
-        headers.forEach((header, i) => {
-          const x = startX + cellWidth.slice(0, i).reduce((a, b) => a + b, 0);
-          doc.text(header, x, y);
-        });
-        y += 10;
-        doc.setFont('helvetica', 'normal');
-      }
-
-      const data = [
-        account.accountCode,
-        account.accountName.substring(0, 25),
-        this.formatCurrency(account.openingBalance),
-        this.formatCurrency(account.periodDebit),
-        this.formatCurrency(account.periodCredit),
-        this.formatCurrency(account.closingBalance),
-      ];
-
-      data.forEach((value, i) => {
-        const x = startX + cellWidth.slice(0, i).reduce((a, b) => a + b, 0);
-        doc.text(value, x, y);
+    const drawHeader = (): number => {
+      let y = 18;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('BALANCE DE COMPROBACIÓN', pageWidth / 2, y, {
+        align: 'center',
       });
 
-      y += 8;
+      y += 6;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      if (company?.name) {
+        doc.text(company.name, pageWidth / 2, y, { align: 'center' });
+        y += 5;
+      }
+      doc.text(
+        `Período: ${fromDate || 'Inicio'} al ${toDate || 'Actual'}${this.optionsNote(options)}`,
+        pageWidth / 2,
+        y,
+        { align: 'center' },
+      );
+
+      // Cabecera de dos niveles
+      const top = y + 5;
+      const mid = top + rowHeight;
+      const bottom = mid + rowHeight;
+
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+
+      // Nivel 1: grupos
+      const groups: { label: string; from: number; to: number }[] = [
+        { label: 'Cuenta', from: 0, to: 1 },
+        { label: 'Periodo', from: 2, to: 3 },
+        { label: 'Acumulado', from: 4, to: 5 },
+      ];
+      groups.forEach((g) => {
+        const x1 = colX[g.from];
+        const x2 = colX[g.to] + colWidths[g.to];
+        doc.rect(x1, top, x2 - x1, rowHeight);
+        doc.text(g.label, (x1 + x2) / 2, top + 4.2, { align: 'center' });
+      });
+
+      // Nivel 2: columnas
+      const subHeaders = [
+        'Número',
+        'Descripción',
+        'Débito',
+        'Crédito',
+        'Débito',
+        'Crédito',
+      ];
+      subHeaders.forEach((label, i) => {
+        doc.rect(colX[i], mid, colWidths[i], rowHeight);
+        doc.text(label, colX[i] + colWidths[i] / 2, mid + 4.2, {
+          align: 'center',
+        });
+      });
+
+      doc.setFont('helvetica', 'normal');
+      return bottom;
+    };
+
+    let y = drawHeader();
+
+    accounts.forEach((account: any) => {
+      if (y + rowHeight > pageHeight - 18) {
+        doc.addPage();
+        y = drawHeader();
+      }
+
+      colWidths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+
+      const textY = y + 4.2;
+      doc.text(String(account.accountCode ?? ''), colX[0] + 2, textY);
+      doc.text(
+        doc.splitTextToSize(String(account.accountName ?? ''), colWidths[1] - 4)[0] ?? '',
+        colX[1] + 2,
+        textY,
+      );
+      doc.text(this.formatCurrency(account.periodDebit), right(2), textY, {
+        align: 'right',
+      });
+      doc.text(this.formatCurrency(account.periodCredit), right(3), textY, {
+        align: 'right',
+      });
+      doc.text(this.formatCurrency(account.accumulatedDebit), right(4), textY, {
+        align: 'right',
+      });
+      doc.text(
+        this.formatCurrency(account.accumulatedCredit),
+        right(5),
+        textY,
+        { align: 'right' },
+      );
+
+      y += rowHeight;
     });
 
-    // Totals
-    y += 10;
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTALES', startX, y);
-    doc.text(this.formatCurrency(totals.openingBalance), startX + 85, y);
-    doc.text(this.formatCurrency(totals.debit), startX + 110, y);
-    doc.text(this.formatCurrency(totals.credit), startX + 135, y);
-    doc.text(this.formatCurrency(totals.closingBalance), startX + 160, y);
-
-    // Footer
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    const date = new Date().toLocaleString('es-ES');
-    doc.text(`Generado: ${date}`, 20, 285);
-
-    // Set response headers and send PDF
-    if (res) {
-      const filename = `balance-comprobacion-${new Date().toISOString().split('T')[0]}.pdf`;
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${filename}"`,
-      );
-      res.send(Buffer.from(doc.output('arraybuffer')));
+    // Fila de totales
+    if (y + rowHeight > pageHeight - 18) {
+      doc.addPage();
+      y = drawHeader();
     }
+    doc.setFont('helvetica', 'bold');
+    colWidths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+    const totalsY = y + 4.2;
+    doc.text('TOTALES', colX[0] + 2, totalsY);
+    doc.text(this.formatCurrency(totals.periodDebit), right(2), totalsY, {
+      align: 'right',
+    });
+    doc.text(this.formatCurrency(totals.periodCredit), right(3), totalsY, {
+      align: 'right',
+    });
+    doc.text(this.formatCurrency(totals.accumulatedDebit), right(4), totalsY, {
+      align: 'right',
+    });
+    doc.text(this.formatCurrency(totals.accumulatedCredit), right(5), totalsY, {
+      align: 'right',
+    });
+    doc.setFont('helvetica', 'normal');
 
-    return {
-      success: true,
-      filename: `balance-comprobacion-${new Date().toISOString().split('T')[0]}.pdf`,
-    };
+    doc.setFontSize(7);
+    doc.text(
+      `Generado: ${new Date().toLocaleString('es-ES')}`,
+      startX,
+      pageHeight - 8,
+    );
+    doc.text(
+      `Cuentas: ${accounts.length}`,
+      startX + tableWidth,
+      pageHeight - 8,
+      { align: 'right' },
+    );
+
+    return this.sendPdf(
+      doc,
+      `balance-comprobacion-${new Date().toISOString().split('T')[0]}.pdf`,
+      res,
+    );
   }
 
   async exportBalanceSheetPDF(
     companyId: number,
     asOfDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
-    const balanceSheet = await this.getBalanceSheet(companyId, asOfDate);
+    const data = await this.getBalanceSheet(companyId, asOfDate, options);
+    const company = await this.companyRepo.findOne({ where: { id: companyId } });
 
-    const doc = new jsPDF();
+    const line = (r: any) => [
+      r.accountCode,
+      r.accountName,
+      this.formatCurrency(r.balance),
+    ];
 
-    // Setup fonts
-    doc.setFontSize(20);
-    doc.text('Estado de Situación Financiera', 105, 20, { align: 'center' });
+    const doc = this.buildSectionPdf({
+      title: 'Estado de Situación Financiera',
+      subtitle: `Al: ${asOfDate || new Date().toISOString().split('T')[0]}${this.optionsNote(options)}`,
+      companyName: company?.name,
+      headers: ['Cuenta', 'Descripción', 'Importe'],
+      widths: [28, 110, 44],
+      aligns: ['left', 'left', 'right'],
+      sections: [
+        {
+          title: 'ACTIVOS',
+          rows: data.assets.map(line),
+          totalLabel: 'TOTAL ACTIVOS',
+          totalValues: ['', this.formatCurrency(data.totals.assets)],
+        },
+        {
+          title: 'PASIVOS',
+          rows: data.liabilities.map(line),
+          totalLabel: 'TOTAL PASIVOS',
+          totalValues: ['', this.formatCurrency(data.totals.liabilities)],
+        },
+        {
+          title: 'PATRIMONIO',
+          rows: data.equity.map(line),
+          totalLabel: 'TOTAL PATRIMONIO',
+          totalValues: ['', this.formatCurrency(data.totals.equity)],
+        },
+      ],
+      grandTotalLabel: 'TOTAL PASIVO + PATRIMONIO',
+      grandTotalValues: [
+        '',
+        this.formatCurrency(data.totals.liabilitiesAndEquity),
+      ],
+    });
 
-    doc.setFontSize(12);
-    doc.text(
-      `Al: ${asOfDate || new Date().toISOString().split('T')[0]}`,
-      20,
-      35,
+    return this.sendPdf(
+      doc,
+      `estado-situacion-${new Date().toISOString().split('T')[0]}.pdf`,
+      res,
     );
-
-    let y = 55;
-
-    // Assets section
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('ACTIVOS', 20, y);
-    y += 10;
-
-    doc.setFontSize(10);
-    balanceSheet.assets.forEach((asset: any) => {
-      doc.setFont('helvetica', 'normal');
-      doc.text(asset.accountCode, 25, y);
-      doc.text(asset.accountName.substring(0, 40), 50, y);
-      doc.text(this.formatCurrency(asset.balance), 150, y, { align: 'right' });
-      y += 8;
-    });
-
-    y += 5;
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTAL ACTIVOS', 25, y);
-    doc.text(this.formatCurrency(balanceSheet.totals.assets), 150, y, {
-      align: 'right',
-    });
-    y += 15;
-
-    // Liabilities section
-    doc.setFontSize(14);
-    doc.text('PASIVOS', 20, y);
-    y += 10;
-
-    doc.setFontSize(10);
-    balanceSheet.liabilities.forEach((liability: any) => {
-      doc.setFont('helvetica', 'normal');
-      doc.text(liability.accountCode, 25, y);
-      doc.text(liability.accountName.substring(0, 40), 50, y);
-      doc.text(this.formatCurrency(liability.balance), 150, y, {
-        align: 'right',
-      });
-      y += 8;
-    });
-
-    y += 5;
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTAL PASIVOS', 25, y);
-    doc.text(this.formatCurrency(balanceSheet.totals.liabilities), 150, y, {
-      align: 'right',
-    });
-    y += 15;
-
-    // Equity section
-    doc.setFontSize(14);
-    doc.text('PATRIMONIO', 20, y);
-    y += 10;
-
-    doc.setFontSize(10);
-    balanceSheet.equity.forEach((eq: any) => {
-      doc.setFont('helvetica', 'normal');
-      doc.text(eq.accountCode, 25, y);
-      doc.text(eq.accountName.substring(0, 40), 50, y);
-      doc.text(this.formatCurrency(eq.balance), 150, y, { align: 'right' });
-      y += 8;
-    });
-
-    y += 5;
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTAL PATRIMONIO', 25, y);
-    doc.text(this.formatCurrency(balanceSheet.totals.equity), 150, y, {
-      align: 'right',
-    });
-    y += 15;
-
-    // Total
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTAL PASIVO + PATRIMONIO', 25, y);
-    doc.text(
-      this.formatCurrency(balanceSheet.totals.liabilitiesAndEquity),
-      150,
-      y,
-      { align: 'right' },
-    );
-
-    // Footer
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    const date = new Date().toLocaleString('es-ES');
-    doc.text(`Generado: ${date}`, 20, 285);
-
-    // Set response headers and send PDF
-    if (res) {
-      const filename = `estado-situacion-${new Date().toISOString().split('T')[0]}.pdf`;
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${filename}"`,
-      );
-      res.send(Buffer.from(doc.output('arraybuffer')));
-    }
-
-    return {
-      success: true,
-      filename: `estado-situacion-${new Date().toISOString().split('T')[0]}.pdf`,
-    };
   }
 
   async exportIncomeStatementPDF(
@@ -980,105 +1279,101 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
-    const incomeStatement = await this.getIncomeStatement(
+    const data = await this.getIncomeStatement(
       companyId,
       fromDate,
       toDate,
+      options,
     );
+    const company = await this.companyRepo.findOne({ where: { id: companyId } });
 
-    const doc = new jsPDF();
+    const line = (r: any) => [
+      r.accountCode,
+      r.accountName,
+      this.formatCurrency(r.amount),
+    ];
 
-    // Setup fonts
-    doc.setFontSize(20);
-    doc.text('Estado de Rendimiento Financiero', 105, 20, { align: 'center' });
+    const doc = this.buildSectionPdf({
+      title: 'Estado de Rendimiento Financiero',
+      subtitle: `Período: ${fromDate || 'Inicio'} al ${toDate || 'Actual'}${this.optionsNote(options)}`,
+      companyName: company?.name,
+      headers: ['Cuenta', 'Descripción', 'Importe'],
+      widths: [28, 110, 44],
+      aligns: ['left', 'left', 'right'],
+      sections: [
+        {
+          title: 'INGRESOS',
+          rows: data.income.map(line),
+          totalLabel: 'TOTAL INGRESOS',
+          totalValues: ['', this.formatCurrency(data.totals.totalIncome)],
+        },
+        {
+          title: 'GASTOS',
+          rows: data.expenses.map(line),
+          totalLabel: 'TOTAL GASTOS',
+          totalValues: ['', this.formatCurrency(data.totals.totalExpenses)],
+        },
+      ],
+      grandTotalLabel:
+        data.totals.netIncome >= 0 ? 'UTILIDAD NETA' : 'PÉRDIDA NETA',
+      grandTotalValues: ['', this.formatCurrency(data.totals.netIncome)],
+    });
 
-    doc.setFontSize(12);
-    doc.text(
-      `Período: ${fromDate || 'Inicio'} - ${toDate || 'Actual'}`,
-      20,
-      35,
+    return this.sendPdf(
+      doc,
+      `estado-rendimiento-${new Date().toISOString().split('T')[0]}.pdf`,
+      res,
     );
+  }
 
-    let y = 55;
-
-    // Incomes section
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('INGRESOS', 20, y);
-    y += 10;
-
-    doc.setFontSize(10);
-    incomeStatement.income.forEach((income: any) => {
-      doc.setFont('helvetica', 'normal');
-      doc.text(income.accountCode, 25, y);
-      doc.text(income.accountName.substring(0, 40), 50, y);
-      doc.text(this.formatCurrency(income.amount), 150, y, { align: 'right' });
-      y += 8;
-    });
-
-    y += 5;
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTAL INGRESOS', 25, y);
-    doc.text(this.formatCurrency(incomeStatement.totals.totalIncome), 150, y, {
-      align: 'right',
-    });
-    y += 15;
-
-    // Expenses section
-    doc.setFontSize(14);
-    doc.text('GASTOS', 20, y);
-    y += 10;
-
-    doc.setFontSize(10);
-    incomeStatement.expenses.forEach((expense: any) => {
-      doc.setFont('helvetica', 'normal');
-      doc.text(expense.accountCode, 25, y);
-      doc.text(expense.accountName.substring(0, 40), 50, y);
-      doc.text(this.formatCurrency(expense.amount), 150, y, { align: 'right' });
-      y += 8;
-    });
-
-    y += 5;
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTAL GASTOS', 25, y);
-    doc.text(
-      this.formatCurrency(incomeStatement.totals.totalExpenses),
-      150,
-      y,
-      { align: 'right' },
+  async exportExpenseBreakdownPDF(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    res?: Response,
+    options?: ReportOptions,
+  ) {
+    const data = await this.getExpenseBreakdown(
+      companyId,
+      fromDate,
+      toDate,
+      options,
     );
-    y += 15;
+    const company = await this.companyRepo.findOne({ where: { id: companyId } });
 
-    // Net Income
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('UTILIDAD NETA', 25, y);
-    doc.text(this.formatCurrency(incomeStatement.totals.netIncome), 150, y, {
-      align: 'right',
+    const doc = this.buildSectionPdf({
+      title: 'Gastos por Subelementos',
+      subtitle: `Período: ${fromDate || 'Inicio'} al ${toDate || 'Actual'}${this.optionsNote(options)}`,
+      companyName: company?.name,
+      headers: ['Elemento', 'Descripción', 'Importe', '%'],
+      widths: [26, 90, 40, 26],
+      aligns: ['left', 'left', 'right', 'right'],
+      sections: [
+        {
+          title: 'DESGLOSE DE GASTOS',
+          rows: data.expenses.map((e) => [
+            e.element,
+            e.elementName,
+            this.formatCurrency(e.amount),
+            `${e.percentage.toFixed(2)} %`,
+          ]),
+        },
+      ],
+      grandTotalLabel: 'TOTAL GASTOS',
+      grandTotalValues: [
+        '',
+        this.formatCurrency(data.totalExpenses),
+        '100.00 %',
+      ],
     });
 
-    // Footer
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    const date = new Date().toLocaleString('es-ES');
-    doc.text(`Generado: ${date}`, 20, 285);
-
-    // Set response headers and send PDF
-    if (res) {
-      const filename = `estado-rendimiento-${new Date().toISOString().split('T')[0]}.pdf`;
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${filename}"`,
-      );
-      res.send(Buffer.from(doc.output('arraybuffer')));
-    }
-
-    return {
-      success: true,
-      filename: `estado-rendimiento-${new Date().toISOString().split('T')[0]}.pdf`,
-    };
+    return this.sendPdf(
+      doc,
+      `gastos-subelementos-${new Date().toISOString().split('T')[0]}.pdf`,
+      res,
+    );
   }
 
   // ══════════════════════════════════════════════════════════

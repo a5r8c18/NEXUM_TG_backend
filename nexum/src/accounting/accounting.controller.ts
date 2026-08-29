@@ -19,7 +19,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { VoucherService } from './voucher.service';
-import { ReportService } from './report.service';
+import { ReportService, ReportOptions } from './report.service';
 import { AccountService } from './account.service';
 import { CostCenterService } from './cost-center.service';
 import { FiscalYearService } from './fiscal-year.service';
@@ -47,6 +47,17 @@ import {
 } from './dto';
 import { PaginationService } from '../common/pagination/pagination.service';
 import { SearchPaginationDto } from '../common/pagination/pagination.dto';
+
+/** Normaliza las opciones de informe recibidas como query params. */
+function reportOptions(
+  includeDrafts?: string,
+  beforeClosing?: string,
+): ReportOptions {
+  return {
+    includeDrafts: includeDrafts === 'true',
+    beforeClosing: beforeClosing === 'true',
+  };
+}
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -385,15 +396,31 @@ export class AccountingController {
     @Req() req: Request,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.reportService.getTrialBalance(companyId, fromDate, toDate);
+    return this.reportService.getTrialBalance(
+      companyId,
+      fromDate,
+      toDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
   }
 
   @Get('reports/balance-sheet')
-  getBalanceSheet(@Req() req: Request, @Query('asOfDate') asOfDate?: string) {
+  getBalanceSheet(
+    @Req() req: Request,
+    @Query('asOfDate') asOfDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
+  ) {
     const companyId = getCompanyId(req);
-    return this.reportService.getBalanceSheet(companyId, asOfDate);
+    return this.reportService.getBalanceSheet(
+      companyId,
+      asOfDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
   }
 
   @Get('reports/income-statement')
@@ -401,9 +428,16 @@ export class AccountingController {
     @Req() req: Request,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.reportService.getIncomeStatement(companyId, fromDate, toDate);
+    return this.reportService.getIncomeStatement(
+      companyId,
+      fromDate,
+      toDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
   }
 
   @Get('reports/expense-breakdown')
@@ -411,9 +445,16 @@ export class AccountingController {
     @Req() req: Request,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.reportService.getExpenseBreakdown(companyId, fromDate, toDate);
+    return this.reportService.getExpenseBreakdown(
+      companyId,
+      fromDate,
+      toDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
   }
 
   @Get('reports/general-ledger')
@@ -463,6 +504,8 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportExpenseBreakdownExcel(
@@ -470,6 +513,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
+      reportOptions(includeDrafts, beforeClosing),
     );
   }
 
@@ -593,6 +637,8 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportTrialBalanceExcel(
@@ -600,15 +646,18 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
+      reportOptions(includeDrafts, beforeClosing),
     );
   }
 
   @Get('reports/trial-balance/export/pdf')
   exportTrialBalancePDF(
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportTrialBalancePDF(
@@ -616,6 +665,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
+      reportOptions(includeDrafts, beforeClosing),
     );
   }
 
@@ -624,19 +674,33 @@ export class AccountingController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Query('asOfDate') asOfDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.reportService.exportBalanceSheetExcel(companyId, asOfDate, res);
+    return this.reportService.exportBalanceSheetExcel(
+      companyId,
+      asOfDate,
+      res,
+      reportOptions(includeDrafts, beforeClosing),
+    );
   }
 
   @Get('reports/balance-sheet/export/pdf')
   exportBalanceSheetPDF(
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
     @Query('asOfDate') asOfDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.reportService.exportBalanceSheetPDF(companyId, asOfDate, res);
+    return this.reportService.exportBalanceSheetPDF(
+      companyId,
+      asOfDate,
+      res,
+      reportOptions(includeDrafts, beforeClosing),
+    );
   }
 
   @Get('reports/income-statement/export/excel')
@@ -645,6 +709,8 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportIncomeStatementExcel(
@@ -652,15 +718,18 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
+      reportOptions(includeDrafts, beforeClosing),
     );
   }
 
   @Get('reports/income-statement/export/pdf')
   exportIncomeStatementPDF(
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportIncomeStatementPDF(
@@ -668,6 +737,26 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
+      reportOptions(includeDrafts, beforeClosing),
+    );
+  }
+
+  @Get('reports/expense-breakdown/export/pdf')
+  exportExpenseBreakdownPDF(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.reportService.exportExpenseBreakdownPDF(
+      companyId,
+      fromDate,
+      toDate,
+      res,
+      reportOptions(includeDrafts, beforeClosing),
     );
   }
 
