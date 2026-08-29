@@ -1974,7 +1974,7 @@ export class ReportService {
       const parts = range.split('-').map((s) => s.trim());
       if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
         conditions.push(
-          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
+          `(vl.account_code ~ '^[0-9]+$' AND CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
         );
         params[`from${i}`] = parseInt(parts[0], 10);
         params[`to${i}`] = parseInt(parts[1], 10);
@@ -2028,7 +2028,7 @@ export class ReportService {
       const parts = range.split('-').map((s) => s.trim());
       if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
         conditions.push(
-          `(CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
+          `(vl.account_code ~ '^[0-9]+$' AND CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
         );
         params[`from${i}`] = parseInt(parts[0], 10);
         params[`to${i}`] = parseInt(parts[1], 10);
