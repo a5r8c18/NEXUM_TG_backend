@@ -1065,7 +1065,7 @@ export class ReportService {
     // Geometría de la tabla (vertical): Cuenta (Número | Descripción),
     // Periodo (Débito | Crédito), Acumulado (Débito | Crédito).
     const startX = 10;
-    const colWidths = [24, 64, 27, 27, 27, 27];
+    const colWidths = [22, 56, 29, 29, 29, 29];
     const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const colX: number[] = [];
     colWidths.reduce((x, w) => {
@@ -1186,12 +1186,14 @@ export class ReportService {
       y = drawHeader();
     }
     doc.setFont('helvetica', 'bold');
-    // Líneas verticales de columnas también en el total
+    // Bordes completos en la fila de totales (arriba, abajo y verticales)
     const xEnd = colX[colWidths.length - 1] + colWidths[colWidths.length - 1];
+    doc.line(colX[0], y, xEnd, y);
     for (let i = 0; i < colX.length; i++) {
       doc.line(colX[i], y, colX[i], y + rowHeight);
     }
     doc.line(xEnd, y, xEnd, y + rowHeight);
+    doc.line(colX[0], y + rowHeight, xEnd, y + rowHeight);
     const totalsY = y + 4.2;
     doc.text('TOTALES', colX[0] + 2, totalsY);
     doc.text(this.formatCurrency(totals.periodDebit), right(2), totalsY, {
