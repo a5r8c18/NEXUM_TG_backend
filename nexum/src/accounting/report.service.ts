@@ -1065,7 +1065,7 @@ export class ReportService {
     // Geometría de la tabla (vertical): Cuenta (Número | Descripción),
     // Periodo (Débito | Crédito), Acumulado (Débito | Crédito).
     const startX = 10;
-    const colWidths = [24, 70, 24, 24, 24, 24];
+    const colWidths = [24, 64, 27, 27, 27, 27];
     const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const colX: number[] = [];
     colWidths.reduce((x, w) => {
