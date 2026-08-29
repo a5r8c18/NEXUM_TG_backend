@@ -22,14 +22,8 @@ import { FinanceService } from '../finance/finance.service';
 export class FixedAssetsService {
   private readonly logger = new Logger(FixedAssetsService.name);
 
-  /**
-   * Subelemento de gasto del Clasificador Cubano para la depreciación de AFT
-   * (70100 — Depreciación y amortización). Se aplica únicamente a las líneas de
-   * gasto del comprobante de depreciación, nunca a la cuenta 375.
-   */
   private static readonly DEPRECIATION_SUBELEMENT = '70100';
 
-  /** Último día real del mes indicado (evita el día 28 fijo en febrero/31). */
   private static getMonthEndDate(year: number, month: number): string {
     const lastDay = new Date(year, month, 0).getDate();
     return `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
@@ -61,6 +55,8 @@ export class FixedAssetsService {
     private readonly dataSource: DataSource,
   ) {}
 
+  // ──────────────── CRUD BÁSICO ────────────────
+
   async findAll(
     companyId: number,
     filters?: { status?: string; group_number?: string; search?: string },
@@ -87,7 +83,6 @@ export class FixedAssetsService {
 
     qb.orderBy('a.createdAt', 'DESC');
 
-    // Apply pagination if provided
     const page = pagination?.page ? parseInt(String(pagination.page)) : 1;
     const limit = pagination?.limit ? parseInt(String(pagination.limit)) : 50;
     const skip = (page - 1) * limit;
@@ -207,18 +202,14 @@ export class FixedAssetsService {
       asset.accumulatedDepreciation = 0;
       asset.status = 'active';
       if (acquisitionType === 'sobrante') {
-        // El sobrante queda acreditado en 555 hasta que el usuario resuelva la
-        // investigación (no se reconoce ingreso de forma automática).
         asset.investigationType = 'surplus';
         asset.investigationStatus = 'pending';
         asset.investigationAmount = data.acquisitionValue;
       }
       await manager.getRepository(FixedAsset).save(asset);
 
-      // ── Registro en inventario AFT ──
       await this.upsertFixedAssetInventory(asset, undefined, manager);
 
-      // ── Contabilización de adquisición de activo fijo ──
       const acquisitionValue = Number(asset.acquisitionValue);
       if (acquisitionValue > 0) {
         try {
@@ -228,7 +219,6 @@ export class FixedAssetsService {
               companyId,
               MappingType.FIXED_ASSET_ACQUISITION,
             )) || '240';
-          // ── Contrapartida según el concepto de alta ──
           let counterpartAccount: string;
           let counterpartDescription: string;
           if (data.counterpartAccountCode) {
@@ -269,7 +259,7 @@ export class FixedAssetsService {
               createdBy: 'Sistema',
               lines: [
                 {
-                  accountCode: assetAccount, // Activos Fijos Tangibles
+                  accountCode: assetAccount,
                   debit: acquisitionValue,
                   credit: 0,
                   areaId: data.areaId || null,
@@ -289,7 +279,6 @@ export class FixedAssetsService {
             manager,
           );
 
-          // ── Cuenta por Pagar sólo cuando el alta es por compra ──
           if (acquisitionType === 'compra') {
             const dueDate = new Date(asset.acquisitionDate);
             dueDate.setDate(dueDate.getDate() + 30);
@@ -308,8 +297,6 @@ export class FixedAssetsService {
           }
         } catch (error) {
           this.logger.error(`Error contabilización/finanzas AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
-          // El comprobante de adquisición AFT es parte de la operación; si no se
-          // puede generar el borrador contable, no debe quedar registrado.
           throw new BadRequestException(`Error al contabilizar adquisición AFT: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
@@ -317,7 +304,6 @@ export class FixedAssetsService {
       return { asset, accountingWarning };
     });
 
-    // ── Auditoría de creación ──
     await this.auditService.log({
       companyId,
       userName: 'Sistema',
@@ -355,8 +341,6 @@ export class FixedAssetsService {
     const asset = await this.assetRepo.findOneBy({ id, companyId });
     if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
 
-    // La baja de un AFT genera comprobante contable y Acta de Baja; no puede
-    // simularse cambiando el estado desde la edición.
     if (data.status === 'disposed' && asset.status !== 'disposed') {
       throw new BadRequestException(
         `Para dar de baja el activo ${asset.assetCode} use el procedimiento de baja, que genera el comprobante contable y el Acta de Baja.`,
@@ -408,11 +392,8 @@ export class FixedAssetsService {
     }
 
     const saved = await this.assetRepo.save(asset);
-
-    // ── Sincronizar inventario AFT ──
     await this.upsertFixedAssetInventory(saved);
 
-    // ── Auditoría de actualización ──
     await this.auditService.log({
       companyId,
       userName: 'Sistema',
@@ -434,11 +415,6 @@ export class FixedAssetsService {
     return { asset: saved };
   }
 
-  // ── Eliminación de Activo Fijo ──
-  // Un AFT ya contabilizado NO puede eliminarse: su saldo vive en la cuenta 240
-  // y su depreciación en la 375 (Nomenclador 2016). La salida del registro debe
-  // hacerse por el procedimiento de baja, que genera el comprobante de reversión
-  // y el Acta de Baja correspondiente (Res. 235-2005 MFP).
   async remove(companyId: number, id: number) {
     const asset = await this.assetRepo.findOneBy({ id, companyId });
     if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
@@ -449,8 +425,7 @@ export class FixedAssetsService {
     );
     if (vouchers.length > 0) {
       throw new BadRequestException(
-        `El activo ${asset.assetCode} tiene ${vouchers.length} comprobante(s) contable(s) asociado(s) y no puede eliminarse. ` +
-          `Registre la baja del activo para generar el asiento de reversión y el Acta de Baja.`,
+        `El activo ${asset.assetCode} tiene ${vouchers.length} comprobante(s) contable(s) asociado(s) y no puede eliminarse. Registre la baja del activo para generar el asiento de reversión y el Acta de Baja.`,
       );
     }
 
@@ -469,7 +444,6 @@ export class FixedAssetsService {
       );
     }
 
-    // ── Auditoría de eliminación ──
     await this.auditService.log({
       companyId,
       userName: 'Sistema',
@@ -491,11 +465,8 @@ export class FixedAssetsService {
     return { message: 'Activo fijo eliminado correctamente' };
   }
 
-  // ── Baja de Activo Fijo (NCC Cuba - Res. 235-2005 MFP) ──
-  // Genera comprobante contable:
-  //   Débito  375 (Depreciación Acumulada AFT)     → por depreciación acumulada
-  //   Débito  845 (Faltantes y Pérdidas de AFT)    → por valor residual (pérdida)
-  //   Crédito 240 (Activos Fijos Tangibles)         → por valor de adquisición
+  // ──────────────── BAJA (DISPOSAL) ────────────────
+  // Cambios aplicados: deterioro → 330, venta → 800 y 814
   async disposeAsset(
     companyId: number,
     id: number,
@@ -531,7 +502,7 @@ export class FixedAssetsService {
     const acquisitionValue = Number(asset.acquisitionValue);
     const currentValue = Number(asset.currentValue);
     const accumulatedDepreciation = Number(asset.accumulatedDepreciation);
-    const residualLoss = currentValue; // Valor no depreciado = pérdida
+    const residualLoss = currentValue;
 
     const oldStatus = asset.status;
     asset.status = 'disposed';
@@ -541,17 +512,12 @@ export class FixedAssetsService {
     asset.disposalDate = disposalDate;
     asset.disposalReason = data.reason;
     if (data.disposalType === 'faltante' && residualLoss > 0) {
-      // El faltante queda debitado en 332 hasta que el usuario resuelva la
-      // investigación (cobro al responsable o pérdida definitiva).
       asset.investigationType = 'shortage';
       asset.investigationStatus = 'pending';
       asset.investigationAmount = residualLoss;
     }
     await this.assetRepo.save(asset);
 
-    // ── Devolución de compra: determinar cuánto sigue debiéndose al proveedor ──
-    // Si la compra ya fue pagada (total o parcialmente), la parte pagada no
-    // puede reducir la CxP: nace un derecho de cobro frente al proveedor.
     let returnPayable: { id: string; apNumber: string; balance: number } | null = null;
     let returnSplit: { pendingPart: number; paidPart: number } | null = null;
     if (data.disposalType === 'devolucion_compra') {
@@ -572,7 +538,6 @@ export class FixedAssetsService {
       }
     }
 
-    // ── Comprobante contable de baja ──
     if (acquisitionValue > 0) {
       try {
         const assetAccount =
@@ -596,7 +561,6 @@ export class FixedAssetsService {
           costCenterId?: string | null;
         }> = [];
 
-        // Débito: Depreciación Acumulada por lo ya depreciado
         if (accumulatedDepreciation > 0) {
           lines.push({
             accountCode: accumulatedDepreciationAccount,
@@ -609,9 +573,8 @@ export class FixedAssetsService {
         if (data.disposalType === 'venta') {
           const saleAmount = data.saleAmount ?? currentValue;
           const bookValue = currentValue;
-          const gainOrLoss = saleAmount - bookValue;
 
-          // Débito: Cuenta por Cobrar / Banco por el importe de venta
+          // Débito a banco/cliente por el precio de venta
           const proceedsAccount = data.proceedsAccountCode
             ? data.proceedsAccountCode
             : data.bankAccountId
@@ -630,36 +593,23 @@ export class FixedAssetsService {
             description: `Importe venta AFT ${asset.assetCode}`,
           });
 
-          // Ganancia o Pérdida
-          if (gainOrLoss > 0) {
-            const gainAccount =
-              data.counterpartAccountCode ||
-              (await this.accountMappingService.getAccountForMapping(
-                companyId,
-                MappingType.FIXED_ASSET_DISPOSAL_GAIN,
-              )) || '950';
-            lines.push({
-              accountCode: gainAccount,
-              debit: 0,
-              credit: gainOrLoss,
-              description: `Ganancia venta AFT ${asset.assetCode}`,
-            });
-          } else if (gainOrLoss < 0) {
-            const lossAccount =
-              data.counterpartAccountCode ||
-              (await this.accountMappingService.getAccountForMapping(
-                companyId,
-                MappingType.FIXED_ASSET_DISPOSAL_LOSS,
-              )) || '845';
-            lines.push({
-              accountCode: lossAccount,
-              debit: Math.abs(gainOrLoss),
-              credit: 0,
-              description: `Pérdida venta AFT ${asset.assetCode}`,
-            });
-          }
+          // Crédito a la cuenta de ingreso (por defecto 800)
+          const revenueAccount = data.counterpartAccountCode || '800';
+          lines.push({
+            accountCode: revenueAccount,
+            debit: 0,
+            credit: saleAmount,
+            description: `Ingreso venta AFT ${asset.assetCode}`,
+          });
+
+          // Débito a la cuenta de costo de venta (por defecto 814)
+          lines.push({
+            accountCode: '814',
+            debit: bookValue,
+            credit: 0,
+            description: `Costo de venta AFT ${asset.assetCode}`,
+          });
         } else if (data.disposalType === 'faltante') {
-          // Débito: Faltantes de Bienes en Investigación por el valor neto
           if (residualLoss > 0) {
             const shortageAccount =
               data.counterpartAccountCode ||
@@ -676,8 +626,6 @@ export class FixedAssetsService {
           }
         } else if (data.disposalType === 'devolucion_compra') {
           if (residualLoss > 0) {
-            // Parte aún no pagada → revierte la obligación (410).
-            // Parte ya pagada → derecho de cobro al proveedor (335).
             const pendingPart = returnPayable
               ? Math.min(residualLoss, returnPayable.balance)
               : residualLoss;
@@ -714,7 +662,6 @@ export class FixedAssetsService {
             returnSplit = { pendingPart, paidPart };
           }
         } else if (data.disposalType === 'donacion') {
-          // Débito: Donaciones Entregadas por el valor neto
           if (residualLoss > 0) {
             const donationAccount =
               data.counterpartAccountCode ||
@@ -730,24 +677,25 @@ export class FixedAssetsService {
             });
           }
         } else {
-          // Deterioro / obsolescencia / rotura → Faltantes y Pérdidas de AFT
+          // Deterioro / obsolescencia / rotura → 330
           if (residualLoss > 0) {
-            const lossAccount =
+            const impairmentAccount =
               data.counterpartAccountCode ||
               (await this.accountMappingService.getAccountForMapping(
                 companyId,
-                MappingType.FIXED_ASSET_DISPOSAL_LOSS,
-              )) || '845';
+                // Se puede agregar un nuevo MappingType o usar fallback
+                'FIXED_ASSET_DISPOSAL_IMPAIRMENT' as any,
+              )) || '330';
             lines.push({
-              accountCode: lossAccount,
+              accountCode: impairmentAccount,
               debit: residualLoss,
               credit: 0,
-              description: `Pérdida AFT ${asset.assetCode} - ${data.reason}`,
+              description: `Pérdida por deterioro de AFT ${asset.assetCode} - ${data.reason}`,
             });
           }
         }
 
-        // Crédito: Activos Fijos Tangibles por valor total de adquisición
+        // Crédito a la cuenta de activo fijo por el valor de adquisición
         lines.push({
           accountCode: assetAccount,
           debit: 0,
@@ -776,7 +724,7 @@ export class FixedAssetsService {
         this.logger.log(`Comprobante de baja AFT ${asset.assetCode} generado`);
       } catch (error) {
         this.logger.error(`Error contabilización baja AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
-        // Revert asset status if accounting fails
+        // Revertir cambios
         asset.status = oldStatus;
         asset.currentValue = currentValue;
         asset.accumulatedDepreciation = accumulatedDepreciation;
@@ -861,7 +809,6 @@ export class FixedAssetsService {
           this.logger.error(`Error transacción bancaria venta AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
         }
       } else {
-        // Venta a crédito: generar Cuenta por Cobrar
         try {
           await this.financeService.createReceivable(companyId, {
             invoiceNumber: `AFT-VENTA-${asset.assetCode}`,
@@ -879,10 +826,8 @@ export class FixedAssetsService {
       }
     }
 
-    // ── Actualizar inventario AFT como dado de baja ──
     await this.upsertFixedAssetInventory(asset, 'disposed');
 
-    // ── Auditoría de la baja ──
     await this.auditService.log({
       companyId,
       userName: userName || 'System',
@@ -907,8 +852,6 @@ export class FixedAssetsService {
       success: true,
     });
 
-    // ── Acciones que la norma deja a criterio del contador ──
-    // No se automatizan: se informan para que el usuario las registre.
     const pendingActions: string[] = [];
     if (data.disposalType === 'venta') {
       pendingActions.push(
@@ -940,11 +883,8 @@ export class FixedAssetsService {
     };
   }
 
-  // ══════════════════════════════════════════════════════════
-  // ── Actas oficiales de AFT ──
-  // 'baja'      → Acta de Baja de Activo Fijo Tangible
-  // 'recepcion' → Acta de Entrega/Recepción de Activo Fijo Tangible
-  // ══════════════════════════════════════════════════════════
+  // ──────────────── ACTAS OFICIALES ────────────────
+
   async generateActa(companyId: number, id: number, type: string) {
     const actaType = (type || '').toLowerCase();
     if (!['baja', 'recepcion'].includes(actaType)) {
@@ -974,9 +914,6 @@ export class FixedAssetsService {
     const accumulated = Number(asset.accumulatedDepreciation);
     const netValue = acquisitionValue - accumulated;
 
-    // ── Folio del acta ──
-    // Consecutivo por entidad y tipo de acta, basado en las actas ya emitidas
-    // para activos en el mismo estado (Res. 235-2005 MFP exige numeración).
     const actaSequence = await this.assetRepo.count({
       where: isBaja
         ? { companyId, status: 'disposed' }
@@ -1102,8 +1039,6 @@ export class FixedAssetsService {
     page.drawText('Contabilidad', { x: 50, y: y - 14, size: 9, font });
 
     if (isBaja) {
-      // La Res. 235-2005 MFP exige el dictamen de la comisión de peritaje para
-      // la baja de activos fijos tangibles.
       page.drawLine({
         start: { x: width - 50 - signWidth, y },
         end: { x: width - 50, y },
@@ -1137,13 +1072,8 @@ export class FixedAssetsService {
     return { pdf, fileName, actaNumber };
   }
 
-  // ══════════════════════════════════════════════════════════
-  // ── Mejora capitalizable de AFT (NCC Cuba - Res. 340) ──
-  // Las inversiones que aumentan la capacidad o vida útil del activo se
-  // capitalizan incrementando su valor:
-  //   Débito  240 (Activos Fijos Tangibles)
-  //   Crédito 410 (Cuentas por Pagar) — o la cuenta de tesorería si se paga
-  // ══════════════════════════════════════════════════════════
+  // ──────────────── MEJORA CAPITALIZABLE ────────────────
+
   async addImprovement(
     companyId: number,
     id: number,
@@ -1158,8 +1088,6 @@ export class FixedAssetsService {
   ) {
     const asset = await this.assetRepo.findOneBy({ id, companyId });
     if (!asset) throw new NotFoundException(`Activo fijo #${id} no encontrado`);
-    // Un activo totalmente depreciado admite mejoras: la inversión aumenta su
-    // valor y su vida útil, reanudando el gasto de depreciación.
     if (asset.status !== 'active' && asset.status !== 'fully_depreciated') {
       throw new BadRequestException(
         `No pueden capitalizarse mejoras en un activo con estado "${this.getStatusLabel(asset.status)}" (${asset.assetCode})`,
@@ -1239,7 +1167,6 @@ export class FixedAssetsService {
       throw new BadRequestException(`Error al generar comprobante contable: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // ── Finanzas: CxP si no se paga de inmediato, o movimiento bancario ──
     if (data.bankAccountId) {
       try {
         await this.financeService.createBankTransaction(companyId, {
@@ -1330,18 +1257,8 @@ export class FixedAssetsService {
     };
   }
 
-  // ══════════════════════════════════════════════════════════
-  // ── Resolución de Faltantes / Sobrantes en Investigación ──
-  // (NCC Cuba - Res. 235-2005 MFP)
-  //
-  // Esta operación NO es automática: el saldo permanece en 332 (faltante) o
-  // 555 (sobrante) hasta que el usuario registre el resultado de la
-  // investigación, que es una decisión administrativa.
-  //
-  //  Faltante → responsable: Débito 335 (CxC Diversas) / Crédito 332
-  //  Faltante → pérdida:     Débito 845 (Pérdidas de AFT) / Crédito 332
-  //  Sobrante → ingreso:     Débito 555 / Crédito 950 (Otros Ingresos)
-  // ══════════════════════════════════════════════════════════
+  // ──────────────── INVESTIGACIONES ────────────────
+
   async findPendingInvestigations(companyId: number) {
     const assets = await this.assetRepo.find({
       where: { companyId, investigationStatus: 'pending' },
@@ -1505,7 +1422,6 @@ export class FixedAssetsService {
       },
     );
 
-    // ── Cuenta por Cobrar al responsable ──
     if (data.resolution === 'responsible') {
       try {
         const dueDate = new Date(resolutionDate);
@@ -1561,11 +1477,8 @@ export class FixedAssetsService {
     };
   }
 
-  // ── Revalorización de Activo Fijo (NCC Cuba - Res. 340) ──
-  // Ajusta el valor contable del activo basado en tasación o valor de mercado
-  // Genera comprobante contable:
-  //   Si valor nuevo > valor actual: Superávit de revalorización (cuenta 846)
-  //   Si valor nuevo < valor actual: Déficit de revalorización (cuenta 845)
+  // ──────────────── REVALORIZACIÓN ────────────────
+
   async revalueAsset(
     companyId: number,
     id: number,
@@ -1600,14 +1513,11 @@ export class FixedAssetsService {
         companyId,
         MappingType.FIXED_ASSET_ACQUISITION,
       )) || '240';
-    // Cuenta patrimonial 613 Revalorización de AFT (mixta, Nomenclador 2016).
     const revaluationAccount =
       (await this.accountMappingService.getAccountForMapping(
         companyId,
         MappingType.FIXED_ASSET_REVALUATION,
       )) || '613';
-    // Cuenta 845 Gastos por Pérdidas: recibe el déficit que excede el superávit
-    // previamente acreditado en 613 para el mismo activo.
     const lossAccount =
       (await this.accountMappingService.getAccountForMapping(
         companyId,
@@ -1628,7 +1538,6 @@ export class FixedAssetsService {
     let deficitToExpense = 0;
 
     if (revaluationDifference > 0) {
-      // ── Superávit de revalorización: Débito 240 / Crédito 613 ──
       surplusApplied = revaluationDifference;
       lines.push({
         accountCode: assetAccount,
@@ -1643,9 +1552,6 @@ export class FixedAssetsService {
         description: `Superávit revalorización AFT ${asset.assetCode}`,
       });
     } else {
-      // ── Déficit de revalorización ──
-      // Sólo puede debitarse contra 613 hasta agotar el superávit acumulado del
-      // propio activo; el exceso se reconoce como gasto por pérdidas (845).
       const deficit = Math.abs(revaluationDifference);
       deficitToEquity = Math.min(deficit, oldRevaluationSurplus);
       deficitToExpense = deficit - deficitToEquity;
@@ -1674,13 +1580,11 @@ export class FixedAssetsService {
       });
     }
 
-    // Asociar el área y centro de costo del activo a cada partida
     for (const line of lines) {
       line.areaId = asset.areaId ?? null;
       line.costCenterId = asset.costCenterId ?? null;
     }
 
-    // ── Operación atómica: valores del activo + comprobante contable ──
     try {
       await this.dataSource.transaction(async (manager) => {
         const assetRepo = manager.getRepository(FixedAsset);
@@ -1693,14 +1597,11 @@ export class FixedAssetsService {
             oldAccumulatedDepreciation,
           );
         } else {
-          // Recalibrar depreciación acumulada para que
-          // currentValue = acquisitionValue - accumulatedDepreciation.
           asset.accumulatedDepreciation = Math.min(
             asset.acquisitionValue,
             Math.max(0, asset.acquisitionValue - asset.currentValue),
           );
         }
-        // Saldo de superávit disponible en 613 para este activo.
         asset.revaluationSurplus = Math.max(
           0,
           oldRevaluationSurplus + surplusApplied - deficitToEquity,
@@ -1728,8 +1629,6 @@ export class FixedAssetsService {
       this.logger.log(`Comprobante de revalorización AFT ${asset.assetCode} generado`);
     } catch (error) {
       this.logger.error(`Error contabilización revalorización AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
-      // La transacción ya deshizo los cambios en base de datos; se restaura
-      // también la instancia en memoria para no devolver valores fantasma.
       asset.acquisitionValue = oldAcquisitionValue;
       asset.currentValue = oldCurrentValue;
       asset.accumulatedDepreciation = oldAccumulatedDepreciation;
@@ -1739,7 +1638,6 @@ export class FixedAssetsService {
 
     await this.upsertFixedAssetInventory(asset);
 
-    // ── Auditoría de la revalorización ──
     await this.auditService.log({
       companyId,
       userName: userName || 'System',
@@ -1788,9 +1686,8 @@ export class FixedAssetsService {
     };
   }
 
-  // ── Transferencia de Activo Fijo a otra Área / Centro de Costo ──
-  // Registra el movimiento interno del AFT y su contabilización por la
-  // cuenta 696 "Operaciones entre Dependencias" (misma entidad).
+  // ──────────────── TRANSFERENCIA ────────────────
+
   async transferAsset(
     companyId: number,
     id: number,
@@ -1821,7 +1718,6 @@ export class FixedAssetsService {
       : null;
     const newAreaName = targetArea?.name ?? 'N/D';
 
-    // ── Comprobante contable de traspaso ──
     let assetAccount: string;
     try {
       const acquisitionValue = Number(asset.acquisitionValue);
@@ -1869,7 +1765,6 @@ export class FixedAssetsService {
       throw new BadRequestException(`Error al generar comprobante de traspaso: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // ── Actualizar área, centro de costo y responsable del activo ──
     asset.areaId = data.targetAreaId ?? null;
     asset.costCenterId = data.targetCostCenterId ?? null;
 
@@ -1884,12 +1779,8 @@ export class FixedAssetsService {
     asset.status = 'transferred';
     await this.assetRepo.save(asset);
 
-    // (Traspaso contabilizado en un solo comprobante arriba)
-
-    // ── Actualizar inventario AFT ──
     await this.upsertFixedAssetInventory(asset, 'transferred');
 
-    // ── Auditoría de la transferencia ──
     await this.auditService.log({
       companyId,
       userName: userName || 'System',
@@ -1922,7 +1813,8 @@ export class FixedAssetsService {
     };
   }
 
-  // ── Sincronizar Registro de Inventario de AFT ──
+  // ──────────────── INVENTARIO (sincronización) ────────────────
+
   private async upsertFixedAssetInventory(asset: FixedAsset, overrideStatus?: 'active' | 'disposed' | 'transferred' | 'fully_depreciated', manager?: EntityManager) {
     try {
       const inventoryRepo = manager ? manager.getRepository(FixedAssetInventory) : this.inventoryRepo;
@@ -1937,7 +1829,6 @@ export class FixedAssetsService {
       const usefulLifeYears = asset.depreciationRate > 0 ? 100 / asset.depreciationRate : null;
       const reportDate = new Date();
 
-      // Vida útil restante en meses, basada en el valor contable actual y la tasa.
       const annualDepreciation =
         usefulLifeYears && acquisitionValue > 0
           ? acquisitionValue / usefulLifeYears
@@ -1980,6 +1871,8 @@ export class FixedAssetsService {
     }
   }
 
+  // ──────────────── CATÁLOGO DE DEPRECIACIÓN ────────────────
+
   async getDepreciationCatalog(companyId: number) {
     let entries = await this.catalogRepo.find({
       where: { companyId, isActive: true },
@@ -1987,7 +1880,6 @@ export class FixedAssetsService {
     });
 
     if (entries.length === 0) {
-      // Autoinicializa el catálogo con las tasas oficiales de la Res. 235-2005 MFP.
       for (const group of CUBAN_DEPRECIATION_CATALOG) {
         for (const sub of group.subgroups) {
           const entry = this.catalogRepo.create({
@@ -2039,44 +1931,7 @@ export class FixedAssetsService {
     return entry ? Number(entry.depreciationRate) : 0;
   }
 
-  private getAcquisitionTypeLabel(type: string): string {
-    const labels: Record<string, string> = {
-      compra: 'Compra de AFT',
-      donacion: 'Alta de AFT por donación',
-      sobrante: 'Alta de AFT por sobrante',
-    };
-    return labels[type] || 'Alta de AFT';
-  }
-
-  private getStatusLabel(status: string): string {
-    const labels: Record<string, string> = {
-      active: 'Activo',
-      disposed: 'Dado de baja',
-      fully_depreciated: 'Totalmente depreciado',
-      transferred: 'Trasladado',
-    };
-    return labels[status] || status;
-  }
-
-  private getDisposalTypeLabel(type: string): string {
-    const labels: Record<string, string> = {
-      faltante: 'Baja de AFT por faltante',
-      deterioro: 'Baja de AFT por deterioro',
-      venta: 'Venta de AFT',
-      devolucion_compra: 'Devolución de compra de AFT',
-      obsolescencia: 'Baja de AFT por obsolescencia',
-      rotura: 'Baja de AFT por rotura',
-      donacion: 'Baja de AFT por donación entregada',
-    };
-    return labels[type] || 'Baja de AFT';
-  }
-
-  private async getCostCenterWithExpenseAccount(
-    companyId: number,
-    costCenterId: string,
-  ): Promise<CostCenter | null> {
-    return this.costCenterRepo.findOneBy({ id: costCenterId, companyId });
-  }
+  // ──────────────── ESTADÍSTICAS ────────────────
 
   async getStatistics(companyId: number) {
     const assets = await this.assetRepo.find({ where: { companyId } });
@@ -2105,25 +1960,17 @@ export class FixedAssetsService {
       transferredCount: transferred.length,
       totalAcquisitionValue: totalValue,
       totalCurrentValue: currentValue,
-      // Depreciación real registrada (saldo de la cuenta 375), no la diferencia
-      // teórica de valores, que también absorbe revalorizaciones.
       totalDepreciation: accumulatedDepreciation,
       totalValueVariation: totalValue - currentValue,
     };
   }
 
-  // ══════════════════════════════════════════════════════════
-  // ── Modelo de Depreciación Acumulada de AFT ──
-  // Se construye con la depreciación REALMENTE registrada en
-  // `DepreciationHistory` (contrapartida de la cuenta 375 del Nomenclador
-  // 2016), no con un cálculo teórico. Así el modelo concilia con el mayor
-  // aunque existan meses sin procesar, mejoras capitalizadas o avalúos.
-  // ══════════════════════════════════════════════════════════
+  // ──────────────── REPORTE DE DEPRECIACIÓN ACUMULADA ────────────────
+
   async getAccumulatedDepreciationReport(companyId: number, year: number, month: number) {
     const assets = await this.assetRepo.find({ where: { companyId } });
     const cutoff = new Date(year, month - 1, 1);
 
-    // Último registro de depreciación de cada activo hasta el período pedido.
     const history = await this.depreciationHistoryRepo.find({
       where: { companyId },
       order: { year: 'ASC', month: 'ASC' },
@@ -2140,7 +1987,6 @@ export class FixedAssetsService {
         periods: 0,
         lastPeriod: '',
       };
-      // El acumulado es el del último período procesado (ya es un saldo).
       entry.accumulated = Number(h.accumulatedDepreciation || 0);
       entry.periods += 1;
       entry.lastPeriod = `${h.year}-${String(h.month).padStart(2, '0')}`;
@@ -2163,8 +2009,6 @@ export class FixedAssetsService {
       const theoreticalMonthly = (acqVal * (depRate / 100)) / 12;
       const record = historyByAsset.get(asset.id);
 
-      // Meses depreciables según la norma: la depreciación comienza el mes
-      // siguiente a la incorporación del activo.
       const expectedPeriods = Math.max(
         0,
         (year - acquisitionDate.getFullYear()) * 12 +
@@ -2188,8 +2032,6 @@ export class FixedAssetsService {
         expectedPeriods,
         processedPeriods,
         lastProcessedPeriod: record?.lastPeriod || null,
-        // Advierte al contador de períodos no contabilizados: el saldo del
-        // modelo debe cuadrar con la cuenta 375, no con el cálculo teórico.
         pendingPeriods: Math.max(0, expectedPeriods - processedPeriods),
         accumulatedDepreciation,
         currentValue,
@@ -2197,13 +2039,11 @@ export class FixedAssetsService {
       });
     }
 
-    // Group by depreciation group for summary
     const catalogEntries = await this.catalogRepo.find({
       where: { companyId, isActive: true },
       order: { groupNumber: 'ASC' },
     });
 
-    // Agrupar catálogo por grupo
     const groupsMap = new Map<number, string>();
     for (const entry of catalogEntries) {
       if (!groupsMap.has(entry.groupNumber)) {
@@ -2241,8 +2081,6 @@ export class FixedAssetsService {
         totalAccumulatedDepreciation: report.reduce((sum, a) => sum + a.accumulatedDepreciation, 0),
         totalCurrentValue: report.reduce((sum, a) => sum + a.currentValue, 0),
       },
-      // Aviso de conciliación: si hay períodos sin procesar, el modelo refleja
-      // el saldo real de la 375 pero está incompleto respecto al devengo.
       reconciliation: {
         source: 'depreciation_history',
         assetsWithPendingPeriods: assetsWithPending.length,
@@ -2254,6 +2092,8 @@ export class FixedAssetsService {
     };
   }
 
+  // ──────────────── CÁLCULOS DE DEPRECIACIÓN ────────────────
+
   async calculateMonthlyDepreciation(
     companyId: number,
     year: number,
@@ -2264,7 +2104,6 @@ export class FixedAssetsService {
       where: { companyId, status: 'active' },
     });
 
-    // Idempotencia: evitar duplicar meses ya procesados salvo que se fuerce.
     const processedIds = includeProcessed
       ? new Set<number>()
       : new Set<number>(
@@ -2284,8 +2123,6 @@ export class FixedAssetsService {
       const acquisitionDate = new Date(asset.acquisitionDate);
       const currentDate = new Date(year, month - 1, 1);
 
-      // La depreciación comienza el mes SIGUIENTE a la incorporación del activo
-      // (práctica establecida en las NCC cubanas: no se deprecia el mes del alta).
       const firstDepreciableMonth = new Date(
         acquisitionDate.getFullYear(),
         acquisitionDate.getMonth() + 1,
@@ -2355,7 +2192,6 @@ export class FixedAssetsService {
       0,
     );
 
-    // Cargar activos con centro de costo para enrutar el gasto
     const assetsWithCostCenter = await this.assetRepo.find({
       where: { id: In(newRecords.map((r) => r.assetId)), companyId },
       relations: ['costCenter'],
@@ -2365,10 +2201,8 @@ export class FixedAssetsService {
     );
 
     let voucher: any = null;
-    // Activos que alcanzan el 100 % de depreciación en este proceso.
     const fullyDepreciated: string[] = [];
 
-    // ── Contabilización de depreciación mensual por centro de costo ──
     if (totalDepreciation > 0) {
       try {
         const accumulatedDepreciationAccount =
@@ -2453,7 +2287,6 @@ export class FixedAssetsService {
       }
     }
 
-    // Update asset current values and persist history
     for (const record of newRecords) {
       const asset = await this.assetRepo.findOneBy({
         id: record.assetId,
@@ -2462,8 +2295,6 @@ export class FixedAssetsService {
       if (asset) {
         asset.currentValue = record.currentValue;
         asset.accumulatedDepreciation = record.accumulatedDepreciation;
-        // Activo totalmente depreciado: el submayor debe distinguirlo de los
-        // activos que aún generan gasto de depreciación.
         if (
           asset.status === 'active' &&
           Number(asset.accumulatedDepreciation) >= Number(asset.acquisitionValue)
@@ -2498,9 +2329,7 @@ export class FixedAssetsService {
     };
   }
 
-  // ══════════════════════════════════════════════════════════
-  // ── FIXED ASSET AREAS ──
-  // ══════════════════════════════════════════════════════════
+  // ──────────────── ÁREAS ────────────────
 
   async findAllAreas(companyId: number) {
     return this.areaRepo.find({
@@ -2529,5 +2358,46 @@ export class FixedAssetsService {
     const area = await this.areaRepo.findOneBy({ id, companyId });
     if (!area) throw new NotFoundException(`Área #${id} no encontrada`);
     return this.areaRepo.remove(area);
+  }
+
+  // ──────────────── MÉTODOS AUXILIARES ────────────────
+
+  private getAcquisitionTypeLabel(type: string): string {
+    const labels: Record<string, string> = {
+      compra: 'Compra de AFT',
+      donacion: 'Alta de AFT por donación',
+      sobrante: 'Alta de AFT por sobrante',
+    };
+    return labels[type] || 'Alta de AFT';
+  }
+
+  private getStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+      active: 'Activo',
+      disposed: 'Dado de baja',
+      fully_depreciated: 'Totalmente depreciado',
+      transferred: 'Trasladado',
+    };
+    return labels[status] || status;
+  }
+
+  private getDisposalTypeLabel(type: string): string {
+    const labels: Record<string, string> = {
+      faltante: 'Baja de AFT por faltante',
+      deterioro: 'Baja de AFT por deterioro',
+      venta: 'Venta de AFT',
+      devolucion_compra: 'Devolución de compra de AFT',
+      obsolescencia: 'Baja de AFT por obsolescencia',
+      rotura: 'Baja de AFT por rotura',
+      donacion: 'Baja de AFT por donación entregada',
+    };
+    return labels[type] || 'Baja de AFT';
+  }
+
+  private async getCostCenterWithExpenseAccount(
+    companyId: number,
+    costCenterId: string,
+  ): Promise<CostCenter | null> {
+    return this.costCenterRepo.findOneBy({ id: costCenterId, companyId });
   }
 }
