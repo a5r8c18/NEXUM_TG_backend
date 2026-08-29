@@ -482,11 +482,18 @@ export interface Efe5924Data {
 
 @Injectable()
 export class PdfService {
-  private templatePath = path.join(
-    __dirname,
-    'templates',
-    '5920.template.html',
-  );
+  private getTemplatePath(fileName: string): string {
+    const candidates = [
+      path.join(__dirname, 'templates', fileName),
+      path.join(__dirname, '..', '..', 'accounting', 'templates', fileName),
+      path.join(process.cwd(), 'src', 'accounting', 'templates', fileName),
+      path.join(process.cwd(), 'dist', 'accounting', 'templates', fileName),
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return p;
+    }
+    return candidates[0];
+  }
 
   private fmt(value: number): string {
     if (value === 0 || value === null || value === undefined) return '0.00';
@@ -497,7 +504,10 @@ export class PdfService {
   }
 
   private buildHtml(data: Efe5920Data): string {
-    const template = fs.readFileSync(this.templatePath, 'utf-8');
+    const template = fs.readFileSync(
+      this.getTemplatePath('5920.template.html'),
+      'utf-8',
+    );
     const a = data.activos;
     const p = data.pasivos;
     const pa = data.patrimonio;
@@ -698,11 +708,7 @@ export class PdfService {
   }
 
   async generateEfe5921Pdf(data: Efe5921Data): Promise<Buffer> {
-    const templatePath = path.join(
-      __dirname,
-      'templates',
-      '5921.template.html',
-    );
+    const templatePath = this.getTemplatePath('5921.template.html');
     console.log(' PDF 5921 - Template path:', templatePath);
     console.log(' PDF 5921 - Template exists:', fs.existsSync(templatePath));
     const template = fs.readFileSync(templatePath, 'utf-8');
@@ -849,12 +855,10 @@ export class PdfService {
   }
 
   async generateEfe5924Pdf(data: Efe5924Data): Promise<Buffer> {
-    const templatePath = path.join(
-      __dirname,
-      'templates',
-      '5924.template.html',
+    const template = fs.readFileSync(
+      this.getTemplatePath('5924.template.html'),
+      'utf-8',
     );
-    const template = fs.readFileSync(templatePath, 'utf-8');
 
     const g = data.gastos;
     const t = data.totales;
@@ -1009,11 +1013,7 @@ export class PdfService {
   }
 
   async generateEfe5922Pdf(data: Efe5922Data): Promise<Buffer> {
-    const templatePath = path.join(
-      __dirname,
-      'templates',
-      '5922.template.html',
-    );
+    const templatePath = this.getTemplatePath('5922.template.html');
     const template = fs.existsSync(templatePath)
       ? fs.readFileSync(templatePath, 'utf-8')
       : this.getDefault5922Template();
@@ -1147,11 +1147,7 @@ export class PdfService {
   }
 
   async generateEfe5923Pdf(data: Efe5923Data): Promise<Buffer> {
-    const templatePath = path.join(
-      __dirname,
-      'templates',
-      '5923.template.html',
-    );
+    const templatePath = this.getTemplatePath('5923.template.html');
     const template = fs.existsSync(templatePath)
       ? fs.readFileSync(templatePath, 'utf-8')
       : this.getDefault5923Template();
@@ -1275,11 +1271,7 @@ export class PdfService {
   }
 
   async generateFlujoEfectivoPdf(data: FlujoEfectivoData): Promise<Buffer> {
-    const templatePath = path.join(
-      __dirname,
-      'templates',
-      'flujo-efectivo.template.html',
-    );
+    const templatePath = this.getTemplatePath('flujo-efectivo.template.html');
     const template = fs.existsSync(templatePath)
       ? fs.readFileSync(templatePath, 'utf-8')
       : this.getDefaultFlujoEfectivoTemplate();
