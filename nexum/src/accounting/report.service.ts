@@ -1058,14 +1058,14 @@ export class ReportService {
 
     const company = await this.companyRepo.findOne({ where: { id: companyId } });
 
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
-    // Geometría de la tabla: Cuenta (Número | Descripción),
+    // Geometría de la tabla (vertical): Cuenta (Número | Descripción),
     // Periodo (Débito | Crédito), Acumulado (Débito | Crédito).
-    const startX = 12;
-    const colWidths = [28, 95, 36, 36, 36, 36];
+    const startX = 10;
+    const colWidths = [24, 70, 24, 24, 24, 24];
     const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const colX: number[] = [];
     colWidths.reduce((x, w) => {
@@ -1147,7 +1147,12 @@ export class ReportService {
         y = drawHeader();
       }
 
-      colWidths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+      // Solo líneas verticales de columnas, sin líneas divisorias horizontales
+      const xEnd = colX[colWidths.length - 1] + colWidths[colWidths.length - 1];
+      for (let i = 0; i < colX.length; i++) {
+        doc.line(colX[i], y, colX[i], y + rowHeight);
+      }
+      doc.line(xEnd, y, xEnd, y + rowHeight);
 
       const textY = y + 4.2;
       doc.text(String(account.accountCode ?? ''), colX[0] + 2, textY);
@@ -1181,7 +1186,12 @@ export class ReportService {
       y = drawHeader();
     }
     doc.setFont('helvetica', 'bold');
-    colWidths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+    // Líneas verticales de columnas también en el total
+    const xEnd = colX[colWidths.length - 1] + colWidths[colWidths.length - 1];
+    for (let i = 0; i < colX.length; i++) {
+      doc.line(colX[i], y, colX[i], y + rowHeight);
+    }
+    doc.line(xEnd, y, xEnd, y + rowHeight);
     const totalsY = y + 4.2;
     doc.text('TOTALES', colX[0] + 2, totalsY);
     doc.text(this.formatCurrency(totals.periodDebit), right(2), totalsY, {
