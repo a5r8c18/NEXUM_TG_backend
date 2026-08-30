@@ -52,10 +52,14 @@ import { SearchPaginationDto } from '../common/pagination/pagination.dto';
 function reportOptions(
   includeDrafts?: string,
   beforeClosing?: string,
+  accountsOnly?: string,
+  orientation?: string,
 ): ReportOptions {
   return {
     includeDrafts: includeDrafts === 'true',
     beforeClosing: beforeClosing === 'true',
+    accountsOnly: accountsOnly === 'true',
+    orientation: orientation === 'landscape' ? 'landscape' : 'portrait',
   };
 }
 
@@ -398,13 +402,14 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
     @Query('includeDrafts') includeDrafts?: string,
     @Query('beforeClosing') beforeClosing?: string,
+    @Query('accountsOnly') accountsOnly?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.getTrialBalance(
       companyId,
       fromDate,
       toDate,
-      reportOptions(includeDrafts, beforeClosing),
+      reportOptions(includeDrafts, beforeClosing, accountsOnly),
     );
   }
 
@@ -639,6 +644,7 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
     @Query('includeDrafts') includeDrafts?: string,
     @Query('beforeClosing') beforeClosing?: string,
+    @Query('accountsOnly') accountsOnly?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportTrialBalanceExcel(
@@ -646,7 +652,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
-      reportOptions(includeDrafts, beforeClosing),
+      reportOptions(includeDrafts, beforeClosing, accountsOnly),
     );
   }
 
@@ -658,6 +664,8 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
     @Query('includeDrafts') includeDrafts?: string,
     @Query('beforeClosing') beforeClosing?: string,
+    @Query('accountsOnly') accountsOnly?: string,
+    @Query('orientation') orientation?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportTrialBalancePDF(
@@ -665,7 +673,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
-      reportOptions(includeDrafts, beforeClosing),
+      reportOptions(includeDrafts, beforeClosing, accountsOnly, orientation),
     );
   }
 
@@ -693,13 +701,15 @@ export class AccountingController {
     @Query('asOfDate') asOfDate?: string,
     @Query('includeDrafts') includeDrafts?: string,
     @Query('beforeClosing') beforeClosing?: string,
+    @Query('accountsOnly') accountsOnly?: string,
+    @Query('orientation') orientation?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportBalanceSheetPDF(
       companyId,
       asOfDate,
       res,
-      reportOptions(includeDrafts, beforeClosing),
+      reportOptions(includeDrafts, beforeClosing, accountsOnly, orientation),
     );
   }
 
@@ -730,6 +740,8 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
     @Query('includeDrafts') includeDrafts?: string,
     @Query('beforeClosing') beforeClosing?: string,
+    @Query('accountsOnly') accountsOnly?: string,
+    @Query('orientation') orientation?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportIncomeStatementPDF(
@@ -737,7 +749,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
-      reportOptions(includeDrafts, beforeClosing),
+      reportOptions(includeDrafts, beforeClosing, accountsOnly, orientation),
     );
   }
 
@@ -749,6 +761,8 @@ export class AccountingController {
     @Query('toDate') toDate?: string,
     @Query('includeDrafts') includeDrafts?: string,
     @Query('beforeClosing') beforeClosing?: string,
+    @Query('accountsOnly') accountsOnly?: string,
+    @Query('orientation') orientation?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportExpenseBreakdownPDF(
@@ -756,7 +770,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
-      reportOptions(includeDrafts, beforeClosing),
+      reportOptions(includeDrafts, beforeClosing, accountsOnly, orientation),
     );
   }
 

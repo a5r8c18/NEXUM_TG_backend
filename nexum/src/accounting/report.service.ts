@@ -16,12 +16,22 @@ import { Company } from '../entities/company.entity';
 import { CacheService } from '../cache/cache.service';
 import { Efe5920Data, Efe5921Data, Efe5922Data, Efe5923Data, Efe5924Data, FlujoEfectivoData } from './pdf.service';
 
+/** Orientación del papel en los informes exportados a PDF. */
+export type ReportOrientation = 'portrait' | 'landscape';
+
 /** Opciones comunes a todos los informes contables. */
 export interface ReportOptions {
   /** Incluye comprobantes en borrador (sin contabilizar). */
   includeDrafts?: boolean;
   /** Excluye los asientos de cierre del ejercicio. */
   beforeClosing?: boolean;
+  /**
+   * Agrupa los saldos a nivel de cuenta, sin desglosar las subcuentas.
+   * Cuando es `false` (por defecto) se muestra cuenta-subcuenta.
+   */
+  accountsOnly?: boolean;
+  /** Orientación del PDF generado. Por defecto vertical. */
+  orientation?: ReportOrientation;
 }
 
 @Injectable()
@@ -56,9 +66,17 @@ export class ReportService {
     return includeDrafts ? ['posted', 'draft'] : ['posted'];
   }
 
-  /** Sufijo de clave de caché para no mezclar resultados de distintas opciones. */
+  /**
+   * Sufijo de clave de caché para no mezclar resultados de distintas opciones.
+   * La orientación no se incluye porque no altera los datos, solo el PDF.
+   */
   private optionsCacheKey(opts?: ReportOptions): string {
-    return `${opts?.includeDrafts ? 'drafts' : 'posted'}:${opts?.beforeClosing ? 'preclose' : 'full'}`;
+    return `${opts?.includeDrafts ? 'drafts' : 'posted'}:${opts?.beforeClosing ? 'preclose' : 'full'}:${opts?.accountsOnly ? 'accounts' : 'subaccounts'}`;
+  }
+
+  /** Orientación efectiva del PDF (vertical por defecto). */
+  private pdfOrientation(opts?: ReportOptions): ReportOrientation {
+    return opts?.orientation === 'landscape' ? 'landscape' : 'portrait';
   }
 
   /**
@@ -87,6 +105,7 @@ export class ReportService {
     const notes: string[] = [];
     if (opts?.includeDrafts) notes.push('Incluye comprobantes sin contabilizar');
     if (opts?.beforeClosing) notes.push('Antes de cierre');
+    if (opts?.accountsOnly) notes.push('Solo cuentas');
     return notes.length ? `  ·  ${notes.join('  ·  ')}` : '';
   }
 
@@ -126,30 +145,37 @@ export class ReportService {
     }[];
     grandTotalLabel?: string;
     grandTotalValues?: string[];
+    orientation?: ReportOrientation;
   }): jsPDF {
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const orientation = opts.orientation ?? 'portrait';
+    const doc = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const startX = 14;
     const rowHeight = 6;
     const bottomLimit = pageHeight - 16;
 
+    // Los anchos base están pensados para A4 vertical; se reescalan al ancho
+    // útil real para que la tabla ocupe la página en cualquier orientación.
+    const baseWidth = opts.widths.reduce((a, b) => a + b, 0);
+    const scale = (pageWidth - startX * 2) / baseWidth;
+    const widths = opts.widths.map((w) => w * scale);
+
     const colX: number[] = [];
-    opts.widths.reduce((x, w) => {
+    widths.reduce((x, w) => {
       colX.push(x);
       return x + w;
     }, startX);
-    const tableWidth = opts.widths.reduce((a, b) => a + b, 0);
+    const tableWidth = widths.reduce((a, b) => a + b, 0);
 
     const cellX = (i: number) =>
-      opts.aligns[i] === 'right' ? colX[i] + opts.widths[i] - 2 : colX[i] + 2;
+      opts.aligns[i] === 'right' ? colX[i] + widths[i] - 2 : colX[i] + 2;
 
     const writeRow = (cells: string[], y: number, bold: boolean) => {
       doc.setFont('helvetica', bold ? 'bold' : 'normal');
       cells.forEach((cell, i) => {
-        if (i >= opts.widths.length) return;
-        const text =
-          doc.splitTextToSize(cell ?? '', opts.widths[i] - 4)[0] ?? '';
+        if (i >= widths.length) return;
+        const text = doc.splitTextToSize(cell ?? '', widths[i] - 4)[0] ?? '';
         doc.text(text, cellX(i), y + 4.2, { align: opts.aligns[i] });
       });
     };
@@ -203,14 +229,14 @@ export class ReportService {
 
       section.rows.forEach((row) => {
         ensureSpace(rowHeight);
-        opts.widths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+        widths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
         writeRow(row, y, false);
         y += rowHeight;
       });
 
       if (section.totalLabel) {
         ensureSpace(rowHeight);
-        opts.widths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
+        widths.forEach((w, i) => doc.rect(colX[i], y, w, rowHeight));
         writeRow(
           [section.totalLabel, ...(section.totalValues ?? [])],
           y,
@@ -292,6 +318,24 @@ export class ReportService {
     const natureFallback = `CASE WHEN LEFT(vl.account_code, 1) IN ('1','2','3','8')
                                  THEN 'deudora' ELSE 'acreedora' END`;
 
+    // Clave de agrupación:
+    //  · Detalle (por defecto): la subcuenta cuando existe, si no la cuenta.
+    //  · Solo cuentas: la cuenta de mayor, descartando el sufijo analítico
+    //    (`405-0060` → `405`) presente en asientos antiguos.
+    const accountsOnly = options?.accountsOnly === true;
+    const groupKey = accountsOnly
+      ? `SPLIT_PART(vl.account_code, '-', 1)`
+      : `COALESCE(NULLIF(vl.subaccount_code, ''), vl.account_code)`;
+    // En modo "solo cuentas" la descripción debe ser la de la cuenta de mayor,
+    // no la de la subcuenta a la que apunta `vl.account_id`.
+    const nameExpr = accountsOnly
+      ? `MAX(COALESCE(pa.name, vl.account_name))`
+      : `MAX(COALESCE(NULLIF(vl.subaccount_name, ''), a.name, vl.account_name))`;
+    const parentJoin = accountsOnly
+      ? `LEFT JOIN accounts pa ON pa.code = SPLIT_PART(vl.account_code, '-', 1)
+                             AND pa."companyId" = $1`
+      : '';
+
     const statuses = this.voucherStatuses(options?.includeDrafts);
     // 'cierre' se excluye cuando se pide el balance previo al cierre.
     const excludedTypes = options?.beforeClosing ? ['cierre'] : [];
@@ -299,8 +343,8 @@ export class ReportService {
     const rows: any[] = await this.voucherLineRepo.query(
       `
       SELECT
-        vl.account_code AS "accountCode",
-        MAX(COALESCE(a.name, vl.account_name)) AS "accountName",
+        ${groupKey} AS "accountCode",
+        ${nameExpr} AS "accountName",
         MAX(COALESCE(a.nature, ${natureFallback})) AS "nature",
         MAX(COALESCE(a.type, '')) AS "accountType",
         COALESCE(SUM(CASE WHEN v.date >= $2 AND v.date <= $3 THEN vl.debit ELSE 0 END), 0) AS "periodDebit",
@@ -312,12 +356,13 @@ export class ReportService {
       FROM voucher_lines vl
       INNER JOIN vouchers v ON v.id = vl.voucher_id
       LEFT JOIN accounts a ON a.id = vl.account_id
+      ${parentJoin}
       WHERE v.company_id = $1
         AND v.status = ANY($5)
         AND NOT (v.type = ANY($6))
         AND v.date <= $3
-      GROUP BY vl.account_code
-      ORDER BY vl.account_code ASC
+      GROUP BY ${groupKey}
+      ORDER BY ${groupKey} ASC
       `,
       [
         companyId,
@@ -1058,14 +1103,23 @@ export class ReportService {
 
     const company = await this.companyRepo.findOne({ where: { id: companyId } });
 
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({
+      orientation: this.pdfOrientation(options),
+      unit: 'mm',
+      format: 'a4',
+    });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
-    // Geometría de la tabla (vertical): Cuenta (Número | Descripción),
+    // Geometría de la tabla: Cuenta (Número | Descripción),
     // Periodo (Débito | Crédito), Acumulado (Débito | Crédito).
+    // Los anchos base son los de A4 vertical y se reescalan al ancho útil
+    // real, de modo que en horizontal la tabla también ocupe toda la página.
     const startX = 10;
-    const colWidths = [22, 56, 29, 29, 29, 29];
+    const baseWidths = [22, 56, 29, 29, 29, 29];
+    const scale =
+      (pageWidth - startX * 2) / baseWidths.reduce((a, b) => a + b, 0);
+    const colWidths = baseWidths.map((w) => w * scale);
     const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const colX: number[] = [];
     colWidths.reduce((x, w) => {
@@ -1277,6 +1331,7 @@ export class ReportService {
         '',
         this.formatCurrency(data.totals.liabilitiesAndEquity),
       ],
+      orientation: this.pdfOrientation(options),
     });
 
     return this.sendPdf(
@@ -1331,6 +1386,7 @@ export class ReportService {
       grandTotalLabel:
         data.totals.netIncome >= 0 ? 'UTILIDAD NETA' : 'PÉRDIDA NETA',
       grandTotalValues: ['', this.formatCurrency(data.totals.netIncome)],
+      orientation: this.pdfOrientation(options),
     });
 
     return this.sendPdf(
@@ -1379,6 +1435,7 @@ export class ReportService {
         this.formatCurrency(data.totalExpenses),
         '100.00 %',
       ],
+      orientation: this.pdfOrientation(options),
     });
 
     return this.sendPdf(
