@@ -529,9 +529,15 @@ export class AccountingController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Query('asOfDate') asOfDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    const data = await this.reportService.getEfe5920Data(companyId, asOfDate);
+    const data = await this.reportService.getEfe5920Data(
+      companyId,
+      asOfDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
     const pdf = await this.pdfService.generateEfe5920Pdf(data);
 
     res.set({
@@ -548,9 +554,16 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    const data = await this.reportService.getEfe5921Data(companyId, fromDate, toDate);
+    const data = await this.reportService.getEfe5921Data(
+      companyId,
+      fromDate,
+      toDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
     const pdf = await this.pdfService.generateEfe5921Pdf(data);
 
     res.set({
@@ -567,9 +580,16 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    const data = await this.reportService.getEfe5924Data(companyId, fromDate, toDate);
+    const data = await this.reportService.getEfe5924Data(
+      companyId,
+      fromDate,
+      toDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
     const pdf = await this.pdfService.generateEfe5924Pdf(data);
 
     res.set({
@@ -585,9 +605,15 @@ export class AccountingController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Query('asOfDate') asOfDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    const data = await this.reportService.getEfe5922Data(companyId, asOfDate);
+    const data = await this.reportService.getEfe5922Data(
+      companyId,
+      asOfDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
     const pdf = await this.pdfService.generateEfe5922Pdf(data);
 
     res.set({
@@ -604,9 +630,16 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    const data = await this.reportService.getEfe5923Data(companyId, fromDate, toDate);
+    const data = await this.reportService.getEfe5923Data(
+      companyId,
+      fromDate,
+      toDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
     const pdf = await this.pdfService.generateEfe5923Pdf(data);
 
     res.set({
@@ -623,9 +656,16 @@ export class AccountingController {
     @Res({ passthrough: true }) res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    const data = await this.reportService.getFlujoEfectivoData(companyId, fromDate, toDate);
+    const data = await this.reportService.getFlujoEfectivoData(
+      companyId,
+      fromDate,
+      toDate,
+      reportOptions(includeDrafts, beforeClosing),
+    );
     const pdf = await this.pdfService.generateFlujoEfectivoPdf(data);
 
     res.set({
@@ -781,9 +821,16 @@ export class AccountingController {
     @Req() req: Request,
     @Res() res: Response,
     @Query('asOfDate') asOfDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
-    return this.reportService.exportModelo5920Excel(companyId, asOfDate, res);
+    return this.reportService.exportModelo5920Excel(
+      companyId,
+      asOfDate,
+      res,
+      reportOptions(includeDrafts, beforeClosing),
+    );
   }
 
   @Get('reports/modelo-5921/export/excel')
@@ -792,6 +839,8 @@ export class AccountingController {
     @Res() res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportModelo5921Excel(
@@ -799,6 +848,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
+      reportOptions(includeDrafts, beforeClosing),
     );
   }
 
@@ -808,6 +858,8 @@ export class AccountingController {
     @Res() res: Response,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('beforeClosing') beforeClosing?: string,
   ) {
     const companyId = getCompanyId(req);
     return this.reportService.exportModelo5924Excel(
@@ -815,6 +867,7 @@ export class AccountingController {
       fromDate,
       toDate,
       res,
+      reportOptions(includeDrafts, beforeClosing),
     );
   }
 

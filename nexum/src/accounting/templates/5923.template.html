@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Modelo SIEN 5923 - Estado de Resultados</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 10px; }
+    h1 { text-align: center; font-size: 14px; margin: 10px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+    th, td { border: 1px solid #000; padding: 4px; text-align: right; }
+    th { background-color: #f0f0f0; text-align: center; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .footer { margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>MODELO SIEN 5923 - ESTADO DE RESULTADOS</h1>
+    <p>Informe Correspondiente: {{informeCorrespondiente}}</p>
+    <p>Código Centro Informante: {{codigoCentroInformante}} | Centro Informante: {{centroInformante}}</p>
+  </div>
+  <table>
+    <tr><th>Concepto</th><th>Plan Anual</th><th>Apertura</th><th>Real</th></tr>
+    <tr><td colspan="4"><strong>INGRESOS</strong></td></tr>
+    <tr><td>Ventas Netas</td><td>{{ventasNetas_plan}}</td><td>{{ventasNetas_apertura}}</td><td>{{ventasNetas_real}}</td></tr>
+    <tr><td>Otros Ingresos</td><td>{{otrosIngresos_plan}}</td><td>{{otrosIngresos_apertura}}</td><td>{{otrosIngresos_real}}</td></tr>
+    <tr><td><strong>Total Ingresos</strong></td><td><strong>{{totalIngresos_plan}}</strong></td><td><strong>{{totalIngresos_apertura}}</strong></td><td><strong>{{totalIngresos_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>COSTO DE VENTAS</strong></td></tr>
+    <tr><td>Costo Mercancías Vendidas</td><td>{{costoMercancias_plan}}</td><td>{{costoMercancias_apertura}}</td><td>{{costoMercancias_real}}</td></tr>
+    <tr><td>Costo Servicios</td><td>{{costoServicios_plan}}</td><td>{{costoServicios_apertura}}</td><td>{{costoServicios_real}}</td></tr>
+    <tr><td><strong>Total Costo Ventas</strong></td><td><strong>{{totalCostoVentas_plan}}</strong></td><td><strong>{{totalCostoVentas_apertura}}</strong></td><td><strong>{{totalCostoVentas_real}}</strong></td></tr>
+    <tr><td><strong>UTILIDAD BRUTA</strong></td><td><strong>{{utilidadBruta_plan}}</strong></td><td><strong>{{utilidadBruta_apertura}}</strong></td><td><strong>{{utilidadBruta_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>GASTOS OPERATIVOS</strong></td></tr>
+    <tr><td>Gastos de Ventas</td><td>{{gastosVentas_plan}}</td><td>{{gastosVentas_apertura}}</td><td>{{gastosVentas_real}}</td></tr>
+    <tr><td>Gastos Administrativos</td><td>{{gastosAdministrativos_plan}}</td><td>{{gastosAdministrativos_apertura}}</td><td>{{gastosAdministrativos_real}}</td></tr>
+    <tr><td>Gastos Financieros</td><td>{{gastosFinancieros_plan}}</td><td>{{gastosFinancieros_apertura}}</td><td>{{gastosFinancieros_real}}</td></tr>
+    <tr><td><strong>Total Gastos Operativos</strong></td><td><strong>{{totalGastosOperativos_plan}}</strong></td><td><strong>{{totalGastosOperativos_apertura}}</strong></td><td><strong>{{totalGastosOperativos_real}}</strong></td></tr>
+    <tr><td><strong>UTILIDAD OPERATIVA</strong></td><td><strong>{{utilidadOperativa_plan}}</strong></td><td><strong>{{utilidadOperativa_apertura}}</strong></td><td><strong>{{utilidadOperativa_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>OTROS INGRESOS/GASTOS</strong></td></tr>
+    <tr><td>Ingresos Extraordinarios</td><td>{{ingresosExtraordinarios_plan}}</td><td>{{ingresosExtraordinarios_apertura}}</td><td>{{ingresosExtraordinarios_real}}</td></tr>
+    <tr><td>Gastos Extraordinarios</td><td>{{gastosExtraordinarios_plan}}</td><td>{{gastosExtraordinarios_apertura}}</td><td>{{gastosExtraordinarios_real}}</td></tr>
+    <tr><td><strong>Total Otros</strong></td><td><strong>{{totalOtros_plan}}</strong></td><td><strong>{{totalOtros_apertura}}</strong></td><td><strong>{{totalOtros_real}}</strong></td></tr>
+    <tr><td><strong>UTILIDAD ANTES IMPUESTOS</strong></td><td><strong>{{utilidadAntesImpuestos_plan}}</strong></td><td><strong>{{utilidadAntesImpuestos_apertura}}</strong></td><td><strong>{{utilidadAntesImpuestos_real}}</strong></td></tr>
+    <tr><td>Impuesto Renta (35%)</td><td>{{impuestoRenta_plan}}</td><td>{{impuestoRenta_apertura}}</td><td>{{impuestoRenta_real}}</td></tr>
+    <tr><td><strong>UTILIDAD NETA</strong></td><td><strong>{{utilidadNeta_plan}}</strong></td><td><strong>{{utilidadNeta_apertura}}</strong></td><td><strong>{{utilidadNeta_real}}</strong></td></tr>
+  </table>
+  <div class="footer">
+    <p>Elaborado por: {{hechoNombre}} | Aprobado por: {{aprobadoNombre}}</p>
+    <p>Fecha: {{fechaDia}}/{{fechaMes}}/{{fechaAnio}}</p>
+    <p>Observaciones: {{observaciones}}</p>
+  </div>
+</body>
+</html>

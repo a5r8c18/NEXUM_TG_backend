@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Modelo SIEN 5922 - Balance General</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 10px; }
+    h1 { text-align: center; font-size: 14px; margin: 10px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+    th, td { border: 1px solid #000; padding: 4px; text-align: right; }
+    th { background-color: #f0f0f0; text-align: center; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .footer { margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>MODELO SIEN 5922 - BALANCE GENERAL</h1>
+    <p>Informe Correspondiente: {{informeCorrespondiente}}</p>
+    <p>Código Centro Informante: {{codigoCentroInformante}} | Centro Informante: {{centroInformante}}</p>
+  </div>
+  <table>
+    <tr><th>Concepto</th><th>Plan Anual</th><th>Apertura</th><th>Real</th></tr>
+    <tr><td colspan="4"><strong>ACTIVOS CORRIENTES</strong></td></tr>
+    <tr><td>Efectivo</td><td>{{efectivo_plan}}</td><td>{{efectivo_apertura}}</td><td>{{efectivo_real}}</td></tr>
+    <tr><td>Cuentas por Cobrar</td><td>{{cuentasXCobrar_plan}}</td><td>{{cuentasXCobrar_apertura}}</td><td>{{cuentasXCobrar_real}}</td></tr>
+    <tr><td>Inventarios</td><td>{{inventarios_plan}}</td><td>{{inventarios_apertura}}</td><td>{{inventarios_real}}</td></tr>
+    <tr><td>Pagos Anticipados</td><td>{{pagosAnticipados_plan}}</td><td>{{pagosAnticipados_apertura}}</td><td>{{pagosAnticipados_real}}</td></tr>
+    <tr><td><strong>Total Activos Corrientes</strong></td><td><strong>{{totalActivosCorrientes_plan}}</strong></td><td><strong>{{totalActivosCorrientes_apertura}}</strong></td><td><strong>{{totalActivosCorrientes_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>ACTIVOS NO CORRIENTES</strong></td></tr>
+    <tr><td>Activos Fijos</td><td>{{activosFijos_plan}}</td><td>{{activosFijos_apertura}}</td><td>{{activosFijos_real}}</td></tr>
+    <tr><td>Depreciación Acumulada</td><td>{{depreciacionAcumulada_plan}}</td><td>{{depreciacionAcumulada_apertura}}</td><td>{{depreciacionAcumulada_real}}</td></tr>
+    <tr><td>Activos Intangibles</td><td>{{activosIntangibles_plan}}</td><td>{{activosIntangibles_apertura}}</td><td>{{activosIntangibles_real}}</td></tr>
+    <tr><td>Otros Activos</td><td>{{otrosActivos_plan}}</td><td>{{otrosActivos_apertura}}</td><td>{{otrosActivos_real}}</td></tr>
+    <tr><td><strong>Total Activos No Corrientes</strong></td><td><strong>{{totalActivosNoCorrientes_plan}}</strong></td><td><strong>{{totalActivosNoCorrientes_apertura}}</strong></td><td><strong>{{totalActivosNoCorrientes_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>PASIVOS CORRIENTES</strong></td></tr>
+    <tr><td>Cuentas por Pagar</td><td>{{cuentasXPagar_plan}}</td><td>{{cuentasXPagar_apertura}}</td><td>{{cuentasXPagar_real}}</td></tr>
+    <tr><td>Préstamos CP</td><td>{{prestamosCP_plan}}</td><td>{{prestamosCP_apertura}}</td><td>{{prestamosCP_real}}</td></tr>
+    <tr><td>Acumulaciones</td><td>{{acumulaciones_plan}}</td><td>{{acumulaciones_apertura}}</td><td>{{acumulaciones_real}}</td></tr>
+    <tr><td><strong>Total Pasivos Corrientes</strong></td><td><strong>{{totalPasivosCorrientes_plan}}</strong></td><td><strong>{{totalPasivosCorrientes_apertura}}</strong></td><td><strong>{{totalPasivosCorrientes_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>PASIVOS NO CORRIENTES</strong></td></tr>
+    <tr><td>Préstamos LP</td><td>{{prestamosLP_plan}}</td><td>{{prestamosLP_apertura}}</td><td>{{prestamosLP_real}}</td></tr>
+    <tr><td>Provisiones LP</td><td>{{provisionesLP_plan}}</td><td>{{provisionesLP_apertura}}</td><td>{{provisionesLP_real}}</td></tr>
+    <tr><td><strong>Total Pasivos No Corrientes</strong></td><td><strong>{{totalPasivosNoCorrientes_plan}}</strong></td><td><strong>{{totalPasivosNoCorrientes_apertura}}</strong></td><td><strong>{{totalPasivosNoCorrientes_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>PATRIMONIO</strong></td></tr>
+    <tr><td>Capital Social</td><td>{{capitalSocial_plan}}</td><td>{{capitalSocial_apertura}}</td><td>{{capitalSocial_real}}</td></tr>
+    <tr><td>Reservas</td><td>{{reservas_plan}}</td><td>{{reservas_apertura}}</td><td>{{reservas_real}}</td></tr>
+    <tr><td>Resultados Acumulados</td><td>{{resultadosAcumulados_plan}}</td><td>{{resultadosAcumulados_apertura}}</td><td>{{resultadosAcumulados_real}}</td></tr>
+    <tr><td>Resultado del Período</td><td>{{resultadoPeriodo_plan}}</td><td>{{resultadoPeriodo_apertura}}</td><td>{{resultadoPeriodo_real}}</td></tr>
+    <tr><td><strong>Total Patrimonio</strong></td><td><strong>{{totalPatrimonio_plan}}</strong></td><td><strong>{{totalPatrimonio_apertura}}</strong></td><td><strong>{{totalPatrimonio_real}}</strong></td></tr>
+    <tr><td><strong>TOTAL PASIVO Y PATRIMONIO</strong></td><td><strong>{{totalPasivoPatrimonio_plan}}</strong></td><td><strong>{{totalPasivoPatrimonio_apertura}}</strong></td><td><strong>{{totalPasivoPatrimonio_real}}</strong></td></tr>
+  </table>
+  <div class="footer">
+    <p>Elaborado por: {{hechoNombre}} | Aprobado por: {{aprobadoNombre}}</p>
+    <p>Fecha: {{fechaDia}}/{{fechaMes}}/{{fechaAnio}}</p>
+    <p>Observaciones: {{observaciones}}</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Flujo de Efectivo</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 10px; }
+    h1 { text-align: center; font-size: 14px; margin: 10px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+    th, td { border: 1px solid #000; padding: 4px; text-align: right; }
+    th { background-color: #f0f0f0; text-align: center; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .footer { margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>FLUJO DE EFECTIVO</h1>
+    <p>Informe Correspondiente: {{informeCorrespondiente}}</p>
+    <p>Código Centro Informante: {{codigoCentroInformante}} | Centro Informante: {{centroInformante}}</p>
+  </div>
+  <table>
+    <tr><th>Concepto</th><th>Plan Anual</th><th>Apertura</th><th>Real</th></tr>
+    <tr><td colspan="4"><strong>ACTIVIDADES OPERATIVAS</strong></td></tr>
+    <tr><td>Cobro de Ventas</td><td>{{cobroVentas_plan}}</td><td>{{cobroVentas_apertura}}</td><td>{{cobroVentas_real}}</td></tr>
+    <tr><td>Pago a Proveedores</td><td>{{pagoProveedores_plan}}</td><td>{{pagoProveedores_apertura}}</td><td>{{pagoProveedores_real}}</td></tr>
+    <tr><td>Pago de Personal</td><td>{{pagoPersonal_plan}}</td><td>{{pagoPersonal_apertura}}</td><td>{{pagoPersonal_real}}</td></tr>
+    <tr><td>Pago de Impuestos</td><td>{{pagoImpuestos_plan}}</td><td>{{pagoImpuestos_apertura}}</td><td>{{pagoImpuestos_real}}</td></tr>
+    <tr><td>Otros Pagos Operativos</td><td>{{otrosPagosOperativos_plan}}</td><td>{{otrosPagosOperativos_apertura}}</td><td>{{otrosPagosOperativos_real}}</td></tr>
+    <tr><td><strong>Flujo Neto Operativo</strong></td><td><strong>{{flujoNetoOperativo_plan}}</strong></td><td><strong>{{flujoNetoOperativo_apertura}}</strong></td><td><strong>{{flujoNetoOperativo_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>ACTIVIDADES DE INVERSIÓN</strong></td></tr>
+    <tr><td>Compra de Activos Fijos</td><td>{{compraActivosFijos_plan}}</td><td>{{compraActivosFijos_apertura}}</td><td>{{compraActivosFijos_real}}</td></tr>
+    <tr><td>Venta de Activos Fijos</td><td>{{ventaActivosFijos_plan}}</td><td>{{ventaActivosFijos_apertura}}</td><td>{{ventaActivosFijos_real}}</td></tr>
+    <tr><td>Inversiones Financieras</td><td>{{inversionesFinancieras_plan}}</td><td>{{inversionesFinancieras_apertura}}</td><td>{{inversionesFinancieras_real}}</td></tr>
+    <tr><td><strong>Flujo Neto Inversión</strong></td><td><strong>{{flujoNetoInversion_plan}}</strong></td><td><strong>{{flujoNetoInversion_apertura}}</strong></td><td><strong>{{flujoNetoInversion_real}}</strong></td></tr>
+    <tr><td colspan="4"><strong>ACTIVIDADES DE FINANCIAMIENTO</strong></td></tr>
+    <tr><td>Préstamos Recibidos</td><td>{{prestamosRecibidos_plan}}</td><td>{{prestamosRecibidos_apertura}}</td><td>{{prestamosRecibidos_real}}</td></tr>
+    <tr><td>Pago de Préstamos</td><td>{{pagoPrestamos_plan}}</td><td>{{pagoPrestamos_apertura}}</td><td>{{pagoPrestamos_real}}</td></tr>
+    <tr><td>Pago de Dividendos</td><td>{{pagoDividendos_plan}}</td><td>{{pagoDividendos_apertura}}</td><td>{{pagoDividendos_real}}</td></tr>
+    <tr><td>Aporte de Capital</td><td>{{aporteCapital_plan}}</td><td>{{aporteCapital_apertura}}</td><td>{{aporteCapital_real}}</td></tr>
+    <tr><td><strong>Flujo Neto Financiamiento</strong></td><td><strong>{{flujoNetoFinanciamiento_plan}}</strong></td><td><strong>{{flujoNetoFinanciamiento_apertura}}</strong></td><td><strong>{{flujoNetoFinanciamiento_real}}</strong></td></tr>
+    <tr><td><strong>VARIACIÓN DE EFECTIVO</strong></td><td><strong>{{variacionEfectivo_plan}}</strong></td><td><strong>{{variacionEfectivo_apertura}}</strong></td><td><strong>{{variacionEfectivo_real}}</strong></td></tr>
+    <tr><td>Efectivo Inicial</td><td>{{efectivoInicial_plan}}</td><td>{{efectivoInicial_apertura}}</td><td>{{efectivoInicial_real}}</td></tr>
+    <tr><td><strong>Efectivo Final</strong></td><td><strong>{{efectivoFinal_plan}}</strong></td><td><strong>{{efectivoFinal_apertura}}</strong></td><td><strong>{{efectivoFinal_real}}</strong></td></tr>
+  </table>
+  <div class="footer">
+    <p>Elaborado por: {{hechoNombre}} | Aprobado por: {{aprobadoNombre}}</p>
+    <p>Fecha: {{fechaDia}}/{{fechaMes}}/{{fechaAnio}}</p>
+    <p>Observaciones: {{observaciones}}</p>
+  </div>
+</body>
+</html>

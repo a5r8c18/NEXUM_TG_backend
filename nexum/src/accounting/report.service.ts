@@ -1453,175 +1453,64 @@ export class ReportService {
     companyId: number,
     asOfDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
     const templatePath = path.join(__dirname, 'templates', '5920.xlsx');
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(templatePath);
     const ws = wb.worksheets[0];
 
-    // ACTIVO
-    const efectivoCaja = await this.getAccountRangeBalance(
-      companyId,
-      ['101-108'],
-      asOfDate,
-    );
-    const efectivoBanco = await this.getAccountRangeBalance(
-      companyId,
-      ['109-119'],
-      asOfDate,
-    );
-    const cxcCorto = await this.getAccountRangeBalance(
-      companyId,
-      ['135-139', '154'],
-      asOfDate,
-    );
-    const pagosAnticipadosSumin = await this.getAccountRangeBalance(
-      companyId,
-      ['146-149'],
-      asOfDate,
-    );
-    const adeudosPresupuesto = await this.getAccountRangeBalance(
-      companyId,
-      ['164-166'],
-      asOfDate,
-    );
-    const materiasPrimas = await this.getAccountRangeBalance(
-      companyId,
-      ['183'],
-      asOfDate,
-    );
-    const utilesHerramientas = await this.getAccountRangeBalance(
-      companyId,
-      ['187'],
-      asOfDate,
-    );
-    const alimentos = await this.getAccountRangeBalance(
-      companyId,
-      ['193'],
-      asOfDate,
-    );
-    const aftTangibles = await this.getAccountRangeBalance(
-      companyId,
-      ['240-251'],
-      asOfDate,
-    );
-    const depreciacionAft = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['375-388'],
-      asOfDate,
-    );
-    const gastosDeficit = await this.getAccountRangeBalance(
-      companyId,
-      ['312'],
-      asOfDate,
-    );
-    const cxcDiversas = await this.getAccountRangeBalance(
-      companyId,
-      ['334-341'],
-      asOfDate,
-    );
-    // PASIVO
-    const cxpCorto = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['405-415'],
-      asOfDate,
-    );
-    const dividendosPagar = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['417'],
-      asOfDate,
-    );
-    const obligPresupuesto = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['440-449'],
-      asOfDate,
-    );
-    const nominasPagar = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['455-459'],
-      asOfDate,
-    );
-    const gastosAcumulados = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['480-489'],
-      asOfDate,
-    );
-    const provVacaciones = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['492'],
-      asOfDate,
-    );
-    const provSubsidiosSS = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['500'],
-      asOfDate,
-    );
-    const cxpDiversas = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['565-569'],
-      asOfDate,
-    );
-    // PATRIMONIO
-    const inversionEstatal = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['600-612'],
-      asOfDate,
-    );
-    const reservasContingencias = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['645'],
-      asOfDate,
-    );
-    const otrasReservas = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['646-654'],
-      asOfDate,
-    );
-    const pagoCuentaUtilidades = await this.getAccountRangeBalance(
-      companyId,
-      ['690'],
-      asOfDate,
-    );
-    const pagoCuentaDividendos = await this.getAccountRangeBalance(
-      companyId,
-      ['691'],
-      asOfDate,
-    );
-    const resultadoPeriodo = await this.getAccountRangeBalanceCredit(
-      companyId,
-      ['800-899'],
-      asOfDate,
-    );
+    // Se reutilizan los datos del PDF para que ambos formatos no puedan
+    // divergir. Antes esta función repetía los cálculos con rangos distintos y
+    // el resultado del período se leía de 800-899, que son cuentas de gasto.
+    const d = await this.getEfe5920Data(companyId, asOfDate, options);
+    const { activos, pasivos, patrimonio } = d;
 
-    // Fill data cells in column K — formulas preserved from template
-    ws.getCell('K11').value = efectivoCaja;
-    ws.getCell('K12').value = efectivoBanco;
-    ws.getCell('K13').value = cxcCorto;
-    ws.getCell('K14').value = pagosAnticipadosSumin;
-    ws.getCell('K15').value = adeudosPresupuesto;
-    ws.getCell('K17').value = materiasPrimas;
-    ws.getCell('K18').value = utilesHerramientas;
-    ws.getCell('K19').value = alimentos;
-    ws.getCell('K21').value = aftTangibles;
-    ws.getCell('K22').value = depreciacionAft;
-    ws.getCell('K23').value = gastosDeficit;
-    ws.getCell('K24').value = gastosDeficit;
-    ws.getCell('K25').value = cxcDiversas;
-    ws.getCell('K26').value = cxcDiversas;
-    ws.getCell('K30').value = cxpCorto;
-    ws.getCell('K31').value = dividendosPagar;
-    ws.getCell('K32').value = obligPresupuesto;
-    ws.getCell('K33').value = nominasPagar;
-    ws.getCell('K34').value = gastosAcumulados;
-    ws.getCell('K35').value = provVacaciones;
-    ws.getCell('K36').value = provSubsidiosSS;
-    ws.getCell('K39').value = cxpDiversas;
-    ws.getCell('K42').value = inversionEstatal;
-    ws.getCell('K43').value = reservasContingencias;
-    ws.getCell('K44').value = otrasReservas;
-    ws.getCell('K45').value = pagoCuentaUtilidades;
-    ws.getCell('K46').value = pagoCuentaDividendos;
-    ws.getCell('K47').value = resultadoPeriodo;
+    // La plantilla ya trae las fórmulas de los subtotales, así que solo se
+    // escriben las celdas de detalle de la columna K.
+    ws.getCell('K11').value = activos.efectivoCaja.real;
+    ws.getCell('K12').value = activos.efectivoBanco.real;
+    ws.getCell('K13').value = activos.cuentasXCobrarCP.real;
+    ws.getCell('K14').value = activos.pagosAnticipadosSuministros.real;
+    ws.getCell('K15').value = activos.adeudosPresupuesto.real;
+    ws.getCell('K17').value = activos.materiasPrimas.real;
+    ws.getCell('K18').value = activos.utilesHerramientas.real;
+    ws.getCell('K19').value = activos.alimentos.real;
+    ws.getCell('K21').value = activos.activosFijosTangibles.real;
+    ws.getCell('K22').value = activos.depreciacionAFT.real;
+    ws.getCell('K23').value = activos.activosDiferidos.real;
+    ws.getCell('K24').value = activos.gastosFaltantesDiferidos.real;
+    ws.getCell('K25').value = activos.otrosActivos.real;
+    ws.getCell('K26').value = activos.cuentasXCobrarDiversas.real;
+    ws.getCell('K30').value = pasivos.cuentasXPagarCP.real;
+    ws.getCell('K31').value = pasivos.dividendosXPagar.real;
+    ws.getCell('K32').value = pasivos.obligacionesPresupuesto.real;
+    ws.getCell('K33').value = pasivos.nominasXPagar.real;
+    ws.getCell('K34').value = pasivos.gastosAcumuladosXPagar.real;
+    ws.getCell('K35').value = pasivos.provisionVacaciones.real;
+    ws.getCell('K36').value = pasivos.provisionSeguridadSocial.real;
+    ws.getCell('K39').value = pasivos.cuentasXPagarDiversas.real;
+    ws.getCell('K42').value = patrimonio.inversionEstatal.real;
+    ws.getCell('K43').value = patrimonio.reservasContingencias.real;
+    ws.getCell('K44').value = patrimonio.otrasReservas.real;
+    ws.getCell('K45').value = patrimonio.pagoUtilidades.real;
+    ws.getCell('K46').value = patrimonio.pagoDividendos.real;
+
+    // El resultado del período es la partida de cuadre. Se calcula con las
+    // mismas fórmulas de la plantilla —cuyo TOTAL DEL ACTIVO es K10+K20 y su
+    // TOTAL DE PATRIMONIO es SUM(K42:K47)— para que la hoja exportada cuadre.
+    // No se toma `patrimonio.resultadoPeriodo`, que parte de un total del
+    // activo distinto (incluye diferidos y otros activos).
+    const totalActivoPlantilla =
+      activos.activosCirculantes.real + activos.activosFijos.real;
+    const patrimonioSinResultado =
+      patrimonio.inversionEstatal.real +
+      patrimonio.reservasContingencias.real +
+      patrimonio.otrasReservas.real +
+      patrimonio.pagoUtilidades.real +
+      patrimonio.pagoDividendos.real;
+    ws.getCell('K47').value =
+      totalActivoPlantilla - pasivos.totalPasivo.real - patrimonioSinResultado;
 
     const buffer = await wb.xlsx.writeBuffer();
     if (res) {
@@ -1647,131 +1536,35 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
     const templatePath = path.join(__dirname, 'templates', '5921.xlsx');
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(templatePath);
     const ws = wb.worksheets[0];
 
-    const ventas = await this.getAccountRangePeriodAmount(
+    // Fuente única compartida con el PDF. Las filas de subtotal (11, 13, 14,
+    // 17 y 26) no se escriben: la plantilla ya las calcula con sus fórmulas.
+    const { lineas } = await this.getEfe5921Data(
       companyId,
-      ['900-913'],
       fromDate,
       toDate,
-    );
-    const ventasVal = Math.abs(ventas.credit - ventas.debit);
-    const impVentas = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['805-809'],
-      fromDate,
-      toDate,
-    );
-    const impVentasVal = Math.abs(impVentas.debit - impVentas.credit);
-    const costoVentas = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['810-813'],
-      fromDate,
-      toDate,
-    );
-    const costoVentasVal = Math.abs(costoVentas.debit - costoVentas.credit);
-    const gastosAdmin = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['822-824'],
-      fromDate,
-      toDate,
-    );
-    const gastosAdminVal = Math.abs(gastosAdmin.debit - gastosAdmin.credit);
-    const gastosOper = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['826-833'],
-      fromDate,
-      toDate,
-    );
-    const gastosOperVal = Math.abs(gastosOper.debit - gastosOper.credit);
-    const gastosFinancieros = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['835-838'],
-      fromDate,
-      toDate,
-    );
-    const gastosFinancierosVal = Math.abs(
-      gastosFinancieros.debit - gastosFinancieros.credit,
-    );
-    const gastosPerdidas = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['845-848'],
-      fromDate,
-      toDate,
-    );
-    const gastosPerdidasVal = Math.abs(
-      gastosPerdidas.debit - gastosPerdidas.credit,
-    );
-    const gastosPerdidasDesastres = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['849'],
-      fromDate,
-      toDate,
-    );
-    const gastosPerdidasDesastresVal = Math.abs(
-      gastosPerdidasDesastres.debit - gastosPerdidasDesastres.credit,
-    );
-    const otrosImpuestos = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['855-864'],
-      fromDate,
-      toDate,
-    );
-    const otrosImpuestosVal = Math.abs(
-      otrosImpuestos.debit - otrosImpuestos.credit,
-    );
-    const otrosGastos = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['865-866'],
-      fromDate,
-      toDate,
-    );
-    const otrosGastosVal = Math.abs(otrosGastos.debit - otrosGastos.credit);
-    const gastosRecupDesastres = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['873'],
-      fromDate,
-      toDate,
-    );
-    const gastosRecupDesastresVal = Math.abs(
-      gastosRecupDesastres.debit - gastosRecupDesastres.credit,
-    );
-    const ingresosFinancieros = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['920-922'],
-      fromDate,
-      toDate,
-    );
-    const ingresosFinancierosVal = Math.abs(
-      ingresosFinancieros.credit - ingresosFinancieros.debit,
-    );
-    const otrosIngresos = await this.getAccountRangePeriodAmount(
-      companyId,
-      ['950-952'],
-      fromDate,
-      toDate,
-    );
-    const otrosIngresosVal = Math.abs(
-      otrosIngresos.credit - otrosIngresos.debit,
+      options,
     );
 
-    ws.getCell('K9').value = ventasVal;
-    ws.getCell('K10').value = impVentasVal;
-    ws.getCell('K12').value = costoVentasVal;
-    ws.getCell('K15').value = gastosAdminVal;
-    ws.getCell('K16').value = gastosOperVal;
-    ws.getCell('K18').value = gastosFinancierosVal;
-    ws.getCell('K19').value = gastosPerdidasVal;
-    ws.getCell('K20').value = gastosPerdidasDesastresVal;
-    ws.getCell('K21').value = otrosImpuestosVal;
-    ws.getCell('K22').value = otrosGastosVal;
-    ws.getCell('K23').value = gastosRecupDesastresVal;
-    ws.getCell('K24').value = ingresosFinancierosVal;
-    ws.getCell('K25').value = otrosIngresosVal;
+    ws.getCell('K9').value = lineas.ventas.real;
+    ws.getCell('K10').value = lineas.impuestoVentas.real;
+    ws.getCell('K12').value = lineas.costoVentasProduccion.real;
+    ws.getCell('K15').value = lineas.gastosGeneralesAdministracion.real;
+    ws.getCell('K16').value = lineas.gastosOperacion.real;
+    ws.getCell('K18').value = lineas.gastosFinancieros.real;
+    ws.getCell('K19').value = lineas.gastosPerdidas.real;
+    ws.getCell('K20').value = lineas.gastosPerdidasDesastres.real;
+    ws.getCell('K21').value = lineas.otrosImpuestosTasas.real;
+    ws.getCell('K22').value = lineas.otrosGastos.real;
+    ws.getCell('K23').value = lineas.gastosRecuperacionDesastres.real;
+    ws.getCell('K24').value = lineas.ingresosFinancieros.real;
+    ws.getCell('K25').value = lineas.otrosIngresos.real;
 
     const buffer = await wb.xlsx.writeBuffer();
     if (res) {
@@ -1797,6 +1590,7 @@ export class ReportService {
     fromDate?: string,
     toDate?: string,
     res?: Response,
+    options?: ReportOptions,
   ) {
     const templatePath = path.join(__dirname, 'templates', '5924.xlsx');
     const wb = new ExcelJS.Workbook();
@@ -1804,13 +1598,9 @@ export class ReportService {
     const ws = wb.worksheets[0];
 
     // Obtener elementos con datos en el período
-    const elementosQuery = this.voucherLineRepo
-      .createQueryBuilder('vl')
+    const elementosQuery = this.voucherLinesQuery(companyId, options)
       .select('vl.element', 'elementCode')
       .addSelect('vl.element_name', 'elementName')
-      .innerJoin('vl.voucher', 'v')
-      .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' })
       .andWhere('vl.element IS NOT NULL')
       .groupBy('vl.element, vl.element_name');
 
@@ -1827,10 +1617,9 @@ export class ReportService {
         undefined,
         fromDate,
         toDate,
+        options,
       );
-      const totalElementoVal = Math.abs(
-        totalElemento.debit - totalElemento.credit,
-      );
+      const totalElementoVal = totalElemento.debit - totalElemento.credit;
 
       ws.getCell(`A${currentRow}`).value = elemento.elementCode;
       ws.getCell(`B${currentRow}`).value = elemento.elementName;
@@ -1838,13 +1627,9 @@ export class ReportService {
       currentRow++;
 
       // Obtener subelementos de este elemento
-      const subelementosQuery = this.voucherLineRepo
-        .createQueryBuilder('vl')
+      const subelementosQuery = this.voucherLinesQuery(companyId, options)
         .select('vl.subelement', 'subelementCode')
         .addSelect('vl.subelement_name', 'subelementName')
-        .innerJoin('vl.voucher', 'v')
-        .where('v.companyId = :companyId', { companyId })
-        .andWhere('v.status = :status', { status: 'posted' })
         .andWhere('vl.element = :elementCode', {
           elementCode: elemento.elementCode,
         })
@@ -1863,10 +1648,10 @@ export class ReportService {
           subelemento.subelementCode,
           fromDate,
           toDate,
+          options,
         );
-        const totalSubelementoVal = Math.abs(
-          totalSubelemento.debit - totalSubelemento.credit,
-        );
+        const totalSubelementoVal =
+          totalSubelemento.debit - totalSubelemento.credit;
         ws.getCell(`B${currentRow}`).value = subelemento.subelementCode;
         ws.getCell(`C${currentRow}`).value = subelemento.subelementName;
         ws.getCell(`D${currentRow}`).value = totalSubelementoVal;
@@ -2011,32 +1796,36 @@ export class ReportService {
     }).format(value);
   }
 
-  private async getAccountRangeBalance(
-    companyId: number,
+  /**
+   * Expresión SQL con la cuenta de mayor de una partida. Los asientos antiguos
+   * guardan la subcuenta analítica en `account_code` (`405-0060`), por lo que
+   * hay que descartar el sufijo antes de compararla con un rango numérico.
+   */
+  private static readonly LEDGER_CODE_SQL =
+    "SPLIT_PART(vl.account_code, '-', 1)";
+
+  /**
+   * Traduce una lista de rangos (`'405-415'`) o códigos sueltos (`'154'`) en un
+   * predicado SQL sobre la columna indicada.
+   */
+  private applyCodeRanges(
+    qb: SelectQueryBuilder<any>,
     codeRanges: string[],
-    asOfDate?: string,
-  ): Promise<number> {
-    const qb = this.voucherLineRepo
-      .createQueryBuilder('vl')
-      .select('SUM(vl.debit) - SUM(vl.credit)', 'balance')
-      .innerJoin('vl.voucher', 'v')
-      .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' });
-
-    if (asOfDate) qb.andWhere('v.date <= :asOfDate', { asOfDate });
-
+    column: string = ReportService.LEDGER_CODE_SQL,
+  ): void {
     const conditions: string[] = [];
     const params: Record<string, any> = {};
+
     codeRanges.forEach((range, i) => {
       const parts = range.split('-').map((s) => s.trim());
       if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
         conditions.push(
-          `(vl.account_code ~ '^[0-9]+$' AND CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
+          `(${column} ~ '^[0-9]+$' AND CAST(${column} AS INTEGER) >= :from${i} AND CAST(${column} AS INTEGER) <= :to${i})`,
         );
         params[`from${i}`] = parseInt(parts[0], 10);
         params[`to${i}`] = parseInt(parts[1], 10);
       } else {
-        conditions.push(`vl.account_code = :code${i}`);
+        conditions.push(`${column} = :code${i}`);
         params[`code${i}`] = range.trim();
       }
     });
@@ -2044,22 +1833,62 @@ export class ReportService {
     if (conditions.length > 0) {
       qb.andWhere(`(${conditions.join(' OR ')})`, params);
     }
+  }
+
+  /**
+   * Consulta base de partidas de una empresa con los filtros de informe
+   * (estado del comprobante y exclusión de asientos de cierre) ya aplicados.
+   */
+  private voucherLinesQuery(
+    companyId: number,
+    options?: ReportOptions,
+  ): SelectQueryBuilder<VoucherLine> {
+    const qb = this.voucherLineRepo
+      .createQueryBuilder('vl')
+      .innerJoin('vl.voucher', 'v')
+      .where('v.companyId = :companyId', { companyId });
+
+    return this.applyVoucherFilters(qb, options);
+  }
+
+  private async getAccountRangeBalance(
+    companyId: number,
+    codeRanges: string[],
+    asOfDate?: string,
+    options?: ReportOptions,
+  ): Promise<number> {
+    const qb = this.voucherLinesQuery(companyId, options).select(
+      'COALESCE(SUM(vl.debit), 0) - COALESCE(SUM(vl.credit), 0)',
+      'balance',
+    );
+
+    if (asOfDate) qb.andWhere('v.date <= :asOfDate', { asOfDate });
+    this.applyCodeRanges(qb, codeRanges);
 
     const result = await qb.getRawOne();
     return Number(result?.balance || 0);
   }
 
+  /**
+   * Saldo de un rango de cuentas acreedoras, expresado en positivo.
+   *
+   * Se invierte el signo en lugar de tomar el valor absoluto: así un pasivo o
+   * patrimonio con saldo deudor —indicio de un asiento mal registrado— se
+   * presenta en negativo y queda visible, en vez de enmascararse.
+   */
   private async getAccountRangeBalanceCredit(
     companyId: number,
     codeRanges: string[],
     asOfDate?: string,
+    options?: ReportOptions,
   ): Promise<number> {
     const balance = await this.getAccountRangeBalance(
       companyId,
       codeRanges,
       asOfDate,
+      options,
     );
-    return Math.abs(balance);
+    return -balance;
   }
 
   private async getAccountRangePeriodAmount(
@@ -2067,37 +1896,15 @@ export class ReportService {
     codeRanges: string[],
     fromDate?: string,
     toDate?: string,
+    options?: ReportOptions,
   ): Promise<{ debit: number; credit: number }> {
-    const qb = this.voucherLineRepo
-      .createQueryBuilder('vl')
+    const qb = this.voucherLinesQuery(companyId, options)
       .select('COALESCE(SUM(vl.debit), 0)', 'totalDebit')
-      .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit')
-      .innerJoin('vl.voucher', 'v')
-      .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' });
+      .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit');
 
     if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
     if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
-
-    const conditions: string[] = [];
-    const params: Record<string, any> = {};
-    codeRanges.forEach((range, i) => {
-      const parts = range.split('-').map((s) => s.trim());
-      if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
-        conditions.push(
-          `(vl.account_code ~ '^[0-9]+$' AND CAST(vl.account_code AS INTEGER) >= :from${i} AND CAST(vl.account_code AS INTEGER) <= :to${i})`,
-        );
-        params[`from${i}`] = parseInt(parts[0], 10);
-        params[`to${i}`] = parseInt(parts[1], 10);
-      } else {
-        conditions.push(`vl.account_code = :code${i}`);
-        params[`code${i}`] = range.trim();
-      }
-    });
-
-    if (conditions.length > 0) {
-      qb.andWhere(`(${conditions.join(' OR ')})`, params);
-    }
+    this.applyCodeRanges(qb, codeRanges);
 
     const result = await qb.getRawOne();
     return {
@@ -2112,14 +1919,11 @@ export class ReportService {
     subelementCode?: string,
     fromDate?: string,
     toDate?: string,
+    options?: ReportOptions,
   ): Promise<{ debit: number; credit: number }> {
-    const qb = this.voucherLineRepo
-      .createQueryBuilder('vl')
+    const qb = this.voucherLinesQuery(companyId, options)
       .select('COALESCE(SUM(vl.debit), 0)', 'totalDebit')
-      .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit')
-      .innerJoin('vl.voucher', 'v')
-      .where('v.companyId = :companyId', { companyId })
-      .andWhere('v.status = :status', { status: 'posted' });
+      .addSelect('COALESCE(SUM(vl.credit), 0)', 'totalCredit');
 
     if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
     if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
@@ -2131,6 +1935,75 @@ export class ReportService {
     return {
       debit: Number(result?.totalDebit || 0),
       credit: Number(result?.totalCredit || 0),
+    };
+  }
+
+  /**
+   * Gasto del período agrupado por rangos de subelemento del nomenclador
+   * (`'50100'`, `'80040-80044'`…). Es la fuente correcta para el modelo 5924,
+   * que se estructura por subelementos de gasto y no por cuentas de mayor.
+   */
+  private async getSubelementRangeAmount(
+    companyId: number,
+    subelementRanges: string[],
+    fromDate?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ): Promise<number> {
+    const qb = this.voucherLinesQuery(companyId, options).select(
+      'COALESCE(SUM(vl.debit), 0) - COALESCE(SUM(vl.credit), 0)',
+      'total',
+    );
+
+    if (fromDate) qb.andWhere('v.date >= :fromDate', { fromDate });
+    if (toDate) qb.andWhere('v.date <= :toDate', { toDate });
+    this.applyCodeRanges(qb, subelementRanges, 'vl.subelement');
+
+    const result = await qb.getRawOne();
+    return Number(result?.total || 0);
+  }
+
+  /**
+   * Encabezado común de los modelos SIEN con los datos reales de la empresa.
+   * El código de centro informante se toma del NIT registrado.
+   */
+  private async sienHeader(
+    companyId: number,
+    date: string,
+  ): Promise<{
+    informeCorrespondiente: string;
+    codigoCentroInformante: string;
+    centroInformante: string;
+    fechaDia: string;
+    fechaMes: string;
+    fechaAnio: string;
+  }> {
+    const company = await this.companyRepo.findOne({
+      where: { id: companyId },
+    });
+    const monthNames = [
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre',
+    ];
+    const d = new Date(date);
+
+    return {
+      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      codigoCentroInformante: company?.taxId ?? '',
+      centroInformante: company?.name ?? '',
+      fechaDia: d.getDate().toString(),
+      fechaMes: (d.getMonth() + 1).toString(),
+      fechaAnio: d.getFullYear().toString(),
     };
   }
 
@@ -2193,64 +2066,73 @@ export class ReportService {
   // ── PDF MODELO 5920 DATA ──
   // ══════════════════════════════════════════════════════════
 
-  async getEfe5920Data(companyId: number, asOfDate?: string): Promise<Efe5920Data> {
+  async getEfe5920Data(
+    companyId: number,
+    asOfDate?: string,
+    options?: ReportOptions,
+  ): Promise<Efe5920Data> {
     const today = new Date().toISOString().split('T')[0];
     const date = asOfDate || today;
-    
+    const balance = (codes: string[]) =>
+      this.getAccountRangeBalance(companyId, codes, date, options);
+    const balanceCredit = (codes: string[]) =>
+      this.getAccountRangeBalanceCredit(companyId, codes, date, options);
+
     // ACTIVO
-    const efectivoCaja = await this.getAccountRangeBalance(companyId, ['101-108'], date);
-    const efectivoBanco = await this.getAccountRangeBalance(companyId, ['109-119'], date);
-    const cxcCorto = await this.getAccountRangeBalance(companyId, ['135-139', '154'], date);
-    const pagosAnticipadosSumin = await this.getAccountRangeBalance(companyId, ['146-149'], date);
-    const adeudosPresupuesto = await this.getAccountRangeBalance(companyId, ['164-166'], date);
-    const materiasPrimas = await this.getAccountRangeBalance(companyId, ['183'], date);
-    const utilesHerramientas = await this.getAccountRangeBalance(companyId, ['187'], date);
-    const alimentos = await this.getAccountRangeBalance(companyId, ['193'], date);
-    const aftTangibles = await this.getAccountRangeBalance(companyId, ['240-251'], date);
-    const depreciacionAft = await this.getAccountRangeBalanceCredit(companyId, ['375-388'], date);
-    const gastosDeficit = await this.getAccountRangeBalance(companyId, ['312'], date);
-    const cxcDiversas = await this.getAccountRangeBalance(companyId, ['334-341'], date);
-    
+    const efectivoCaja = await balance(['101-108']);
+    const efectivoBanco = await balance(['109-119']);
+    const cxcCorto = await balance(['135-139', '154']);
+    const pagosAnticipadosSumin = await balance(['146-149']);
+    const adeudosPresupuesto = await balance(['164-166']);
+    const materiasPrimas = await balance(['183']);
+    const utilesHerramientas = await balance(['187']);
+    const alimentos = await balance(['193']);
+    const aftTangibles = await balance(['240-251']);
+    const depreciacionAft = await balanceCredit(['375-388']);
+    const gastosDeficit = await balance(['312']);
+    const cxcDiversas = await balance(['334-341']);
+
     // PASIVO
-    const cxpCorto = await this.getAccountRangeBalanceCredit(companyId, ['405-415'], date);
-    const dividendosXPagar = await this.getAccountRangeBalanceCredit(companyId, ['417'], date);
-    const obligacionesPresupuesto = await this.getAccountRangeBalanceCredit(companyId, ['440-449'], date);
-    const nominasXPagar = await this.getAccountRangeBalanceCredit(companyId, ['455-459'], date);
-    const gastosAcumuladosXPagar = await this.getAccountRangeBalanceCredit(companyId, ['480-489'], date);
-    const provisionVacaciones = await this.getAccountRangeBalanceCredit(companyId, ['492'], date);
-    const provisionSeguridadSocial = await this.getAccountRangeBalanceCredit(companyId, ['500'], date);
-    const cuentasXPagarDiversas = await this.getAccountRangeBalanceCredit(companyId, ['565-569'], date);
-    
+    const cxpCorto = await balanceCredit(['405-415']);
+    const dividendosXPagar = await balanceCredit(['417']);
+    const obligacionesPresupuesto = await balanceCredit(['440-449']);
+    const nominasXPagar = await balanceCredit(['455-459']);
+    const gastosAcumuladosXPagar = await balanceCredit(['480-489']);
+    const provisionVacaciones = await balanceCredit(['492']);
+    const provisionSeguridadSocial = await balanceCredit(['500']);
+    const cuentasXPagarDiversas = await balanceCredit(['565-569']);
+
     // PATRIMONIO
-    const inversionEstatal = await this.getAccountRangeBalanceCredit(companyId, ['600-612'], date);
-    const reservasContingencias = await this.getAccountRangeBalanceCredit(companyId, ['645'], date);
-    const otrasReservas = await this.getAccountRangeBalanceCredit(companyId, ['646-654'], date);
-    const pagoUtilidades = await this.getAccountRangeBalanceCredit(companyId, ['690'], date);
-    const pagoDividendos = await this.getAccountRangeBalanceCredit(companyId, ['691'], date);
-    
+    const inversionEstatal = await balanceCredit(['600-612']);
+    const reservasContingencias = await balanceCredit(['645']);
+    const otrasReservas = await balanceCredit(['646-654']);
+    const pagoUtilidades = await balanceCredit(['690']);
+    const pagoDividendos = await balanceCredit(['691']);
+
     // TOTALES
     const totalInventarios = materiasPrimas + utilesHerramientas + alimentos;
     const activosCirculantes = efectivoCaja + efectivoBanco + cxcCorto + pagosAnticipadosSumin + adeudosPresupuesto + totalInventarios;
     const activosFijos = aftTangibles - depreciacionAft;
-    const activosDiferidos = gastosDeficit + cxcDiversas;
-    const totalActivo = activosCirculantes + activosFijos + gastosDeficit + activosDiferidos;
-    
+    // El modelo separa dos epígrafes: "Activos Diferidos", cuyo detalle son los
+    // gastos y faltantes diferidos, y "Otros Activos", cuyo detalle son las
+    // cuentas por cobrar diversas. Antes se sumaban ambos en `activosDiferidos`
+    // y además `gastosDeficit` se contaba una segunda vez en el total.
+    const activosDiferidos = gastosDeficit;
+    const otrosActivos = cxcDiversas;
+    const totalActivo =
+      activosCirculantes + activosFijos + activosDiferidos + otrosActivos;
+
     const pasivosCirculantes = cxpCorto + dividendosXPagar + obligacionesPresupuesto + nominasXPagar + gastosAcumuladosXPagar + provisionVacaciones + provisionSeguridadSocial;
     const otrosPasivos = cuentasXPagarDiversas;
     const totalPasivo = pasivosCirculantes + otrosPasivos;
-    
+
     const totalPatrimonio = inversionEstatal + reservasContingencias + otrasReservas + pagoUtilidades + pagoDividendos;
     const resultadoPeriodo = totalActivo - (totalPasivo + totalPatrimonio);
     const totalPasivoYPatrimonio = totalPasivo + totalPatrimonio + resultadoPeriodo;
-    
-    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const d = new Date(date);
-    
+
     return {
-      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
-      codigoCentroInformante: '0001',
-      centroInformante: 'Empresa Demo',
-      
+      ...(await this.sienHeader(companyId, date)),
+
       activos: {
         activosCirculantes: { planAnual: 0, apertura: 0, real: activosCirculantes },
         efectivoCaja: { planAnual: 0, apertura: 0, real: efectivoCaja },
@@ -2267,7 +2149,7 @@ export class ReportService {
         depreciacionAFT: { planAnual: 0, apertura: 0, real: depreciacionAft },
         activosDiferidos: { planAnual: 0, apertura: 0, real: activosDiferidos },
         gastosFaltantesDiferidos: { planAnual: 0, apertura: 0, real: gastosDeficit },
-        otrosActivos: { planAnual: 0, apertura: 0, real: 0 },
+        otrosActivos: { planAnual: 0, apertura: 0, real: otrosActivos },
         cuentasXCobrarDiversas: { planAnual: 0, apertura: 0, real: cxcDiversas },
         totalActivo: { planAnual: 0, apertura: 0, real: totalActivo },
       },
@@ -2296,222 +2178,191 @@ export class ReportService {
         totalPatrimonio: { planAnual: 0, apertura: 0, real: totalPatrimonio },
         totalPasivoYPatrimonio: { planAnual: 0, apertura: 0, real: totalPasivoYPatrimonio },
       },
-      
+
       hechoNombre: '',
       aprobadoNombre: '',
-      fechaDia: d.getDate().toString(),
-      fechaMes: (d.getMonth() + 1).toString(),
-      fechaAnio: d.getFullYear().toString(),
       observaciones: '',
     };
   }
 
-  async getEfe5921Data(companyId: number, fromDate?: string, toDate?: string): Promise<Efe5921Data> {
+  async getEfe5921Data(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ): Promise<Efe5921Data> {
     const today = new Date().toISOString().split('T')[0];
     const fd = fromDate || today;
     const td = toDate || today;
-    
-    // INGRESOS
-    const ventasBienes = await this.getAccountRangePeriodAmount(companyId, ['400-404'], fd, td);
-    const ingresosFinancieras = await this.getAccountRangePeriodAmount(companyId, ['405-409'], fd, td);
-    const ingresosFinancierasPresup = await this.getAccountRangePeriodAmount(companyId, ['410-414'], fd, td);
-    const ingresosSubvenciones = await this.getAccountRangePeriodAmount(companyId, ['415-419'], fd, td);
-    const otrosIngresosOper = await this.getAccountRangePeriodAmount(companyId, ['420-424'], fd, td);
-    
-    const ingresosOperacionales = ventasBienes.credit + ingresosFinancieras.credit + ingresosFinancierasPresup.credit + ingresosSubvenciones.credit + otrosIngresosOper.credit;
-    
-    // GASTOS
-    const costoVentas = await this.getAccountRangePeriodAmount(companyId, ['500-504'], fd, td);
-    const gastosPersonal = await this.getAccountRangePeriodAmount(companyId, ['505-509'], fd, td);
-    const gastosSuministros = await this.getAccountRangePeriodAmount(companyId, ['510-514'], fd, td);
-    const gastosActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['515-519'], fd, td);
-    const otrosGastosOper = await this.getAccountRangePeriodAmount(companyId, ['520-524'], fd, td);
-    
-    const gastosOperacionales = costoVentas.debit + gastosPersonal.debit + gastosSuministros.debit + gastosActivosFijos.debit + otrosGastosOper.debit;
-    
-    // NO OPERACIONALES
-    const ventaActivosFijosIng = await this.getAccountRangePeriodAmount(companyId, ['525-529'], fd, td);
-    const otrosIngresosNoOper = await this.getAccountRangePeriodAmount(companyId, ['530-534'], fd, td);
-    const ventaActivosFijosGastos = await this.getAccountRangePeriodAmount(companyId, ['535-539'], fd, td);
-    const otrosGastosNoOper = await this.getAccountRangePeriodAmount(companyId, ['540-544'], fd, td);
-    
-    const ingresosNoOperacionales = ventaActivosFijosIng.credit + otrosIngresosNoOper.credit;
-    const gastosNoOperacionales = ventaActivosFijosGastos.debit + otrosGastosNoOper.debit;
-    
-    // RESULTADOS
-    const resultadoOperacional = ingresosOperacionales - gastosOperacionales;
-    const resultadoAntesImpuestos = resultadoOperacional + ingresosNoOperacionales - gastosNoOperacionales;
-    const impuestoRenta = Math.max(0, resultadoAntesImpuestos * 0.25); // 25% estimado
-    const resultadoNeto = resultadoAntesImpuestos - impuestoRenta;
-    
-    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const d = new Date(fd);
-    
+    const amount = (codes: string[]) =>
+      this.getAccountRangePeriodAmount(companyId, codes, fd, td, options);
+
+    /** Saldo neto deudor de un rango de cuentas de gasto. */
+    const debitOf = async (codes: string[]) => {
+      const r = await amount(codes);
+      return r.debit - r.credit;
+    };
+    /** Saldo neto acreedor de un rango de cuentas de ingreso. */
+    const creditOf = async (codes: string[]) => {
+      const r = await amount(codes);
+      return r.credit - r.debit;
+    };
+
+    // Los rangos de cada línea los rotula el propio formulario oficial en la
+    // columna de indicadores ("Ventas (900-913)", "Gastos Financieros
+    // (835-838)"…) y coinciden uno a uno con el nomenclador, así que no deben
+    // alterarse. La versión anterior usaba rangos inventados que además
+    // mezclaban conceptos: 930-934 se rotulaba "subvenciones" cuando son
+    // Ingresos por Sobrantes, 820-821 se rotulaba "gastos de personal" cuando
+    // son Gastos de Distribución y Ventas, y 945-949 no contiene ninguna
+    // cuenta del nomenclador.
+    const ventas = await creditOf(['900-913']);
+    const impuestoVentas = await debitOf(['805-809']);
+    const costoVentasProduccion = await debitOf(['810-813']);
+    const gastosGeneralesAdministracion = await debitOf(['822-824']);
+    const gastosOperacion = await debitOf(['826-833']);
+    const gastosFinancieros = await debitOf(['835-838']);
+    const gastosPerdidas = await debitOf(['845-848']);
+    const gastosPerdidasDesastres = await debitOf(['849']);
+    const otrosImpuestosTasas = await debitOf(['855-864']);
+    const otrosGastos = await debitOf(['865-866']);
+    const gastosRecuperacionDesastres = await debitOf(['873']);
+    const ingresosFinancieros = await creditOf(['920-922']);
+    const otrosIngresos = await creditOf(['950-952']);
+
+    // Subtotales, calculados igual que las fórmulas de la plantilla oficial.
+    const ventasNetas = ventas - impuestoVentas;
+    const utilidadBrutaVentas = ventasNetas - costoVentasProduccion;
+    const utilidadNetaVentas = utilidadBrutaVentas;
+    // La plantilla define esta fila como "Utilidad Neta en Ventas menos Gastos
+    // de Operación", sin restar los Gastos Generales y de Administración. Se
+    // reproduce tal cual para no separarse del modelo oficial.
+    const utilidadOperaciones = utilidadNetaVentas - gastosOperacion;
+    const utilidadAntesImpuesto =
+      utilidadOperaciones -
+      gastosFinancieros -
+      gastosPerdidas -
+      gastosPerdidasDesastres -
+      otrosImpuestosTasas -
+      otrosGastos -
+      gastosRecuperacionDesastres +
+      ingresosFinancieros +
+      otrosIngresos;
+
+    // El plan anual y la apertura no se registran todavía en el sistema.
+    const linea = (real: number) => ({ planAnual: 0, apertura: 0, real });
+
     return {
-      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
-      codigoCentroInformante: '0001',
-      centroInformante: 'Empresa Demo',
-      
-      ingresos: {
-        ingresosOperacionales: { planAnual: 0, apertura: 0, real: ingresosOperacionales },
-        ventasBienesServicios: { planAnual: 0, apertura: 0, real: ventasBienes.credit },
-        ingresosActividadesFinancieras: { planAnual: 0, apertura: 0, real: ingresosFinancieras.credit },
-        ingresosFinancierasPresupuesto: { planAnual: 0, apertura: 0, real: ingresosFinancierasPresup.credit },
-        ingresosSubvenciones: { planAnual: 0, apertura: 0, real: ingresosSubvenciones.credit },
-        otrosIngresosOperacionales: { planAnual: 0, apertura: 0, real: otrosIngresosOper.credit },
+      ...(await this.sienHeader(companyId, fd)),
+
+      lineas: {
+        ventas: linea(ventas),
+        impuestoVentas: linea(impuestoVentas),
+        ventasNetas: linea(ventasNetas),
+        costoVentasProduccion: linea(costoVentasProduccion),
+        utilidadBrutaVentas: linea(utilidadBrutaVentas),
+        utilidadNetaVentas: linea(utilidadNetaVentas),
+        gastosGeneralesAdministracion: linea(gastosGeneralesAdministracion),
+        gastosOperacion: linea(gastosOperacion),
+        utilidadOperaciones: linea(utilidadOperaciones),
+        gastosFinancieros: linea(gastosFinancieros),
+        gastosPerdidas: linea(gastosPerdidas),
+        gastosPerdidasDesastres: linea(gastosPerdidasDesastres),
+        otrosImpuestosTasas: linea(otrosImpuestosTasas),
+        otrosGastos: linea(otrosGastos),
+        gastosRecuperacionDesastres: linea(gastosRecuperacionDesastres),
+        ingresosFinancieros: linea(ingresosFinancieros),
+        otrosIngresos: linea(otrosIngresos),
+        utilidadAntesImpuesto: linea(utilidadAntesImpuesto),
       },
-      
-      gastos: {
-        gastosOperacionales: { planAnual: 0, apertura: 0, real: gastosOperacionales },
-        costoVentas: { planAnual: 0, apertura: 0, real: costoVentas.debit },
-        gastosPersonal: { planAnual: 0, apertura: 0, real: gastosPersonal.debit },
-        gastosSuministrosServicios: { planAnual: 0, apertura: 0, real: gastosSuministros.debit },
-        gastosActivosFijos: { planAnual: 0, apertura: 0, real: gastosActivosFijos.debit },
-        otrosGastosOperacionales: { planAnual: 0, apertura: 0, real: otrosGastosOper.debit },
-      },
-      
-      ingresosNoOperacionales: {
-        ingresosNoOperacionales: { planAnual: 0, apertura: 0, real: ingresosNoOperacionales },
-        ventaActivosFijos: { planAnual: 0, apertura: 0, real: ventaActivosFijosIng.credit },
-        otrosIngresosNoOperacionales: { planAnual: 0, apertura: 0, real: otrosIngresosNoOper.credit },
-      },
-      
-      gastosNoOperacionales: {
-        gastosNoOperacionales: { planAnual: 0, apertura: 0, real: gastosNoOperacionales },
-        ventaActivosFijosGastos: { planAnual: 0, apertura: 0, real: ventaActivosFijosGastos.debit },
-        otrosGastosNoOperacionales: { planAnual: 0, apertura: 0, real: otrosGastosNoOper.debit },
-      },
-      
-      resultado: {
-        resultadoOperacional: { planAnual: 0, apertura: 0, real: resultadoOperacional },
-        resultadoAntesImpuestos: { planAnual: 0, apertura: 0, real: resultadoAntesImpuestos },
-        impuestoRenta: { planAnual: 0, apertura: 0, real: impuestoRenta },
-        resultadoNeto: { planAnual: 0, apertura: 0, real: resultadoNeto },
-      },
-      
+
       hechoNombre: '',
       aprobadoNombre: '',
-      fechaDia: d.getDate().toString(),
-      fechaMes: (d.getMonth() + 1).toString(),
-      fechaAnio: d.getFullYear().toString(),
       observaciones: '',
     };
   }
 
-  async getEfe5924Data(companyId: number, fromDate?: string, toDate?: string): Promise<Efe5924Data> {
+  async getEfe5924Data(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ): Promise<Efe5924Data> {
     const today = new Date().toISOString().split('T')[0];
     const fd = fromDate || today;
     const td = toDate || today;
-    
-    // GASTOS POR SUBELEMENTOS (usando rangos de cuentas representativos)
-    const salarios = await this.getAccountRangePeriodAmount(companyId, ['505'], fd, td);
-    const horasExtra = await this.getAccountRangePeriodAmount(companyId, ['506'], fd, td);
-    const seguridadSocial = await this.getAccountRangePeriodAmount(companyId, ['507'], fd, td);
-    const materiasPrimas = await this.getAccountRangePeriodAmount(companyId, ['183'], fd, td);
-    const materialesConstruccion = await this.getAccountRangePeriodAmount(companyId, ['184'], fd, td);
-    const suministrosOficina = await this.getAccountRangePeriodAmount(companyId, ['185'], fd, td);
-    const serviciosBasicos = await this.getAccountRangePeriodAmount(companyId, ['510'], fd, td);
-    const mantenimiento = await this.getAccountRangePeriodAmount(companyId, ['511'], fd, td);
-    const serviciosProfesionales = await this.getAccountRangePeriodAmount(companyId, ['512'], fd, td);
-    const depreciacion = await this.getAccountRangePeriodAmount(companyId, ['375'], fd, td);
-    const amortizacion = await this.getAccountRangePeriodAmount(companyId, ['376'], fd, td);
-    const gastosRepresentacion = await this.getAccountRangePeriodAmount(companyId, ['513'], fd, td);
-    const gastosTransporte = await this.getAccountRangePeriodAmount(companyId, ['514'], fd, td);
-    const gastosComunicacion = await this.getAccountRangePeriodAmount(companyId, ['515'], fd, td);
-    
-    // Calcular totales y porcentajes
-    const gastos = [
-      salarios.debit, horasExtra.debit, seguridadSocial.debit,
-      materiasPrimas.debit, materialesConstruccion.debit, suministrosOficina.debit,
-      serviciosBasicos.debit, mantenimiento.debit, serviciosProfesionales.debit,
-      depreciacion.debit, amortizacion.debit, gastosRepresentacion.debit,
-      gastosTransporte.debit, gastosComunicacion.debit
-    ];
-    
-    const totalReal = gastos.reduce((sum, val) => sum + val, 0);
-    const totalPlanAnual = totalReal; // Mismo valor para simplificar
-    const totalApertura = totalReal; // Mismo valor para simplificar
-    
-    const calcPorc = (value: number) => totalReal > 0 ? (value / totalReal) * 100 : 0;
-    
-    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const d = new Date(fd);
-    
+    const sub = (ranges: string[]) =>
+      this.getSubelementRangeAmount(companyId, ranges, fd, td, options);
+
+    // El modelo se estructura por subelementos de gasto, no por cuentas de
+    // mayor. Los rangos anteriores apuntaban a cuentas de pasivo (505-515) y de
+    // inventario (183-185), de modo que el informe no medía gasto alguno.
+    const salarios = await sub(['50100']);
+    const horasExtra = await sub(['50200', '50500']);
+    const seguridadSocial = await sub(['50300', '50400']);
+    const materiasPrimas = await sub(['11101-11109']);
+    const materialesConstruccion = await sub(['11110-11119']);
+    const suministrosOficina = await sub(['11150-11200']);
+    const serviciosBasicos = await sub(['40100-40200', '80051', '80052']);
+    const mantenimiento = await sub(['80040-80044']);
+    const serviciosProfesionales = await sub(['80060-80066']);
+    const depreciacion = await sub(['70100']);
+    const amortizacion = await sub(['70200']);
+    const gastosRepresentacion = await sub(['80010-80014']);
+    const gastosTransporte = await sub(['30101-30140', '80055']);
+    const gastosComunicacion = await sub(['80054']);
+
+    const totalReal = [
+      salarios, horasExtra, seguridadSocial,
+      materiasPrimas, materialesConstruccion, suministrosOficina,
+      serviciosBasicos, mantenimiento, serviciosProfesionales,
+      depreciacion, amortizacion, gastosRepresentacion,
+      gastosTransporte, gastosComunicacion,
+    ].reduce((sum, val) => sum + val, 0);
+
+    const porcReal = (value: number) =>
+      totalReal > 0 ? (value / totalReal) * 100 : 0;
+
+    // El plan anual y la apertura no se registran todavía en el sistema, por lo
+    // que se dejan en cero. Antes se rellenaban con porcentajes inventados
+    // sobre el total real, lo que daba la apariencia de un plan inexistente.
+    const partida = (real: number) => ({
+      planAnual: 0,
+      apertura: 0,
+      real,
+      porcPlan: 0,
+      porcApertura: 0,
+      porcReal: porcReal(real),
+    });
+
     return {
-      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
-      codigoCentroInformante: '0001',
-      centroInformante: 'Empresa Demo',
-      
+      ...(await this.sienHeader(companyId, fd)),
+
       gastos: {
-        salariosSueldos: {
-          planAnual: totalPlanAnual * 0.25, apertura: totalApertura * 0.25, real: salarios.debit,
-          porcPlan: 25, porcApertura: 25, porcReal: calcPorc(salarios.debit),
-        },
-        horasExtraordinarias: {
-          planAnual: totalPlanAnual * 0.05, apertura: totalApertura * 0.05, real: horasExtra.debit,
-          porcPlan: 5, porcApertura: 5, porcReal: calcPorc(horasExtra.debit),
-        },
-        seguridadSocial: {
-          planAnual: totalPlanAnual * 0.15, apertura: totalApertura * 0.15, real: seguridadSocial.debit,
-          porcPlan: 15, porcApertura: 15, porcReal: calcPorc(seguridadSocial.debit),
-        },
-        materiasPrimas: {
-          planAnual: totalPlanAnual * 0.10, apertura: totalApertura * 0.10, real: materiasPrimas.debit,
-          porcPlan: 10, porcApertura: 10, porcReal: calcPorc(materiasPrimas.debit),
-        },
-        materialesConstruccion: {
-          planAnual: totalPlanAnual * 0.08, apertura: totalApertura * 0.08, real: materialesConstruccion.debit,
-          porcPlan: 8, porcApertura: 8, porcReal: calcPorc(materialesConstruccion.debit),
-        },
-        suministrosOficina: {
-          planAnual: totalPlanAnual * 0.05, apertura: totalApertura * 0.05, real: suministrosOficina.debit,
-          porcPlan: 5, porcApertura: 5, porcReal: calcPorc(suministrosOficina.debit),
-        },
-        serviciosBasicos: {
-          planAnual: totalPlanAnual * 0.07, apertura: totalApertura * 0.07, real: serviciosBasicos.debit,
-          porcPlan: 7, porcApertura: 7, porcReal: calcPorc(serviciosBasicos.debit),
-        },
-        mantenimientoReparaciones: {
-          planAnual: totalPlanAnual * 0.06, apertura: totalApertura * 0.06, real: mantenimiento.debit,
-          porcPlan: 6, porcApertura: 6, porcReal: calcPorc(mantenimiento.debit),
-        },
-        serviciosProfesionales: {
-          planAnual: totalPlanAnual * 0.04, apertura: totalApertura * 0.04, real: serviciosProfesionales.debit,
-          porcPlan: 4, porcApertura: 4, porcReal: calcPorc(serviciosProfesionales.debit),
-        },
-        depreciacionActivosFijos: {
-          planAnual: totalPlanAnual * 0.08, apertura: totalApertura * 0.08, real: depreciacion.debit,
-          porcPlan: 8, porcApertura: 8, porcReal: calcPorc(depreciacion.debit),
-        },
-        amortizacionActivosIntangibles: {
-          planAnual: totalPlanAnual * 0.02, apertura: totalApertura * 0.02, real: amortizacion.debit,
-          porcPlan: 2, porcApertura: 2, porcReal: calcPorc(amortizacion.debit),
-        },
-        gastosRepresentacion: {
-          planAnual: totalPlanAnual * 0.03, apertura: totalApertura * 0.03, real: gastosRepresentacion.debit,
-          porcPlan: 3, porcApertura: 3, porcReal: calcPorc(gastosRepresentacion.debit),
-        },
-        gastosTransporte: {
-          planAnual: totalPlanAnual * 0.04, apertura: totalApertura * 0.04, real: gastosTransporte.debit,
-          porcPlan: 4, porcApertura: 4, porcReal: calcPorc(gastosTransporte.debit),
-        },
-        gastosComunicacion: {
-          planAnual: totalPlanAnual * 0.03, apertura: totalApertura * 0.03, real: gastosComunicacion.debit,
-          porcPlan: 3, porcApertura: 3, porcReal: calcPorc(gastosComunicacion.debit),
-        },
+        salariosSueldos: partida(salarios),
+        horasExtraordinarias: partida(horasExtra),
+        seguridadSocial: partida(seguridadSocial),
+        materiasPrimas: partida(materiasPrimas),
+        materialesConstruccion: partida(materialesConstruccion),
+        suministrosOficina: partida(suministrosOficina),
+        serviciosBasicos: partida(serviciosBasicos),
+        mantenimientoReparaciones: partida(mantenimiento),
+        serviciosProfesionales: partida(serviciosProfesionales),
+        depreciacionActivosFijos: partida(depreciacion),
+        amortizacionActivosIntangibles: partida(amortizacion),
+        gastosRepresentacion: partida(gastosRepresentacion),
+        gastosTransporte: partida(gastosTransporte),
+        gastosComunicacion: partida(gastosComunicacion),
       },
-      
+
       totales: {
-        planAnual: totalPlanAnual,
-        apertura: totalApertura,
+        planAnual: 0,
+        apertura: 0,
         real: totalReal,
       },
-      
+
       hechoNombre: '',
       aprobadoNombre: '',
-      fechaDia: d.getDate().toString(),
-      fechaMes: (d.getMonth() + 1).toString(),
-      fechaAnio: d.getFullYear().toString(),
       observaciones: '',
     };
   }
@@ -2520,51 +2371,54 @@ export class ReportService {
   // ── MODELO SIEN 5922 - BALANCE GENERAL ──
   // ══════════════════════════════════════════════════════════
 
-  async getEfe5922Data(companyId: number, asOfDate?: string): Promise<Efe5922Data> {
+  async getEfe5922Data(
+    companyId: number,
+    asOfDate?: string,
+    options?: ReportOptions,
+  ): Promise<Efe5922Data> {
     const today = new Date().toISOString().split('T')[0];
     const date = asOfDate || today;
+    const balance = (codes: string[]) =>
+      this.getAccountRangeBalance(companyId, codes, date, options);
+    const balanceCredit = (codes: string[]) =>
+      this.getAccountRangeBalanceCredit(companyId, codes, date, options);
 
     // ACTIVOS CORRIENTES
-    const efectivo = await this.getAccountRangeBalance(companyId, ['101-119'], date);
-    const cuentasXCobrar = await this.getAccountRangeBalance(companyId, ['135-139', '154', '164-166', '173-180', '334-341'], date);
-    const inventarios = await this.getAccountRangeBalance(companyId, ['183-195'], date);
-    const pagosAnticipados = await this.getAccountRangeBalance(companyId, ['146-149'], date);
+    const efectivo = await balance(['101-119']);
+    const cuentasXCobrar = await balance(['135-139', '154', '164-166', '173-180', '334-341']);
+    const inventarios = await balance(['183-195']);
+    const pagosAnticipados = await balance(['146-149']);
     const totalActivosCorrientes = efectivo + cuentasXCobrar + inventarios + pagosAnticipados;
 
     // ACTIVOS NO CORRIENTES
-    const activosFijos = await this.getAccountRangeBalance(companyId, ['240-251'], date);
-    const depreciacionAcumulada = await this.getAccountRangeBalanceCredit(companyId, ['375-388'], date);
-    const activosIntangibles = await this.getAccountRangeBalance(companyId, ['260-270'], date);
-    const otrosActivos = await this.getAccountRangeBalance(companyId, ['300-312'], date);
+    const activosFijos = await balance(['240-251']);
+    const depreciacionAcumulada = await balanceCredit(['375-388']);
+    const activosIntangibles = await balance(['260-270']);
+    const otrosActivos = await balance(['300-312']);
     const totalActivosNoCorrientes = activosFijos - depreciacionAcumulada + activosIntangibles + otrosActivos;
 
     // PASIVOS CORRIENTES
-    const cuentasXPagar = await this.getAccountRangeBalanceCredit(companyId, ['405-415', '565-569'], date);
-    const prestamosCP = await this.getAccountRangeBalanceCredit(companyId, ['420-430'], date);
-    const acumulaciones = await this.getAccountRangeBalanceCredit(companyId, ['455-469', '480-489', '500'], date);
+    const cuentasXPagar = await balanceCredit(['405-415', '565-569']);
+    const prestamosCP = await balanceCredit(['420-430']);
+    const acumulaciones = await balanceCredit(['455-469', '480-489', '500']);
     const totalPasivosCorrientes = cuentasXPagar + prestamosCP + acumulaciones;
 
     // PASIVOS NO CORRIENTES
-    const prestamosLP = await this.getAccountRangeBalanceCredit(companyId, ['510-540'], date);
+    const prestamosLP = await balanceCredit(['510-540']);
     const provisionesLP = 0;
     const totalPasivosNoCorrientes = prestamosLP + provisionesLP;
 
     // PATRIMONIO
-    const capitalSocial = await this.getAccountRangeBalanceCredit(companyId, ['600-612'], date);
-    const reservas = await this.getAccountRangeBalanceCredit(companyId, ['645-654'], date);
-    const resultadosAcumulados = await this.getAccountRangeBalanceCredit(companyId, ['680-689'], date);
+    const capitalSocial = await balanceCredit(['600-612']);
+    const reservas = await balanceCredit(['645-654']);
+    const resultadosAcumulados = await balanceCredit(['680-689']);
     const resultadoPeriodo = (totalActivosCorrientes + totalActivosNoCorrientes) - (totalPasivosCorrientes + totalPasivosNoCorrientes + capitalSocial + reservas + resultadosAcumulados);
     const totalPatrimonio = capitalSocial + reservas + resultadosAcumulados + resultadoPeriodo;
 
     const totalPasivoPatrimonio = totalPasivosCorrientes + totalPasivosNoCorrientes + totalPatrimonio;
 
-    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const d = new Date(date);
-
     return {
-      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
-      codigoCentroInformante: '0001',
-      centroInformante: 'Empresa Demo',
+      ...(await this.sienHeader(companyId, date)),
 
       activosCorrientes: {
         efectivo: { planAnual: 0, apertura: 0, real: efectivo },
@@ -2607,9 +2461,6 @@ export class ReportService {
 
       hechoNombre: '',
       aprobadoNombre: '',
-      fechaDia: d.getDate().toString(),
-      fechaMes: (d.getMonth() + 1).toString(),
-      fechaAnio: d.getFullYear().toString(),
       observaciones: '',
     };
   }
@@ -2618,37 +2469,49 @@ export class ReportService {
   // ── MODELO SIEN 5923 - ESTADO DE RESULTADOS ──
   // ══════════════════════════════════════════════════════════
 
-  async getEfe5923Data(companyId: number, fromDate?: string, toDate?: string): Promise<Efe5923Data> {
+  async getEfe5923Data(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ): Promise<Efe5923Data> {
     const today = new Date().toISOString().split('T')[0];
     const fd = fromDate || today;
     const td = toDate || today;
+    const amount = (codes: string[]) =>
+      this.getAccountRangePeriodAmount(companyId, codes, fd, td, options);
 
     const company = await this.companyRepo.findOne({ where: { id: companyId } });
-    const incomeTaxRate = (company?.incomeTaxRate ?? 35) / 100;
+    const incomeTaxRate = Number(company?.incomeTaxRate ?? 35) / 100;
 
-    // INGRESOS (grupo 50.2 - cuentas nominales acreedoras: 900-913 ventas, 920-953 otros ingresos)
-    const ventasNetas = await this.getAccountRangePeriodAmount(companyId, ['900-913'], fd, td);
-    const otrosIngresos = await this.getAccountRangePeriodAmount(companyId, ['920-953'], fd, td);
+    // INGRESOS (grupo 50.2 - cuentas nominales acreedoras). Los rangos cubren
+    // 900-949 sin huecos: antes se usaba 900-913 y 920-949, con lo que las
+    // ventas de exportación (914-915) y las subvenciones (916-919) quedaban
+    // fuera del informe pese a ser cuentas de ingreso.
+    const ventasNetas = await amount(['900-915']);
+    // Los ingresos extraordinarios (950-953) se presentan aparte más abajo, por
+    // lo que no deben incluirse también aquí.
+    const otrosIngresos = await amount(['916-949']);
     const totalIngresos = ventasNetas.credit + otrosIngresos.credit;
 
     // COSTO DE VENTAS (810-815: costo de ventas de producción/mercancías)
-    const costoMercancias = await this.getAccountRangePeriodAmount(companyId, ['814-815'], fd, td);
-    const costoServicios = await this.getAccountRangePeriodAmount(companyId, ['810-813'], fd, td);
+    const costoMercancias = await amount(['814-815']);
+    const costoServicios = await amount(['810-813']);
     const totalCostoVentas = costoMercancias.debit + costoServicios.debit;
 
     const utilidadBruta = totalIngresos - totalCostoVentas;
 
     // GASTOS OPERATIVOS (50.1 - nominales deudoras)
-    const gastosVentas = await this.getAccountRangePeriodAmount(companyId, ['820-824'], fd, td);
-    const gastosAdministrativos = await this.getAccountRangePeriodAmount(companyId, ['826-834'], fd, td);
-    const gastosFinancieros = await this.getAccountRangePeriodAmount(companyId, ['835-839'], fd, td);
+    const gastosVentas = await amount(['820-824']);
+    const gastosAdministrativos = await amount(['826-834']);
+    const gastosFinancieros = await amount(['835-839']);
     const totalGastosOperativos = gastosVentas.debit + gastosAdministrativos.debit + gastosFinancieros.debit;
 
     const utilidadOperativa = utilidadBruta - totalGastosOperativos;
 
     // OTROS INGRESOS/GASTOS
-    const ingresosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['950-953'], fd, td);
-    const gastosExtraordinarios = await this.getAccountRangePeriodAmount(companyId, ['845-849'], fd, td);
+    const ingresosExtraordinarios = await amount(['950-953']);
+    const gastosExtraordinarios = await amount(['845-849']);
     const totalOtros = ingresosExtraordinarios.credit - gastosExtraordinarios.debit;
 
     const utilidadAntesImpuestos = utilidadOperativa + totalOtros;
@@ -2657,13 +2520,8 @@ export class ReportService {
     const impuestoRenta = utilidadAntesImpuestos > 0 ? utilidadAntesImpuestos * incomeTaxRate : 0;
     const utilidadNeta = utilidadAntesImpuestos - impuestoRenta;
 
-    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const d = new Date(fd);
-
     return {
-      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
-      codigoCentroInformante: '0001',
-      centroInformante: 'Empresa Demo',
+      ...(await this.sienHeader(companyId, fd)),
 
       ingresos: {
         ventasNetas: { planAnual: 0, apertura: 0, real: ventasNetas.credit },
@@ -2702,9 +2560,6 @@ export class ReportService {
 
       hechoNombre: '',
       aprobadoNombre: '',
-      fechaDia: d.getDate().toString(),
-      fechaMes: (d.getMonth() + 1).toString(),
-      fechaAnio: d.getFullYear().toString(),
       observaciones: '',
     };
   }
@@ -2713,43 +2568,64 @@ export class ReportService {
   // ── FLUJO DE EFECTIVO ──
   // ══════════════════════════════════════════════════════════
 
-  async getFlujoEfectivoData(companyId: number, fromDate?: string, toDate?: string): Promise<FlujoEfectivoData> {
+  async getFlujoEfectivoData(
+    companyId: number,
+    fromDate?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ): Promise<FlujoEfectivoData> {
     const today = new Date().toISOString().split('T')[0];
     const fd = fromDate || today;
     const td = toDate || today;
+    const amount = (codes: string[]) =>
+      this.getAccountRangePeriodAmount(companyId, codes, fd, td, options);
 
-    // ACTIVIDADES OPERATIVAS
-    const cobroVentas = await this.getAccountRangePeriodAmount(companyId, ['101-108'], fd, td);
-    const pagoProveedores = await this.getAccountRangePeriodAmount(companyId, ['405-415'], fd, td);
-    const pagoPersonal = await this.getAccountRangePeriodAmount(companyId, ['505-508'], fd, td);
-    const pagoImpuestos = await this.getAccountRangePeriodAmount(companyId, ['440-449'], fd, td);
-    const otrosPagosOperativos = await this.getAccountRangePeriodAmount(companyId, ['510-520'], fd, td);
+    // ACTIVIDADES OPERATIVAS. Los pagos se miden por el débito de las cuentas
+    // por pagar correspondientes, que es la contrapartida de una salida de caja.
+    // Los rangos anteriores para personal (505-508) y otros pagos (510-520)
+    // apuntaban a pasivos a largo plazo, no a las obligaciones que se liquidan.
+    const cobroVentas = await amount(['101-108']);
+    const pagoProveedores = await amount(['405-415']);
+    const pagoPersonal = await amount(['455-459']);
+    const pagoImpuestos = await amount(['440-449']);
+    const otrosPagosOperativos = await amount(['480-489']);
     const flujoNetoOperativo = cobroVentas.debit - pagoProveedores.debit - pagoPersonal.debit - pagoImpuestos.debit - otrosPagosOperativos.debit;
 
     // ACTIVIDADES DE INVERSIÓN
-    const compraActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['240-251'], fd, td);
-    const ventaActivosFijos = await this.getAccountRangePeriodAmount(companyId, ['731-740'], fd, td);
-    const inversionesFinancieras = await this.getAccountRangePeriodAmount(companyId, ['109-119'], fd, td);
-    const flujoNetoInversion = ventaActivosFijos.credit - compraActivosFijos.debit - inversionesFinancieras.debit;
+    const compraActivosFijos = await amount(['240-251']);
+    const inversionesFinancieras = await amount(['109-119']);
+    // El cobro por venta de activos fijos no se puede aislar: el nomenclador no
+    // tiene una cuenta propia para él y el importe cae en "Otros Ingresos"
+    // (950-952) mezclado con conceptos ajenos. El rango que se usaba antes
+    // (731-740) es "Gastos Asociados a la Producción", de modo que el informe
+    // presentaba gastos de producción como si fueran cobros por esta venta.
+    // Se deja en cero hasta que exista una subcuenta específica.
+    const ventaActivosFijos = 0;
+    const flujoNetoInversion = ventaActivosFijos - compraActivosFijos.debit - inversionesFinancieras.debit;
 
-    // ACTIVIDADES DE FINANCIAMIENTO
-    const prestamosRecibidos = await this.getAccountRangePeriodAmount(companyId, ['420-430'], fd, td);
-    const pagoPrestamos = await this.getAccountRangePeriodAmount(companyId, ['420-430'], fd, td);
-    const pagoDividendos = await this.getAccountRangePeriodAmount(companyId, ['691'], fd, td);
-    const aporteCapital = await this.getAccountRangePeriodAmount(companyId, ['600-612'], fd, td);
-    const flujoNetoFinanciamiento = prestamosRecibidos.credit - pagoPrestamos.debit - pagoDividendos.debit + aporteCapital.credit;
+    // ACTIVIDADES DE FINANCIAMIENTO. El mismo rango de préstamos aporta las dos
+    // caras: el crédito es el importe recibido y el débito el amortizado.
+    const prestamos = await amount(['420-430']);
+    const pagoDividendos = await amount(['691']);
+    const aporteCapital = await amount(['600-612']);
+    const flujoNetoFinanciamiento = prestamos.credit - prestamos.debit - pagoDividendos.debit + aporteCapital.credit;
 
     const variacionEfectivo = flujoNetoOperativo + flujoNetoInversion + flujoNetoFinanciamiento;
-    const efectivoInicial = await this.getAccountRangeBalance(companyId, ['101-119'], fd);
+    // El efectivo inicial es el saldo al cierre del día anterior al período: si
+    // se toma `fd` se incluyen los movimientos del propio día de apertura, que
+    // luego se vuelven a contar en la variación.
+    const dayBefore = new Date(fd);
+    dayBefore.setDate(dayBefore.getDate() - 1);
+    const efectivoInicial = await this.getAccountRangeBalance(
+      companyId,
+      ['101-119'],
+      dayBefore.toISOString().split('T')[0],
+      options,
+    );
     const efectivoFinal = efectivoInicial + variacionEfectivo;
 
-    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const d = new Date(fd);
-
     return {
-      informeCorrespondiente: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
-      codigoCentroInformante: '0001',
-      centroInformante: 'Empresa Demo',
+      ...(await this.sienHeader(companyId, fd)),
 
       actividadesOperativas: {
         cobroVentas: { planAnual: 0, apertura: 0, real: cobroVentas.debit },
@@ -2762,14 +2638,14 @@ export class ReportService {
 
       actividadesInversion: {
         compraActivosFijos: { planAnual: 0, apertura: 0, real: compraActivosFijos.debit },
-        ventaActivosFijos: { planAnual: 0, apertura: 0, real: ventaActivosFijos.credit },
+        ventaActivosFijos: { planAnual: 0, apertura: 0, real: ventaActivosFijos },
         inversionesFinancieras: { planAnual: 0, apertura: 0, real: inversionesFinancieras.debit },
         flujoNetoInversion: { planAnual: 0, apertura: 0, real: flujoNetoInversion },
       },
 
       actividadesFinanciamiento: {
-        prestamosRecibidos: { planAnual: 0, apertura: 0, real: prestamosRecibidos.credit },
-        pagoPrestamos: { planAnual: 0, apertura: 0, real: pagoPrestamos.debit },
+        prestamosRecibidos: { planAnual: 0, apertura: 0, real: prestamos.credit },
+        pagoPrestamos: { planAnual: 0, apertura: 0, real: prestamos.debit },
         pagoDividendos: { planAnual: 0, apertura: 0, real: pagoDividendos.debit },
         aporteCapital: { planAnual: 0, apertura: 0, real: aporteCapital.credit },
         flujoNetoFinanciamiento: { planAnual: 0, apertura: 0, real: flujoNetoFinanciamiento },
@@ -2781,9 +2657,6 @@ export class ReportService {
 
       hechoNombre: '',
       aprobadoNombre: '',
-      fechaDia: d.getDate().toString(),
-      fechaMes: (d.getMonth() + 1).toString(),
-      fechaAnio: d.getFullYear().toString(),
       observaciones: '',
     };
   }

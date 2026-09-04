@@ -244,98 +244,64 @@ export interface FlujoEfectivoData {
   observaciones?: string;
 }
 
+/** Importe de una línea de un modelo SIEN en sus tres columnas. */
+export interface SienValor {
+  planAnual: number;
+  apertura: number;
+  real: number;
+}
+
+/**
+ * Modelo 5921-04, Estado de Rendimiento Financiero.
+ *
+ * Las líneas y los rangos de cuentas de cada una están fijados por el propio
+ * formulario oficial, que los rotula en la columna de indicadores. El nombre de
+ * cada campo sigue ese literal para que no vuelvan a divergir el PDF y el Excel.
+ * El modelo termina en "Utilidad o Pérdida antes de Impuesto": no lleva línea de
+ * impuesto sobre la renta ni de resultado neto.
+ */
 export interface Efe5921Data {
   informeCorrespondiente: string;
   codigoCentroInformante: string;
   centroInformante: string;
 
-  ingresos: {
-    ingresosOperacionales: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    ventasBienesServicios: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    ingresosActividadesFinancieras: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    ingresosFinancierasPresupuesto: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    ingresosSubvenciones: { planAnual: number; apertura: number; real: number };
-    otrosIngresosOperacionales: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-  };
-
-  gastos: {
-    gastosOperacionales: { planAnual: number; apertura: number; real: number };
-    costoVentas: { planAnual: number; apertura: number; real: number };
-    gastosPersonal: { planAnual: number; apertura: number; real: number };
-    gastosSuministrosServicios: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    gastosActivosFijos: { planAnual: number; apertura: number; real: number };
-    otrosGastosOperacionales: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-  };
-
-  ingresosNoOperacionales: {
-    ingresosNoOperacionales: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    ventaActivosFijos: { planAnual: number; apertura: number; real: number };
-    otrosIngresosNoOperacionales: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-  };
-
-  gastosNoOperacionales: {
-    gastosNoOperacionales: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    ventaActivosFijosGastos: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    otrosGastosNoOperacionales: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-  };
-
-  resultado: {
-    resultadoOperacional: { planAnual: number; apertura: number; real: number };
-    resultadoAntesImpuestos: {
-      planAnual: number;
-      apertura: number;
-      real: number;
-    };
-    impuestoRenta: { planAnual: number; apertura: number; real: number };
-    resultadoNeto: { planAnual: number; apertura: number; real: number };
+  lineas: {
+    /** Fila 1 — Ventas (900-913). */
+    ventas: SienValor;
+    /** Fila 2 — Impuesto por las Ventas (805-809). */
+    impuestoVentas: SienValor;
+    /** Fila 3 — Ventas Netas = ventas - impuestoVentas. */
+    ventasNetas: SienValor;
+    /** Fila 4 — Costo de Ventas de la Producción (810-813). */
+    costoVentasProduccion: SienValor;
+    /** Fila 5 — Utilidad o Pérdida Bruta en Ventas. */
+    utilidadBrutaVentas: SienValor;
+    /** Fila 6 — Utilidad o Pérdida Neta en Ventas. */
+    utilidadNetaVentas: SienValor;
+    /** Fila 7 — Gastos Generales y de Administración (822-824). */
+    gastosGeneralesAdministracion: SienValor;
+    /** Fila 8 — Gastos de Operación (826-833). */
+    gastosOperacion: SienValor;
+    /** Fila 9 — Utilidad o Pérdida en Operaciones. */
+    utilidadOperaciones: SienValor;
+    /** Fila 10 — Gastos Financieros (835-838). */
+    gastosFinancieros: SienValor;
+    /** Fila 11 — Gastos por Pérdidas (845-848). */
+    gastosPerdidas: SienValor;
+    /** Fila 12 — Gastos por Pérdidas-Desastres (849). */
+    gastosPerdidasDesastres: SienValor;
+    /** Fila 13 — Otros Impuestos, Tasas y Contribuciones (855-864). */
+    otrosImpuestosTasas: SienValor;
+    /** Fila 14 — Otros Gastos (865-866). */
+    otrosGastos: SienValor;
+    /** Fila 15 — Gastos de Recuperación de Desastres (873). */
+    gastosRecuperacionDesastres: SienValor;
+    /** Fila 16 — Más: Ingresos Financieros (920-922). */
+    ingresosFinancieros: SienValor;
+    /** Fila 17 — Otros Ingresos (950-952). */
+    otrosIngresos: SienValor;
+    /** Fila 18 — Utilidad o Pérdida antes de Impuesto. */
+    utilidadAntesImpuesto: SienValor;
   };
 
   hechoNombre: string;
@@ -713,110 +679,102 @@ export class PdfService {
     console.log(' PDF 5921 - Template exists:', fs.existsSync(templatePath));
     const template = fs.readFileSync(templatePath, 'utf-8');
 
-    const i = data.ingresos;
-    const g = data.gastos;
-    const ino = data.ingresosNoOperacionales;
-    const gno = data.gastosNoOperacionales;
-    const r = data.resultado;
+    const l = data.lineas;
 
     const replacements: Record<string, string> = {
       '{{informeCorrespondiente}}': data.informeCorrespondiente,
       '{{codigoCentroInformante}}': data.codigoCentroInformante,
       '{{centroInformante}}': data.centroInformante,
 
-      // Ingresos
-      '{{planAnual_1}}': this.fmt(i.ingresosOperacionales.planAnual),
-      '{{apertura_1}}': this.fmt(i.ingresosOperacionales.apertura),
-      '{{real_1}}': this.fmt(i.ingresosOperacionales.real),
+      // Fila 1
+      '{{planAnual_1}}': this.fmt(l.ventas.planAnual),
+      '{{apertura_1}}': this.fmt(l.ventas.apertura),
+      '{{real_1}}': this.fmt(l.ventas.real),
 
-      '{{planAnual_2}}': this.fmt(i.ventasBienesServicios.planAnual),
-      '{{apertura_2}}': this.fmt(i.ventasBienesServicios.apertura),
-      '{{real_2}}': this.fmt(i.ventasBienesServicios.real),
+      // Fila 2
+      '{{planAnual_2}}': this.fmt(l.impuestoVentas.planAnual),
+      '{{apertura_2}}': this.fmt(l.impuestoVentas.apertura),
+      '{{real_2}}': this.fmt(l.impuestoVentas.real),
 
-      '{{planAnual_3}}': this.fmt(i.ingresosActividadesFinancieras.planAnual),
-      '{{apertura_3}}': this.fmt(i.ingresosActividadesFinancieras.apertura),
-      '{{real_3}}': this.fmt(i.ingresosActividadesFinancieras.real),
+      // Fila 3 (Ventas Netas)
+      '{{planAnual_3}}': this.fmt(l.ventasNetas.planAnual),
+      '{{apertura_3}}': this.fmt(l.ventasNetas.apertura),
+      '{{real_3}}': this.fmt(l.ventasNetas.real),
 
-      '{{planAnual_4}}': this.fmt(i.ingresosFinancierasPresupuesto.planAnual),
-      '{{apertura_4}}': this.fmt(i.ingresosFinancierasPresupuesto.apertura),
-      '{{real_4}}': this.fmt(i.ingresosFinancierasPresupuesto.real),
+      // Fila 4
+      '{{planAnual_4}}': this.fmt(l.costoVentasProduccion.planAnual),
+      '{{apertura_4}}': this.fmt(l.costoVentasProduccion.apertura),
+      '{{real_4}}': this.fmt(l.costoVentasProduccion.real),
 
-      '{{planAnual_5}}': this.fmt(i.ingresosSubvenciones.planAnual),
-      '{{apertura_5}}': this.fmt(i.ingresosSubvenciones.apertura),
-      '{{real_5}}': this.fmt(i.ingresosSubvenciones.real),
+      // Fila 5 (Utilidad Bruta en Ventas)
+      '{{planAnual_5}}': this.fmt(l.utilidadBrutaVentas.planAnual),
+      '{{apertura_5}}': this.fmt(l.utilidadBrutaVentas.apertura),
+      '{{real_5}}': this.fmt(l.utilidadBrutaVentas.real),
 
-      '{{planAnual_6}}': this.fmt(i.otrosIngresosOperacionales.planAnual),
-      '{{apertura_6}}': this.fmt(i.otrosIngresosOperacionales.apertura),
-      '{{real_6}}': this.fmt(i.otrosIngresosOperacionales.real),
+      // Fila 6 (Utilidad Neta en Ventas)
+      '{{planAnual_6}}': this.fmt(l.utilidadNetaVentas.planAnual),
+      '{{apertura_6}}': this.fmt(l.utilidadNetaVentas.apertura),
+      '{{real_6}}': this.fmt(l.utilidadNetaVentas.real),
 
-      // Gastos
-      '{{planAnual_7}}': this.fmt(g.gastosOperacionales.planAnual),
-      '{{apertura_7}}': this.fmt(g.gastosOperacionales.apertura),
-      '{{real_7}}': this.fmt(g.gastosOperacionales.real),
+      // Fila 7
+      '{{planAnual_7}}': this.fmt(l.gastosGeneralesAdministracion.planAnual),
+      '{{apertura_7}}': this.fmt(l.gastosGeneralesAdministracion.apertura),
+      '{{real_7}}': this.fmt(l.gastosGeneralesAdministracion.real),
 
-      '{{planAnual_8}}': this.fmt(g.costoVentas.planAnual),
-      '{{apertura_8}}': this.fmt(g.costoVentas.apertura),
-      '{{real_8}}': this.fmt(g.costoVentas.real),
+      // Fila 8
+      '{{planAnual_8}}': this.fmt(l.gastosOperacion.planAnual),
+      '{{apertura_8}}': this.fmt(l.gastosOperacion.apertura),
+      '{{real_8}}': this.fmt(l.gastosOperacion.real),
 
-      '{{planAnual_9}}': this.fmt(g.gastosPersonal.planAnual),
-      '{{apertura_9}}': this.fmt(g.gastosPersonal.apertura),
-      '{{real_9}}': this.fmt(g.gastosPersonal.real),
+      // Fila 9 (Utilidad o Pérdida en Operaciones)
+      '{{planAnual_9}}': this.fmt(l.utilidadOperaciones.planAnual),
+      '{{apertura_9}}': this.fmt(l.utilidadOperaciones.apertura),
+      '{{real_9}}': this.fmt(l.utilidadOperaciones.real),
 
-      '{{planAnual_10}}': this.fmt(g.gastosSuministrosServicios.planAnual),
-      '{{apertura_10}}': this.fmt(g.gastosSuministrosServicios.apertura),
-      '{{real_10}}': this.fmt(g.gastosSuministrosServicios.real),
+      // Fila 10
+      '{{planAnual_10}}': this.fmt(l.gastosFinancieros.planAnual),
+      '{{apertura_10}}': this.fmt(l.gastosFinancieros.apertura),
+      '{{real_10}}': this.fmt(l.gastosFinancieros.real),
 
-      '{{planAnual_11}}': this.fmt(g.gastosActivosFijos.planAnual),
-      '{{apertura_11}}': this.fmt(g.gastosActivosFijos.apertura),
-      '{{real_11}}': this.fmt(g.gastosActivosFijos.real),
+      // Fila 11
+      '{{planAnual_11}}': this.fmt(l.gastosPerdidas.planAnual),
+      '{{apertura_11}}': this.fmt(l.gastosPerdidas.apertura),
+      '{{real_11}}': this.fmt(l.gastosPerdidas.real),
 
-      '{{planAnual_12}}': this.fmt(g.otrosGastosOperacionales.planAnual),
-      '{{apertura_12}}': this.fmt(g.otrosGastosOperacionales.apertura),
-      '{{real_12}}': this.fmt(g.otrosGastosOperacionales.real),
+      // Fila 12
+      '{{planAnual_12}}': this.fmt(l.gastosPerdidasDesastres.planAnual),
+      '{{apertura_12}}': this.fmt(l.gastosPerdidasDesastres.apertura),
+      '{{real_12}}': this.fmt(l.gastosPerdidasDesastres.real),
 
-      // Resultado Operacional
-      '{{planAnual_13}}': this.fmt(r.resultadoOperacional.planAnual),
-      '{{apertura_13}}': this.fmt(r.resultadoOperacional.apertura),
-      '{{real_13}}': this.fmt(r.resultadoOperacional.real),
+      // Fila 13
+      '{{planAnual_13}}': this.fmt(l.otrosImpuestosTasas.planAnual),
+      '{{apertura_13}}': this.fmt(l.otrosImpuestosTasas.apertura),
+      '{{real_13}}': this.fmt(l.otrosImpuestosTasas.real),
 
-      // Ingresos No Operacionales
-      '{{planAnual_14}}': this.fmt(ino.ingresosNoOperacionales.planAnual),
-      '{{apertura_14}}': this.fmt(ino.ingresosNoOperacionales.apertura),
-      '{{real_14}}': this.fmt(ino.ingresosNoOperacionales.real),
+      // Fila 14
+      '{{planAnual_14}}': this.fmt(l.otrosGastos.planAnual),
+      '{{apertura_14}}': this.fmt(l.otrosGastos.apertura),
+      '{{real_14}}': this.fmt(l.otrosGastos.real),
 
-      '{{planAnual_15}}': this.fmt(ino.ventaActivosFijos.planAnual),
-      '{{apertura_15}}': this.fmt(ino.ventaActivosFijos.apertura),
-      '{{real_15}}': this.fmt(ino.ventaActivosFijos.real),
+      // Fila 15
+      '{{planAnual_15}}': this.fmt(l.gastosRecuperacionDesastres.planAnual),
+      '{{apertura_15}}': this.fmt(l.gastosRecuperacionDesastres.apertura),
+      '{{real_15}}': this.fmt(l.gastosRecuperacionDesastres.real),
 
-      '{{planAnual_16}}': this.fmt(ino.otrosIngresosNoOperacionales.planAnual),
-      '{{apertura_16}}': this.fmt(ino.otrosIngresosNoOperacionales.apertura),
-      '{{real_16}}': this.fmt(ino.otrosIngresosNoOperacionales.real),
+      // Fila 16
+      '{{planAnual_16}}': this.fmt(l.ingresosFinancieros.planAnual),
+      '{{apertura_16}}': this.fmt(l.ingresosFinancieros.apertura),
+      '{{real_16}}': this.fmt(l.ingresosFinancieros.real),
 
-      // Gastos No Operacionales
-      '{{planAnual_17}}': this.fmt(gno.gastosNoOperacionales.planAnual),
-      '{{apertura_17}}': this.fmt(gno.gastosNoOperacionales.apertura),
-      '{{real_17}}': this.fmt(gno.gastosNoOperacionales.real),
+      // Fila 17
+      '{{planAnual_17}}': this.fmt(l.otrosIngresos.planAnual),
+      '{{apertura_17}}': this.fmt(l.otrosIngresos.apertura),
+      '{{real_17}}': this.fmt(l.otrosIngresos.real),
 
-      '{{planAnual_18}}': this.fmt(gno.ventaActivosFijosGastos.planAnual),
-      '{{apertura_18}}': this.fmt(gno.ventaActivosFijosGastos.apertura),
-      '{{real_18}}': this.fmt(gno.ventaActivosFijosGastos.real),
-
-      '{{planAnual_19}}': this.fmt(gno.otrosGastosNoOperacionales.planAnual),
-      '{{apertura_19}}': this.fmt(gno.otrosGastosNoOperacionales.apertura),
-      '{{real_19}}': this.fmt(gno.otrosGastosNoOperacionales.real),
-
-      // Resultados
-      '{{planAnual_20}}': this.fmt(r.resultadoAntesImpuestos.planAnual),
-      '{{apertura_20}}': this.fmt(r.resultadoAntesImpuestos.apertura),
-      '{{real_20}}': this.fmt(r.resultadoAntesImpuestos.real),
-
-      '{{planAnual_21}}': this.fmt(r.impuestoRenta.planAnual),
-      '{{apertura_21}}': this.fmt(r.impuestoRenta.apertura),
-      '{{real_21}}': this.fmt(r.impuestoRenta.real),
-
-      '{{planAnual_22}}': this.fmt(r.resultadoNeto.planAnual),
-      '{{apertura_22}}': this.fmt(r.resultadoNeto.apertura),
-      '{{real_22}}': this.fmt(r.resultadoNeto.real),
+      // Fila 18 (Utilidad o Pérdida antes de Impuesto)
+      '{{planAnual_18}}': this.fmt(l.utilidadAntesImpuesto.planAnual),
+      '{{apertura_18}}': this.fmt(l.utilidadAntesImpuesto.apertura),
+      '{{real_18}}': this.fmt(l.utilidadAntesImpuesto.real),
 
       // Pie
       '{{hechoNombre}}': data.hechoNombre,
