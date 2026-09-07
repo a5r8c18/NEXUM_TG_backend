@@ -5,6 +5,7 @@ import { HrService } from './hr.service';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
 import { PayrollConceptService } from './payroll-concept.service';
+import { PayrollReportService } from './payroll-report.service';
 import {
   AttendanceController,
   LeavesController,
@@ -20,6 +21,7 @@ import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { EmployeeSalaryHistory } from '../entities/employee-salary-history.entity';
 import { Payment } from '../entities/payment.entity';
+import { Company } from '../entities/company.entity';
 import { AuthModule } from '../auth/auth.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { FinanceModule } from '../finance/finance.module';
@@ -37,6 +39,7 @@ import { FinanceModule } from '../finance/finance.module';
       LeaveRequest,
       EmployeeSalaryHistory,
       Payment,
+      Company,
     ]),
     forwardRef(() => AuthModule),
     forwardRef(() => AccountingModule),
@@ -48,7 +51,7 @@ import { FinanceModule } from '../finance/finance.module';
     AttendanceController,
     LeavesController,
   ],
-  providers: [HrService, PayrollService, PayrollConceptService, HrManagementService],
-  exports: [HrService, PayrollService, PayrollConceptService, HrManagementService],
+  providers: [HrService, PayrollService, PayrollConceptService, PayrollReportService, HrManagementService],
+  exports: [HrService, PayrollService, PayrollConceptService, PayrollReportService, HrManagementService],
 })
 export class HrModule {}

@@ -9,11 +9,13 @@ import {
   Param,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { PayrollService } from './payroll.service';
 import { PayrollConceptService } from './payroll-concept.service';
+import { PayrollReportService } from './payroll-report.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
@@ -26,6 +28,7 @@ export class PayrollController {
   constructor(
     private readonly payrollService: PayrollService,
     private readonly payrollConceptService: PayrollConceptService,
+    private readonly payrollReportService: PayrollReportService,
     ) {}
 
   @Get()
@@ -51,6 +54,26 @@ export class PayrollController {
   getStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);
     return this.payrollService.getStatistics(companyId);
+  }
+
+  @Get(':id/export/pdf')
+  async exportPdf(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const companyId = getCompanyId(req);
+    const buffer = await this.payrollReportService.generateNominaPdf(
+      companyId,
+      parseInt(id),
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="nomina-sc-4-06-${id}.pdf"`,
+    );
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
   }
 
   @Get(':id')

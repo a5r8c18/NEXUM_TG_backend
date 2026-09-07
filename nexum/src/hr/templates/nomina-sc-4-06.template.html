@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Modelo SC-4-06 Nómina</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11px;
+    color: #000;
+    margin: 20px;
+  }
+  .page {
+    max-width: 1100px;
+    margin: 0 auto;
+    border: 1px solid #000;
+    padding: 10px;
+  }
+  .top-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .top-info div {
+    line-height: 1.4;
+  }
+  .signatures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 20px;
+    margin: 10px 0 14px 0;
+  }
+  .sig-row {
+    display: flex;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .sig-label {
+    font-weight: bold;
+    min-width: 130px;
+  }
+  .sig-line {
+    border-bottom: 1px solid #000;
+    flex-grow: 1;
+  }
+  .model-title {
+    text-align: center;
+    font-weight: bold;
+    margin: 6px 0 10px 0;
+    text-decoration: underline;
+  }
+  .area-header {
+    font-weight: bold;
+    margin: 12px 0 4px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 6px;
+  }
+  th, td {
+    border: 1px solid #000;
+    padding: 3px 4px;
+    text-align: center;
+    vertical-align: middle;
+  }
+  th {
+    background: #e8e8e8;
+    font-weight: bold;
+  }
+  td.nombre {
+    text-align: left;
+  }
+  tr.total-area td {
+    font-weight: bold;
+    background: #f2f2f2;
+  }
+  tr.total-nomina td {
+    font-weight: bold;
+    background: #dcdcdc;
+    font-size: 12px;
+  }
+  .page-footer {
+    text-align: right;
+    font-size: 10px;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="top-info">
+    <div>
+      <div><strong>Fecha:</strong> {{fecha}}</div>
+      <div><strong>Período de pago:</strong> {{periodoPago}}</div>
+      <div>{{numeroNomina}} - {{periodoLabel}}</div>
+    </div>
+    <div style="text-align:right;">
+      <div>{{empresa}}</div>
+      <div><strong>INSTRUM. DE PAGO:</strong> No. {{instrumentoPago}}</div>
+      <div class="page-footer">Página 1</div>
+    </div>
+  </div>
+
+  <div class="signatures">
+    <div class="sig-row"><span class="sig-label">ELABORADA POR:</span><span class="sig-line">{{elaboradaPor}}</span></div>
+    <div class="sig-row"><span class="sig-label">APROBADA POR:</span><span class="sig-line">{{aprobadaPor}}</span></div>
+    <div class="sig-row"><span class="sig-label">REVISADA POR:</span><span class="sig-line">{{revisadaPor}}</span></div>
+    <div class="sig-row"><span class="sig-label">CONTABILIZADA POR:</span><span class="sig-line">{{contabilizadaPor}}</span></div>
+  </div>
+
+  <div class="model-title">MODELO SC-4-06 NOMINA — {{conceptoLabel}}</div>
+  <div style="text-align:center; margin-bottom:8px;">{{entidad}}</div>
+
+  {{areas}}
+
+  <table>
+    <tbody>
+      <tr class="total-nomina">
+        <td colspan="6">TOTAL NOMINA</td>
+        <td>{{totalPat}}</td>
+        <td>{{totalDevenVac}}</td>
+        <td>{{totalImp}}</td>
+        <td>{{totalSRetImp}}</td>
+        <td>{{totalPagado}}</td>
+        <td></td>
+        <td>{{totalSalTarf}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+</div>
+</body>
+</html>
