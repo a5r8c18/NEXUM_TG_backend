@@ -40,8 +40,12 @@ export enum MappingType {
   PAYROLL_RETENTION_INCOME_TAX = 'payroll_retention_income_tax', // Impuesto sobre Ingresos Personales
   PAYROLL_RETENTION_UNION = 'payroll_retention_union', // Cuotas Sindicales
   PAYROLL_RETENTION_OTHER = 'payroll_retention_other', // Otras Retenciones
-  PAYROLL_VACATION_PROVISION = 'payroll_vacation_provision', // Provisión para Vacaciones acumuladas
+  PAYROLL_VACATION_PROVISION = 'payroll_vacation_provision', // 492 Provisión para Vacaciones acumuladas
   PAYROLL_CASH = 'payroll_cash', // Crédito: cuenta de tesorería para el pago de nómina
+  // ── Conceptos de nómina distintos del salario ──
+  PAYROLL_SUBSIDY_PROVISION = 'payroll_subsidy_provision', // 500 Provisión para Pagos de Subsidios de Seguridad Social a Corto Plazo
+  PAYROLL_MATERNITY_RECEIVABLE = 'payroll_maternity_receivable', // 164-0030 Adeudos del Presupuesto del Estado - Licencias de Maternidad
+  PAYROLL_FREE_CONCEPT = 'payroll_free_concept', // Gasto por pagos extras y estímulos sin base contractual
   PURCHASE_ORDER = 'purchase_order',
   PURCHASE_PAYMENT = 'purchase_payment',
   // ── Tesorería (parametrización de las cuentas de efectivo) ──

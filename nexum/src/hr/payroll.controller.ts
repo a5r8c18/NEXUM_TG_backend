@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { PayrollService } from './payroll.service';
+import { PayrollConceptService } from './payroll-concept.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
@@ -22,13 +23,17 @@ import { getCompanyId } from '../common/get-company-id';
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('payroll')
 export class PayrollController {
-  constructor(private readonly payrollService: PayrollService) {}
+  constructor(
+    private readonly payrollService: PayrollService,
+    private readonly payrollConceptService: PayrollConceptService,
+    ) {}
 
   @Get()
   findAll(
     @Req() req: Request,
     @Query('period') period?: string,
     @Query('status') status?: string,
+    @Query('concept') concept?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
@@ -36,6 +41,7 @@ export class PayrollController {
     return this.payrollService.findAll(companyId, {
       period,
       status,
+      concept,
       startDate,
       endDate,
     });
@@ -72,6 +78,30 @@ export class PayrollController {
   ) {
     const companyId = getCompanyId(req);
     return this.payrollService.generateFromEmployees(companyId, body);
+  }
+
+  @Post('generate/vacaciones')
+  generateVacations(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.payrollConceptService.generateVacations(companyId, body);
+  }
+
+  @Post('generate/subsidio')
+  generateSubsidy(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.payrollConceptService.generateSubsidy(companyId, body);
+  }
+
+  @Post('generate/maternidad')
+  generateMaternity(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.payrollConceptService.generateMaternity(companyId, body);
+  }
+
+  @Post('generate/libre')
+  generateFree(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.payrollConceptService.generateFree(companyId, body);
   }
 
   @Put(':id/items')

@@ -4,6 +4,7 @@ import { HrController } from './hr.controller';
 import { HrService } from './hr.service';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
+import { PayrollConceptService } from './payroll-concept.service';
 import {
   AttendanceController,
   LeavesController,
@@ -47,7 +48,7 @@ import { FinanceModule } from '../finance/finance.module';
     AttendanceController,
     LeavesController,
   ],
-  providers: [HrService, PayrollService, HrManagementService],
-  exports: [HrService, PayrollService, HrManagementService],
+  providers: [HrService, PayrollService, PayrollConceptService, HrManagementService],
+  exports: [HrService, PayrollService, PayrollConceptService, HrManagementService],
 })
 export class HrModule {}

@@ -48,13 +48,18 @@ export class AccountMappingService {
     [MappingType.PAYROLL_PROCESSING_PRODUCTION]: '700-0020', // Gastos del Período — Producción en Proceso
     [MappingType.PAYROLL_PROCESSING_ASSOCIATED]: '731', // Gastos Asociados a la Producción
     [MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
+    // Cuenta agrupadora: el servicio de nómina le añade la subcuenta de categoría
+    // ocupacional (455-0010 Dirigentes … 455-0050 Otros Trabajadores).
     [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
     [MappingType.PAYROLL_RETENTION]: '460-0020', // Retenciones por Pagar - Contribución a la Seguridad Social
     [MappingType.PAYROLL_RETENTION_INCOME_TAX]: '460-0010', // Impuesto sobre Ingresos Personales
     [MappingType.PAYROLL_RETENTION_UNION]: '460-0030', // Cuotas Sindicales
     [MappingType.PAYROLL_RETENTION_OTHER]: '460-0050', // Otras Retenciones
-    [MappingType.PAYROLL_VACATION_PROVISION]: '480', // Gastos Acumulados por Pagar - Vacaciones
+    [MappingType.PAYROLL_VACATION_PROVISION]: '492', // Provisión para Vacaciones
     [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
+    [MappingType.PAYROLL_SUBSIDY_PROVISION]: '500', // Provisión para Pagos de Subsidios de Seguridad Social a Corto Plazo
+    [MappingType.PAYROLL_MATERNITY_RECEIVABLE]: '164-0030', // Adeudos del Presupuesto del Estado - Licencias de Maternidad
+    [MappingType.PAYROLL_FREE_CONCEPT]: '822', // Gastos Generales y de Administración
     [MappingType.PURCHASE_ORDER]: '410-0020',  // Cuentas por Pagar - Fuera del Órgano (proveedores)
     [MappingType.PURCHASE_PAYMENT]: '101', // Efectivo en Caja
     [MappingType.TREASURY_CASH]: '101', // Efectivo en Caja

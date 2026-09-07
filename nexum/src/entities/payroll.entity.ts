@@ -10,6 +10,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { Company } from './company.entity';
+import type { PayrollConcept } from '../hr/payroll-concept';
 
 @Entity('payrolls')
 export class Payroll {
@@ -22,6 +23,14 @@ export class Payroll {
   @ManyToOne(() => Company)
   @JoinColumn({ name: 'company_id' })
   company: Company;
+
+  /**
+   * Concepto de la nómina. Cada concepto tiene su propia fórmula de cálculo y su
+   * propio juego de líneas contables, por lo que una nómina agrupa un solo
+   * concepto para un solo período.
+   */
+  @Column({ type: 'varchar', length: 20, default: 'salario' })
+  concept: PayrollConcept;
 
   @Column({ type: 'varchar', length: 50 })
   period: string; // e.g., "2026-04"
@@ -43,6 +52,14 @@ export class Payroll {
 
   @Column({ type: 'varchar', length: 20, default: 'draft' })
   status: 'draft' | 'processed' | 'paid' | 'cancelled';
+
+  /**
+   * Plazo de la prestación económica por maternidad (Art. 18): 1 al inicio de la
+   * licencia prenatal, 2 en las seis primeras semanas de la posnatal y 3 en las
+   * seis últimas. Nulo en el resto de los conceptos.
+   */
+  @Column({ type: 'smallint', nullable: true })
+  installment?: number | null;
 
   @Column({ type: 'text', nullable: true })
   notes?: string;
