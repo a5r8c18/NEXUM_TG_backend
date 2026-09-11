@@ -13,6 +13,7 @@ import {
 import { HrManagementService } from './hr-management.service';
 import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
+import { JobPosition } from '../entities/job-position.entity';
 import { CostCenter } from '../entities/cost-center.entity';
 import { Payroll } from '../entities/payroll.entity';
 import { PayrollItem } from '../entities/payroll-item.entity';
@@ -31,6 +32,7 @@ import { FinanceModule } from '../finance/finance.module';
     TypeOrmModule.forFeature([
       Employee,
       Department,
+      JobPosition,
       CostCenter,
       Payroll,
       PayrollItem,

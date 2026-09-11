@@ -301,8 +301,8 @@ export class PayrollService {
       const netSalary = Math.round((grossSalary - totalDeductionsItem) * 100) / 100;
 
       // ── Provisión mensual de vacaciones (RH-01) ──
-      // 1/12 del salario más la cuota patronal que se devenga por el trabajador.
-      const vacationProvision = Math.round((grossSalary * (1 + EMPLOYER_SOCIAL_SECURITY_RATE)) / 12 * 100) / 100;
+      // 9.09% del salario contractual mensual.
+      const vacationProvision = round2(baseSalary * 0.0909);
 
       // ── Retención del 1,5 % para el pago de subsidios (Art. 46) ──
       // Se acumula en la provisión 500 y es gasto de la empresa, por lo que no
@@ -337,6 +337,7 @@ export class PayrollService {
         otherDeductions: 0,
         totalDeductions: totalDeductionsItem,
         netSalary,
+        paidUnits: DAYS_PER_MONTH - unpaidDays,
         vacationProvision,
         subsidyRetention,
         averageSalary: baseSalary,
@@ -379,11 +380,13 @@ export class PayrollService {
       position?: string;
       costCenterId?: string;
       baseSalary: number;
+      paidUnits?: number;
       overtimeHours?: number;
       overtimePay?: number;
       bonuses?: number;
       commissions?: number;
       allowances?: number;
+      grossSalary?: number;
       socialSecurity?: number;
       healthInsurance?: number;
       pension?: number;
@@ -422,14 +425,24 @@ export class PayrollService {
     let totalDeductions = 0;
     let totalNet = 0;
 
+    const isSalary = payroll.concept === 'salario';
     for (const item of items) {
       const employee = employeeById.get(item.employeeId);
-      const grossSalary =
-        Number(item.baseSalary || 0) +
-        Number(item.overtimePay || 0) +
-        Number(item.bonuses || 0) +
-        Number(item.commissions || 0) +
-        Number(item.allowances || 0);
+
+      let grossSalary: number;
+      if (isSalary) {
+        const paidUnits = Number(item.paidUnits || 0) || 30;
+        const baseEarnings = round2((Number(item.baseSalary || 0) / 30) * paidUnits);
+        grossSalary =
+          baseEarnings +
+          Number(item.overtimePay || 0) +
+          Number(item.bonuses || 0) +
+          Number(item.commissions || 0) +
+          Number(item.allowances || 0);
+      } else {
+        grossSalary = Number(item.grossSalary || 0);
+      }
+
       const totalDeductionsItem =
         Number(item.socialSecurity || 0) +
         Number(item.healthInsurance || 0) +
@@ -454,6 +467,7 @@ export class PayrollService {
         expenseAccountCode: employee?.expenseAccountCode || null,
         occupationalCategory: employee?.occupationalCategory || '0020',
         baseSalary: Number(item.baseSalary || 0),
+        paidUnits: isSalary ? Number(item.paidUnits || 0) || 30 : Number(item.paidUnits || 0),
         overtimeHours: Number(item.overtimeHours || 0),
         overtimePay: Number(item.overtimePay || 0),
         bonuses: Number(item.bonuses || 0),
@@ -468,11 +482,9 @@ export class PayrollService {
         otherDeductions: Number(item.otherDeductions || 0),
         totalDeductions: totalDeductionsItem,
         netSalary,
-        // La provisión y la retención del 1,5 % se recalculan sobre el devengo
-        // reeditado, ya que dependen del bruto y no de las deducciones.
-        vacationProvision: round2(
-          (grossSalary * (1 + EMPLOYER_SOCIAL_SECURITY_RATE)) / 12,
-        ),
+        // La provisión y la retención del 1,5 % se recalculan sobre el salario
+        // contractual mensual, no del bruto del período.
+        vacationProvision: round2(Number(item.baseSalary || 0) * 0.0909),
         subsidyRetention: round2(grossSalary * SUBSIDY_RETENTION_RATE),
         notes: item.notes,
       });

@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { EmployeeContract } from '../entities/employee-contract.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
+import { JobPosition } from '../entities/job-position.entity';
 
 function diffDaysInclusive(start: string, end: string): number {
   const s = new Date(start);
@@ -31,13 +32,15 @@ export class HrManagementService {
     private readonly attendanceRepo: Repository<Attendance>,
     @InjectRepository(LeaveRequest)
     private readonly leaveRepo: Repository<LeaveRequest>,
+    @InjectRepository(JobPosition)
+    private readonly positionRepo: Repository<JobPosition>,
   ) {}
 
   // ── Contratos ──
 
   async findAllContracts(
     companyId: number,
-    filters?: { employeeId?: string; status?: string },
+    filters?: { employeeId?: string; status?: string; positionId?: string },
   ) {
     const qb = this.contractRepo
       .createQueryBuilder('c')
@@ -46,20 +49,23 @@ export class HrManagementService {
       qb.andWhere('c.employeeId = :employeeId', { employeeId: filters.employeeId });
     if (filters?.status)
       qb.andWhere('c.status = :status', { status: filters.status });
+    if (filters?.positionId)
+      qb.andWhere('c.positionId = :positionId', { positionId: filters.positionId });
     qb.orderBy('c.startDate', 'DESC');
     return qb.getMany();
   }
 
   async createContract(companyId: number, data: Partial<EmployeeContract>) {
     const sanitized = this.sanitizeContractDates(data);
-    const contract = this.contractRepo.create({ ...sanitized, companyId });
+    const resolved = await this.resolveContractPosition(companyId, data);
+    const contract = this.contractRepo.create({ ...sanitized, ...resolved, companyId });
     return this.contractRepo.save(contract);
   }
 
   async updateContract(companyId: number, id: string, data: Partial<EmployeeContract>) {
     const contract = await this.contractRepo.findOneBy({ id, companyId });
     if (!contract) throw new NotFoundException(`Contrato #${id} no encontrado`);
-    Object.assign(contract, this.sanitizeContractDates(data));
+    Object.assign(contract, this.sanitizeContractDates(data), await this.resolveContractPosition(companyId, data));
     return this.contractRepo.save(contract);
   }
 
@@ -74,6 +80,23 @@ export class HrManagementService {
       result.endDate = null;
     }
     return result;
+  }
+
+  private async resolveContractPosition(
+    companyId: number,
+    data: Partial<EmployeeContract>,
+  ): Promise<Partial<EmployeeContract>> {
+    if (data.positionId === undefined) return {};
+    if (!data.positionId) return { positionId: null };
+
+    const position = await this.positionRepo.findOneBy({
+      id: data.positionId,
+      companyId,
+    });
+    if (!position) {
+      throw new NotFoundException(`Cargo ${data.positionId} no encontrado`);
+    }
+    return { positionId: position.id, position: position.name };
   }
 
   async deleteContract(companyId: number, id: string) {

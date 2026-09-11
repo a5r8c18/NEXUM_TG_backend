@@ -51,13 +51,9 @@ export type EmploymentSector = 'state' | 'non_state';
 
 /**
  * Modalidad de vínculo laboral. Gobierna los límites de duración del subsidio
- * (Art. 43 para indeterminado, Art. 45 para determinado / obra / a domicilio).
+ * (Art. 43 para indeterminado, Art. 45 para determinado).
  */
-export type ContractTerm =
-  | 'indefinite'
-  | 'fixed_term'
-  | 'work'
-  | 'home_based';
+export type ContractTerm = 'determinate' | 'indeterminate';
 
 /** Origen de la enfermedad o lesión que causa el subsidio (Art. 40). */
 export type IncapacityOrigin = 'common' | 'occupational';

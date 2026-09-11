@@ -105,7 +105,11 @@ export class PayrollReportService {
    * Genera el PDF de la nómina en el Modelo SC-4-06 con los datos reales de la
    * empresa, agrupando los trabajadores por centro de costo (área).
    */
-  async generateNominaPdf(companyId: number, payrollId: number): Promise<Buffer> {
+  async generateNominaPdf(
+    companyId: number,
+    payrollId: number,
+    unit: 'dias' | 'horas' = 'dias',
+  ): Promise<Buffer> {
     const payroll = await this.payrollRepo.findOne({
       where: { id: payrollId, companyId },
       relations: ['items', 'items.costCenter'],
@@ -136,25 +140,57 @@ export class PayrollReportService {
     );
 
     const isVacations = payroll.concept === 'vacaciones';
+    const isHours = unit === 'horas';
+    const unitLabel = isHours ? 'Horas' : 'Días';
+    const DAYS_PER_MONTH = 30;
+    const HOURS_PER_DAY = MONTHLY_LEGAL_HOURS / DAYS_PER_MONTH;
+    const round2 = (v: number) => Math.round(v * 100) / 100;
 
     const rowHtml = (item: PayrollItem): string => {
-      const hourlyRate = Number(item.baseSalary || 0) / MONTHLY_LEGAL_HOURS;
-      const days = Number(item.paidUnits || 0) > 0 ? Number(item.paidUnits) : 24;
-      const devenVac = isVacations ? Number(item.grossSalary || 0) : 0;
+      const baseForRate = Number(item.baseSalary || item.averageSalary || 0);
+      const rate = isHours
+        ? baseForRate / MONTHLY_LEGAL_HOURS
+        : baseForRate / DAYS_PER_MONTH;
+      const rawUnits = Number(item.paidUnits || 0) > 0
+        ? Number(item.paidUnits)
+        : (isHours ? MONTHLY_LEGAL_HOURS : DAYS_PER_MONTH);
+      const timeUnits = isHours ? rawUnits * HOURS_PER_DAY : rawUnits;
+
+      const bonif =
+        Number(item.bonuses || 0) +
+        Number(item.commissions || 0) +
+        Number(item.allowances || 0);
+      const pat = Number(item.overtimePay || 0);
+      const gross = Number(item.grossSalary || 0);
+      const aCobrar = Math.max(0, round2(gross - pat - bonif));
+
+      const vacationTime = isVacations
+        ? String(Number(item.paidUnits || 0).toFixed(3))
+        : (payroll.concept === 'salario' ? '' : '—');
+      const vacationAmount = isVacations
+        ? gross
+        : (payroll.concept === 'salario'
+          ? Number(item.vacationProvision || 0)
+          : 0);
+
       return `<tr>
         <td>${this.esc(codeByEmployee.get(item.employeeId) ?? '')}</td>
         <td class="nombre">${this.esc(item.employeeName)}</td>
         <td>${this.esc(item.employeeDocument)}</td>
         <td>${OCCUPATIONAL_LETTER[item.occupationalCategory] ?? this.esc(item.occupationalCategory)}</td>
-        <td>${hourlyRate.toFixed(4)}</td>
-        <td>${days.toFixed(3)}</td>
-        <td>${this.fmt(item.grossSalary)}</td>
-        <td>${this.fmt(devenVac)}</td>
+        <td>${rate.toFixed(4)}</td>
+        <td>${timeUnits.toFixed(3)}</td>
+        <td>${this.fmt(aCobrar)}</td>
+        <td>${this.fmt(bonif)}</td>
+        <td>${this.fmt(pat)}</td>
+        <td>${this.fmt(gross)}</td>
         <td>${this.fmt(item.taxWithholding)}</td>
-        <td>${this.fmt(item.grossSalary)}</td>
+        <td>${this.fmt(item.socialSecurity)}</td>
         <td>${this.fmt(item.totalDeductions)}</td>
-        <td></td>
         <td>${this.fmt(item.netSalary)}</td>
+        <td>${vacationTime}</td>
+        <td>${this.fmt(vacationAmount)}</td>
+        <td></td>
       </tr>`;
     };
 
@@ -164,12 +200,24 @@ export class PayrollReportService {
     const areaHtml = (area: AreaGroup): string => {
       const rows = area.items.map(rowHtml).join('\n');
       const t = {
-        pat: sum(area.items, (i) => Number(i.grossSalary || 0)),
-        devenVac: isVacations ? sum(area.items, (i) => Number(i.grossSalary || 0)) : 0,
-        imp: sum(area.items, (i) => Number(i.taxWithholding || 0)),
-        sRetImp: sum(area.items, (i) => Number(i.grossSalary || 0)),
-        pagado: sum(area.items, (i) => Number(i.totalDeductions || 0)),
-        salTarf: sum(area.items, (i) => Number(i.netSalary || 0)),
+        aCobrar: sum(area.items, (i) => {
+          const bonif = Number(i.bonuses || 0) + Number(i.commissions || 0) + Number(i.allowances || 0);
+          const pat = Number(i.overtimePay || 0);
+          return Math.max(0, round2(Number(i.grossSalary || 0) - pat - bonif));
+        }),
+        bonif: sum(area.items, (i) => Number(i.bonuses || 0) + Number(i.commissions || 0) + Number(i.allowances || 0)),
+        pat: sum(area.items, (i) => Number(i.overtimePay || 0)),
+        devengado: sum(area.items, (i) => Number(i.grossSalary || 0)),
+        impIngresos: sum(area.items, (i) => Number(i.taxWithholding || 0)),
+        segSocial: sum(area.items, (i) => Number(i.socialSecurity || 0)),
+        retenciones: sum(area.items, (i) => Number(i.totalDeductions || 0)),
+        pagado: sum(area.items, (i) => Number(i.netSalary || 0)),
+        vacationTime: isVacations
+          ? sum(area.items, (i) => Number(i.paidUnits || 0)).toFixed(3)
+          : '',
+        vacationImporte: isVacations
+          ? sum(area.items, (i) => Number(i.grossSalary || 0))
+          : sum(area.items, (i) => (payroll.concept === 'salario' ? Number(i.vacationProvision || 0) : 0)),
       };
       return `
       <div class="area-header">Área: ${this.esc(area.name)}</div>
@@ -180,31 +228,40 @@ export class PayrollReportService {
             <th rowspan="2">Nombre y Apellidos</th>
             <th rowspan="2">C.I</th>
             <th rowspan="2">Cat. Ocup.</th>
-            <th rowspan="2">Días A cobrar</th>
-            <th rowspan="2">Bon. Tiemp.</th>
-            <th colspan="4">Devengado</th>
+            <th rowspan="2">Tarifa Salarial</th>
+            <th rowspan="2">${unitLabel}</th>
+            <th rowspan="2">A cobrar</th>
+            <th rowspan="2">Bonificaciones</th>
+            <th rowspan="2">P.A.T</th>
+            <th rowspan="2">Devengado</th>
+            <th colspan="2">Impuestos salariales</th>
+            <th rowspan="2">Retenciones</th>
             <th rowspan="2">Pagado</th>
+            <th colspan="2">Vacaciones</th>
             <th rowspan="2">Firma</th>
-            <th rowspan="2">Sal. Tarf.</th>
           </tr>
           <tr>
-            <th>P.A.T</th>
-            <th>Deven. Vac.</th>
-            <th>Imp.</th>
-            <th>S. Ret. Imp.</th>
+            <th>Impuestos sobre ingresos personales</th>
+            <th>Seguridad Social Especial</th>
+            <th>Tiempo</th>
+            <th>Importe</th>
           </tr>
         </thead>
         <tbody>
           ${rows}
           <tr class="total-area">
             <td colspan="6">TOTAL ÁREA</td>
+            <td>${this.fmt(t.aCobrar)}</td>
+            <td>${this.fmt(t.bonif)}</td>
             <td>${this.fmt(t.pat)}</td>
-            <td>${this.fmt(t.devenVac)}</td>
-            <td>${this.fmt(t.imp)}</td>
-            <td>${this.fmt(t.sRetImp)}</td>
+            <td>${this.fmt(t.devengado)}</td>
+            <td>${this.fmt(t.impIngresos)}</td>
+            <td>${this.fmt(t.segSocial)}</td>
+            <td>${this.fmt(t.retenciones)}</td>
             <td>${this.fmt(t.pagado)}</td>
+            <td>${t.vacationTime}</td>
+            <td>${this.fmt(t.vacationImporte)}</td>
             <td></td>
-            <td>${this.fmt(t.salTarf)}</td>
           </tr>
         </tbody>
       </table>`;
@@ -215,6 +272,43 @@ export class PayrollReportService {
       this.getTemplatePath('nomina-sc-4-06.template.html'),
       'utf-8',
     );
+
+    const total = {
+      aCobrar: sum(items, (i) => {
+        const bonif = Number(i.bonuses || 0) + Number(i.commissions || 0) + Number(i.allowances || 0);
+        const pat = Number(i.overtimePay || 0);
+        return Math.max(0, round2(Number(i.grossSalary || 0) - pat - bonif));
+      }),
+      bonif: sum(items, (i) => Number(i.bonuses || 0) + Number(i.commissions || 0) + Number(i.allowances || 0)),
+      pat: sum(items, (i) => Number(i.overtimePay || 0)),
+      devengado: sum(items, (i) => Number(i.grossSalary || 0)),
+      impIngresos: sum(items, (i) => Number(i.taxWithholding || 0)),
+      segSocial: sum(items, (i) => Number(i.socialSecurity || 0)),
+      retenciones: sum(items, (i) => Number(i.totalDeductions || 0)),
+      pagado: sum(items, (i) => Number(i.netSalary || 0)),
+      vacationTime: isVacations
+        ? sum(items, (i) => Number(i.paidUnits || 0)).toFixed(3)
+        : '',
+      vacationImporte: isVacations
+        ? sum(items, (i) => Number(i.grossSalary || 0))
+        : sum(items, (i) => (payroll.concept === 'salario' ? Number(i.vacationProvision || 0) : 0)),
+    };
+
+    const totalNomina = `
+      <tr class="total-nomina">
+        <td colspan="6">TOTAL NOMINA</td>
+        <td>${this.fmt(total.aCobrar)}</td>
+        <td>${this.fmt(total.bonif)}</td>
+        <td>${this.fmt(total.pat)}</td>
+        <td>${this.fmt(total.devengado)}</td>
+        <td>${this.fmt(total.impIngresos)}</td>
+        <td>${this.fmt(total.segSocial)}</td>
+        <td>${this.fmt(total.retenciones)}</td>
+        <td>${this.fmt(total.pagado)}</td>
+        <td>${total.vacationTime}</td>
+        <td>${this.fmt(total.vacationImporte)}</td>
+        <td></td>
+      </tr>`;
 
     const replacements: Record<string, string> = {
       '{{fecha}}': this.formatDate(payroll.paidAt ?? payroll.endDate),
@@ -230,12 +324,7 @@ export class PayrollReportService {
       '{{conceptoLabel}}': CONCEPT_LABEL[payroll.concept] ?? String(payroll.concept).toUpperCase(),
       '{{entidad}}': this.esc(company?.name ?? ''),
       '{{areas}}': areas.map(areaHtml).join('\n'),
-      '{{totalPat}}': this.fmt(sum(items, (i) => Number(i.grossSalary || 0))),
-      '{{totalDevenVac}}': this.fmt(isVacations ? sum(items, (i) => Number(i.grossSalary || 0)) : 0),
-      '{{totalImp}}': this.fmt(sum(items, (i) => Number(i.taxWithholding || 0))),
-      '{{totalSRetImp}}': this.fmt(sum(items, (i) => Number(i.grossSalary || 0))),
-      '{{totalPagado}}': this.fmt(sum(items, (i) => Number(i.totalDeductions || 0))),
-      '{{totalSalTarf}}': this.fmt(sum(items, (i) => Number(i.netSalary || 0))),
+      '{{totalNomina}}': totalNomina,
     };
 
     const html = Object.entries(replacements).reduce(

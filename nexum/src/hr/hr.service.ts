@@ -1,9 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
 import { CostCenter } from '../entities/cost-center.entity';
+import { JobPosition } from '../entities/job-position.entity';
 import { EmployeeSalaryHistory } from '../entities/employee-salary-history.entity';
 
 @Injectable()
@@ -15,6 +21,8 @@ export class HrService {
     private readonly departmentRepo: Repository<Department>,
     @InjectRepository(CostCenter)
     private readonly costCenterRepo: Repository<CostCenter>,
+    @InjectRepository(JobPosition)
+    private readonly positionRepo: Repository<JobPosition>,
     @InjectRepository(EmployeeSalaryHistory)
     private readonly salaryHistoryRepo: Repository<EmployeeSalaryHistory>,
   ) {}
@@ -24,6 +32,7 @@ export class HrService {
   async findAllEmployees(companyId: number, filters?: {
     status?: string;
     departmentId?: string;
+    positionId?: string;
     search?: string;
     contractType?: string;
   }) {
@@ -32,6 +41,7 @@ export class HrService {
 
     if (filters?.status) qb.andWhere('e.status = :status', { status: filters.status });
     if (filters?.departmentId) qb.andWhere('e.departmentId = :departmentId', { departmentId: filters.departmentId });
+    if (filters?.positionId) qb.andWhere('e.positionId = :positionId', { positionId: filters.positionId });
     if (filters?.contractType) qb.andWhere('e.contractType = :contractType', { contractType: filters.contractType });
     if (filters?.search) {
       qb.andWhere('(e.firstName ILIKE :search OR e.lastName ILIKE :search OR e.employeeCode ILIKE :search)', { search: `%${filters.search}%` });
@@ -49,6 +59,7 @@ export class HrService {
 
   async createEmployee(companyId: number, data: Partial<Employee>) {
     const resolved = await this.resolveDepartmentAndCostCenter(companyId, data);
+    Object.assign(resolved, await this.resolvePosition(companyId, data));
 
     const count = await this.employeeRepo.count({ where: { companyId } });
     const emp = this.employeeRepo.create({
@@ -64,6 +75,7 @@ export class HrService {
     const emp = await this.findOneEmployee(companyId, id);
     const previousSalary = Number(emp.salary) || 0;
     const resolved = await this.resolveDepartmentAndCostCenter(companyId, data);
+    Object.assign(resolved, await this.resolvePosition(companyId, data));
     Object.assign(emp, data, resolved);
     const saved = await this.employeeRepo.save(emp);
 
@@ -106,10 +118,12 @@ export class HrService {
       inactive: employees.filter(e => e.status === 'inactive').length,
       onLeave: employees.filter(e => e.status === 'on_leave').length,
       byContract: {
-        fullTime: employees.filter(e => e.contractType === 'full_time').length,
-        partTime: employees.filter(e => e.contractType === 'part_time').length,
-        contractor: employees.filter(e => e.contractType === 'contractor').length,
-        intern: employees.filter(e => e.contractType === 'intern').length,
+        trialPeriod: employees.filter(e => e.contractType === 'trial_period').length,
+        workExecution: employees.filter(e => e.contractType === 'work_execution').length,
+      },
+      byActivity: {
+        direct: employees.filter(e => e.activity === 'direct').length,
+        indirect: employees.filter(e => e.activity === 'indirect').length,
       },
       totalPayroll: employees.filter(e => e.status === 'active').reduce((sum, e) => sum + Number(e.salary), 0),
     };
@@ -161,6 +175,177 @@ export class HrService {
     if (!dept) throw new NotFoundException(`Departamento #${id} no encontrado`);
     await this.departmentRepo.remove(dept);
     return { message: 'Departamento eliminado correctamente' };
+  }
+
+  // ── Cargos ──
+
+  async findAllPositions(companyId: number, filters?: { isActive?: boolean }) {
+    const where: any = { companyId };
+    if (filters?.isActive !== undefined) where.isActive = filters.isActive;
+
+    const positions = await this.positionRepo.find({
+      where,
+      order: { name: 'ASC' },
+    });
+
+    // Ocupación real del cargo, excluyendo bajas definitivas.
+    const counts = await this.employeeRepo
+      .createQueryBuilder('e')
+      .select('e.positionId', 'positionId')
+      .addSelect('COUNT(*)', 'count')
+      .where('e.companyId = :companyId', { companyId })
+      .andWhere('e.positionId IS NOT NULL')
+      .andWhere('e.status != :inactive', { inactive: 'inactive' })
+      .groupBy('e.positionId')
+      .getRawMany();
+
+    const countMap = new Map<string, number>(
+      counts.map((c) => [c.positionId, Number(c.count)]),
+    );
+    for (const position of positions) {
+      position.employeeCount = countMap.get(position.id) || 0;
+    }
+
+    return positions;
+  }
+
+  async createPosition(companyId: number, data: Partial<JobPosition>) {
+    const name = (data.name || '').trim();
+    if (!name) throw new BadRequestException('El nombre del cargo es obligatorio');
+    await this.assertPositionNameIsFree(companyId, name);
+
+    const processed = this.processPositionData(data);
+    const position = this.positionRepo.create({
+      ...data,
+      ...processed,
+      name,
+      companyId,
+      ...(await this.resolvePositionDepartment(companyId, data)),
+    });
+    return this.positionRepo.save(position);
+  }
+
+  async updatePosition(companyId: number, id: string, data: Partial<JobPosition>) {
+    const position = await this.positionRepo.findOneBy({ id, companyId });
+    if (!position) throw new NotFoundException(`Cargo #${id} no encontrado`);
+
+    if (data.name !== undefined) {
+      const name = (data.name || '').trim();
+      if (!name) throw new BadRequestException('El nombre del cargo es obligatorio');
+      await this.assertPositionNameIsFree(companyId, name, id);
+      data.name = name;
+    }
+    const processed = this.processPositionData(data);
+
+    Object.assign(
+      position,
+      data,
+      processed,
+      await this.resolvePositionDepartment(companyId, data),
+    );
+    const saved = await this.positionRepo.save(position);
+
+    // La denominación viaja denormalizada en fichas y contratos: al renombrar el
+    // cargo hay que propagarla para que los listados no queden desfasados.
+    if (data.name !== undefined) {
+      await this.employeeRepo.update(
+        { companyId, positionId: id },
+        { position: saved.name },
+      );
+    }
+
+    return saved;
+  }
+
+  async deletePosition(companyId: number, id: string) {
+    const position = await this.positionRepo.findOneBy({ id, companyId });
+    if (!position) throw new NotFoundException(`Cargo #${id} no encontrado`);
+
+    const inUse = await this.employeeRepo.count({
+      where: { companyId, positionId: id },
+    });
+    if (inUse > 0) {
+      throw new ConflictException(
+        `No se puede eliminar: ${inUse} trabajador(es) ocupan este cargo. Desactívelo en su lugar.`,
+      );
+    }
+
+    await this.positionRepo.remove(position);
+    return { message: 'Cargo eliminado correctamente' };
+  }
+
+  private processPositionData(data: Partial<JobPosition>): Partial<JobPosition> {
+    const baseSalary = data.baseSalary !== undefined ? Number(data.baseSalary) : (data as any).baseSalary;
+    const workingHours = data.workingHours !== undefined ? Number(data.workingHours) : (data as any).workingHours;
+    const timeBank = data.timeBank !== undefined ? Number(data.timeBank) : (data as any).timeBank;
+    const timeUnit = data.timeUnit || 'hours';
+    const salaryRate =
+      timeBank && Number(timeBank) > 0
+        ? Number((Number(baseSalary || 0) / Number(timeBank)).toFixed(4))
+        : 0;
+
+    return {
+      baseSalary: Number(baseSalary) || 0,
+      workingHours: Number(workingHours) || 0,
+      timeBank: Number(timeBank) || 0,
+      timeUnit: timeUnit as 'hours' | 'days',
+      salaryRate,
+      paymentConcept: data.paymentConcept ?? null,
+    };
+  }
+
+  private async assertPositionNameIsFree(
+    companyId: number,
+    name: string,
+    excludeId?: string,
+  ) {
+    const existing = await this.positionRepo.findOne({
+      where: excludeId
+        ? { companyId, name, id: Not(excludeId) }
+        : { companyId, name },
+    });
+    if (existing) {
+      throw new ConflictException(`Ya existe un cargo llamado "${name}"`);
+    }
+  }
+
+  private async resolvePositionDepartment(
+    companyId: number,
+    data: Partial<JobPosition>,
+  ): Promise<Partial<JobPosition>> {
+    if (data.departmentId === undefined) return {};
+    if (!data.departmentId) return { departmentId: null, departmentName: null };
+
+    const department = await this.departmentRepo.findOneBy({
+      id: data.departmentId,
+      companyId,
+    });
+    if (!department) {
+      throw new NotFoundException(`Departamento ${data.departmentId} no encontrado`);
+    }
+    return { departmentId: department.id, departmentName: department.name };
+  }
+
+  /**
+   * Enlaza la ficha con el catálogo de cargos y arrastra la denominación. Se
+   * admite seguir enviando solo el texto "position" para no romper integraciones
+   * anteriores al catálogo.
+   */
+  private async resolvePosition(
+    companyId: number,
+    data: Partial<Employee>,
+  ): Promise<Partial<Employee>> {
+    if (data.positionId === undefined) return {};
+    if (!data.positionId) return { positionId: null };
+
+    const position = await this.positionRepo.findOneBy({
+      id: data.positionId,
+      companyId,
+    });
+    if (!position) {
+      throw new NotFoundException(`Cargo ${data.positionId} no encontrado`);
+    }
+    return { positionId: position.id, position: position.name };
   }
 
   /**

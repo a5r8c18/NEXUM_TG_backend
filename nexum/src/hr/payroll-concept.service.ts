@@ -278,21 +278,24 @@ export class PayrollConceptService {
         data.startDate,
         data.endDate,
       );
-      const dailyRate = round2(Number(emp.salary || 0) / 30);
-      const gross = round2(days * dailyRate);
+
+      // Cálculo de vacaciones: salario contractual × 9.09%.
+      const salary = Number(emp.salary || 0);
+      const gross = round2(salary * 0.0909);
       const socialSecurity = calculateSocialSecurity(gross);
       const taxWithholding = calculateIncomeTax(gross);
       const totalDeductions = round2(socialSecurity + taxWithholding);
 
       items.push({
         ...this.baseItem(emp, companyId),
+        baseSalary: salary,
         grossSalary: gross,
         socialSecurity,
         taxWithholding,
         totalDeductions,
         netSalary: round2(gross - totalDeductions),
         leaveRequestId: leave.id,
-        averageSalary: Number(emp.salary || 0),
+        averageSalary: salary,
         paidUnits: days,
         appliedRate: 1,
         notes: `Vacaciones ${leave.startDate} a ${leave.endDate} (${days} días en el período)`,

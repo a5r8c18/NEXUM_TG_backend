@@ -6,7 +6,8 @@ import type {
 } from '../hr/payroll-concept';
 
 export type EmployeeStatus = 'active' | 'inactive' | 'on_leave';
-export type ContractType = 'full_time' | 'part_time' | 'contractor' | 'intern';
+export type ContractType = 'trial_period' | 'work_execution';
+export type EmployeeActivity = 'direct' | 'indirect';
 
 @Entity('employees')
 export class Employee {
@@ -34,6 +35,11 @@ export class Employee {
   @Column({ type: 'varchar', nullable: true })
   phone: string | null;
 
+  /** Cargo del catálogo de plantilla. */
+  @Column({ name: 'position_id', type: 'uuid', nullable: true })
+  positionId: string | null;
+
+  /** Denominación del cargo, denormalizada para listados e informes. */
   @Column({ type: 'varchar', nullable: true })
   position: string | null;
 
@@ -53,8 +59,11 @@ export class Employee {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   salary: number;
 
-  @Column({ type: 'varchar', default: 'full_time' })
+  @Column({ type: 'varchar', default: 'work_execution' })
   contractType: ContractType;
+
+  @Column({ name: 'activity', type: 'varchar', length: 20, default: 'direct' })
+  activity: EmployeeActivity;
 
   @Column({ type: 'varchar', default: 'active' })
   status: EmployeeStatus;
@@ -98,7 +107,7 @@ export class Employee {
     name: 'contract_term',
     type: 'varchar',
     length: 20,
-    default: 'indefinite',
+    default: 'indeterminate',
   })
   contractTerm: ContractTerm;
 

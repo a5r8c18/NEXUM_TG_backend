@@ -60,12 +60,14 @@ export class PayrollController {
   async exportPdf(
     @Req() req: Request,
     @Param('id') id: string,
+    @Query('unit') unit: 'dias' | 'horas',
     @Res() res: Response,
   ) {
     const companyId = getCompanyId(req);
     const buffer = await this.payrollReportService.generateNominaPdf(
       companyId,
       parseInt(id),
+      unit,
     );
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(

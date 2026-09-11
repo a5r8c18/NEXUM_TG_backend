@@ -30,6 +30,7 @@ export class HrController {
     @Req() req: Request,
     @Query('status') status?: string,
     @Query('departmentId') departmentId?: string,
+    @Query('positionId') positionId?: string,
     @Query('search') search?: string,
     @Query('contractType') contractType?: string,
   ) {
@@ -37,6 +38,7 @@ export class HrController {
     return this.hrService.findAllEmployees(companyId, {
       status,
       departmentId,
+      positionId,
       search,
       contractType,
     });
@@ -110,5 +112,37 @@ export class HrController {
   deleteDepartment(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
     return this.hrService.deleteDepartment(companyId, id);
+  }
+
+  // ── Cargos ──
+
+  @Get('positions')
+  findAllPositions(@Req() req: Request, @Query('isActive') isActive?: string) {
+    const companyId = getCompanyId(req);
+    return this.hrService.findAllPositions(companyId, {
+      isActive: isActive === undefined ? undefined : isActive === 'true',
+    });
+  }
+
+  @Post('positions')
+  createPosition(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.hrService.createPosition(companyId, body);
+  }
+
+  @Put('positions/:id')
+  updatePosition(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const companyId = getCompanyId(req);
+    return this.hrService.updatePosition(companyId, id, body);
+  }
+
+  @Delete('positions/:id')
+  deletePosition(@Req() req: Request, @Param('id') id: string) {
+    const companyId = getCompanyId(req);
+    return this.hrService.deletePosition(companyId, id);
   }
 }

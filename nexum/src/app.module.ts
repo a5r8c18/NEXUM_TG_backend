@@ -65,6 +65,7 @@ import { CostCenter } from './entities/cost-center.entity';
 import { FiscalYear } from './entities/fiscal-year.entity';
 import { AccountingPeriod } from './entities/accounting-period.entity';
 import { Department } from './entities/department.entity';
+import { JobPosition } from './entities/job-position.entity';
 import { Employee } from './entities/employee.entity';
 import { ExpenseType } from './entities/expense-type.entity';
 import { Message } from './entities/message.entity';
@@ -155,6 +156,7 @@ import { DocumentSequence } from './entities/document-sequence.entity';
           FiscalYear,
           AccountingPeriod,
           Department,
+          JobPosition,
           Employee,
           Message,
           ExpenseType,

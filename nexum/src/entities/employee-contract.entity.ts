@@ -25,6 +25,11 @@ export class EmployeeContract {
   @Column({ type: 'varchar', length: 30, default: 'full_time' })
   contractType: string; // full_time | part_time | contractor | intern
 
+  /** Cargo del catálogo de plantilla. */
+  @Column({ name: 'position_id', type: 'uuid', nullable: true })
+  positionId: string | null;
+
+  /** Denominación del cargo, denormalizada para listados e informes. */
   @Column({ type: 'varchar', length: 100, nullable: true })
   position: string | null;
 

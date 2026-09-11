@@ -29,8 +29,9 @@ export class ContractsController {
     @Req() req: Request,
     @Query('employeeId') employeeId?: string,
     @Query('status') status?: string,
+    @Query('positionId') positionId?: string,
   ) {
-    return this.service.findAllContracts(getCompanyId(req), { employeeId, status });
+    return this.service.findAllContracts(getCompanyId(req), { employeeId, status, positionId });
   }
 
   @Post()
