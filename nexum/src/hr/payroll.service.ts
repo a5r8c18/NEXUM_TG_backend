@@ -26,8 +26,6 @@ import {
 } from './payroll-calculations';
 import {
   EMPLOYER_SOCIAL_SECURITY_RATE,
-  OCCUPATIONAL_CATEGORY_LABELS,
-  OccupationalCategory,
   PAYROLL_CONCEPT_LABELS,
   PayrollConcept,
   SUBSIDY_RETENTION_RATE,
@@ -498,7 +496,7 @@ export class PayrollService {
     return this.findOne(companyId, payroll.id);
   }
 
-  async process(companyId: number, id: number, processedBy: string, costCenterId?: string) {
+  async process(companyId: number, id: number, processedBy: string) {
     const payroll = await this.payrollRepo.findOne({
       where: { id, companyId },
       relations: ['items', 'items.costCenter'],
@@ -595,18 +593,9 @@ export class PayrollService {
         // Solo los conceptos pagados por la empresa cargan a cuentas de gasto.
         const chargesExpense = concept === 'salario' || concept === 'libre';
 
-        const expenseByAccountAndCC = new Map<string, { amount: number; costCenterId?: string }>();
-        const vacationByAccountAndCC = new Map<string, { amount: number; costCenterId?: string }>();
-        // El neto se acredita en la subcuenta de Nóminas por Pagar que
-        // corresponde a la categoría ocupacional de cada trabajador (455-00X0).
-        const netByCategory = new Map<string, number>();
-        let employerSocialSecurityTotal = 0;
+        const expenseByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
+        const vacationByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
         let totalVacationProvision = 0;
-        let totalSubsidyRetention = 0;
-        let totalSocialSecurity = 0;
-        let totalIncomeTax = 0;
-        let totalUnion = 0;
-        let totalOtherRetention = 0;
 
         // En maternidad el débito depende del sector de cada trabajador.
         let maternityStateAmount = 0;
@@ -638,14 +627,12 @@ export class PayrollService {
             free: freeConceptAccount,
           }, concept);
           const gross = Number(item.grossSalary);
-          const employerSS = Math.round(gross * EMPLOYER_SOCIAL_SECURITY_RATE * 100) / 100;
-          employerSocialSecurityTotal += employerSS;
 
           const costCenterId = item.costCenterId || undefined;
           const key = `${accountCode}#${costCenterId || ''}`;
           if (chargesExpense) {
-            const existing = expenseByAccountAndCC.get(key) || { amount: 0, costCenterId };
-            existing.amount += gross + employerSS;
+            const existing = expenseByAccountAndCC.get(key) || { accountCode, amount: 0, costCenterId };
+            existing.amount += gross;
             expenseByAccountAndCC.set(key, existing);
           }
 
@@ -661,40 +648,16 @@ export class PayrollService {
             maternityStateAmount += gross;
           }
 
-          const category = item.occupationalCategory || '0020';
-          netByCategory.set(
-            category,
-            round2((netByCategory.get(category) || 0) + Number(item.netSalary || 0)),
-          );
-
           // ── Provisión de vacaciones (RH-01) ──
           const vacation = Number(item.vacationProvision || 0);
           if (vacation > 0 && chargesExpense) {
             totalVacationProvision += vacation;
             const vacKey = `${accountCode}#${costCenterId || ''}`;
-            const vacExisting = vacationByAccountAndCC.get(vacKey) || { amount: 0, costCenterId };
+            const vacExisting = vacationByAccountAndCC.get(vacKey) || { accountCode, amount: 0, costCenterId };
             vacExisting.amount += vacation;
             vacationByAccountAndCC.set(vacKey, vacExisting);
           }
-
-          // ── Retención del 1,5 % para subsidios de seguridad social (Art. 46) ──
-          // Es gasto de la empresa, con contrapartida en la provisión 500.
-          const subsidyRetention = Number(item.subsidyRetention || 0);
-          if (subsidyRetention > 0 && chargesExpense) {
-            totalSubsidyRetention += subsidyRetention;
-            const existingExpense =
-              expenseByAccountAndCC.get(key) || { amount: 0, costCenterId };
-            existingExpense.amount += subsidyRetention;
-            expenseByAccountAndCC.set(key, existingExpense);
-          }
-
-          // ── Retenciones por subcuenta (RH-02) ──
-          totalSocialSecurity += Number(item.socialSecurity || 0);
-          totalIncomeTax += Number(item.taxWithholding || 0);
-          totalUnion += Number(item.unionDues || 0);
-          totalOtherRetention += Number(item.otherDeductions || 0);
         }
-        employerSocialSecurityTotal = Math.round(employerSocialSecurityTotal * 100) / 100;
 
         const lines: any[] = [];
         const conceptLabel = PAYROLL_CONCEPT_LABELS[concept] || concept;
@@ -702,14 +665,14 @@ export class PayrollService {
         // ── Débito según el concepto ──
         if (concept === 'vacaciones') {
           // El pago de vacaciones se carga a la provisión 492, nunca a gasto.
-          const vacationDebit = round2(totalGross + employerSocialSecurityTotal);
+          const vacationDebit = round2(totalGross);
           if (vacationDebit > 0) {
             lines.push({
               accountCode: vacationProvisionAccount || '492',
+              subaccountCode: vacationProvisionAccount || '492',
               debit: vacationDebit,
               credit: 0,
               description: `Pago de vacaciones ${payroll.period} (cargo a provisión)`,
-              subelement: '50300',
             });
           }
         } else if (concept === 'subsidio' || concept === 'paternidad') {
@@ -717,6 +680,7 @@ export class PayrollService {
           if (totalGross > 0) {
             lines.push({
               accountCode: subsidyProvisionAccount || '500',
+              subaccountCode: subsidyProvisionAccount || '500',
               debit: totalGross,
               credit: 0,
               description: `${conceptLabel} ${payroll.period} (cargo a provisión 500)`,
@@ -726,6 +690,7 @@ export class PayrollService {
           if (maternityStateAmount > 0) {
             lines.push({
               accountCode: maternityReceivableAccount || '164-0030',
+              subaccountCode: maternityReceivableAccount || '164-0030',
               debit: round2(maternityStateAmount),
               credit: 0,
               description: `Licencia de maternidad ${payroll.period} — recuperable del presupuesto`,
@@ -738,12 +703,12 @@ export class PayrollService {
             );
           }
         } else {
-          for (const [accountCode, { amount, costCenterId }] of expenseByAccountAndCC.entries()) {
+          for (const [, { accountCode, amount, costCenterId }] of expenseByAccountAndCC.entries()) {
             lines.push({
               accountCode,
               debit: amount,
               credit: 0,
-              description: `Salarios y Seguridad Social patronal ${payroll.period}`,
+              description: `Salarios ${payroll.period}`,
               costCenterId,
               subelement: '50100',
             });
@@ -751,8 +716,8 @@ export class PayrollService {
         }
 
         // La provisión de vacaciones se acumula en la misma cuenta de gasto del
-        // trabajador por centro de costo, pero con contrapartida en la pasiva 455.
-        for (const [accountCode, { amount, costCenterId }] of vacationByAccountAndCC.entries()) {
+        // trabajador por centro de costo, pero con contrapartida en la pasiva 492.
+        for (const [, { accountCode, amount, costCenterId }] of vacationByAccountAndCC.entries()) {
           lines.push({
             accountCode,
             debit: amount,
@@ -763,68 +728,25 @@ export class PayrollService {
           });
         }
 
-        // El neto se desglosa por categoría ocupacional para no acumularlo todo
-        // en una sola subcuenta de Nóminas por Pagar.
-        for (const [category, amount] of netByCategory.entries()) {
-          if (amount <= 0) continue;
+        // El total de la nómina se acredita en la cuenta 455 como un solo monto,
+        // sin separar por categorías ocupacionales ni centros de costo.
+        if (totalGross > 0) {
           lines.push({
-            accountCode: this.payableAccountForCategory(payableAccount, category),
+            accountCode: payableAccount || '455',
+            subaccountCode: payableAccount || '455',
             debit: 0,
-            credit: amount,
-            description: `Nómina neta por pagar ${payroll.period} — ${OCCUPATIONAL_CATEGORY_LABELS[category as OccupationalCategory] || category}`,
+            credit: Math.round(totalGross * 100) / 100,
+            description: `Nómina por pagar ${payroll.period}`,
           });
         }
 
         if (totalVacationProvision > 0) {
           lines.push({
-            accountCode: vacationProvisionAccount || '492', // Provisión para Vacaciones
+            accountCode: vacationProvisionAccount || '492',
+            subaccountCode: vacationProvisionAccount || '492',
             debit: 0,
             credit: Math.round(totalVacationProvision * 100) / 100,
             description: `Provisión para vacaciones ${payroll.period}`,
-          });
-        }
-
-        if (totalSubsidyRetention > 0) {
-          lines.push({
-            accountCode: subsidyProvisionAccount || '500', // Provisión para Pagos de Subsidios de Seguridad Social
-            debit: 0,
-            credit: round2(totalSubsidyRetention),
-            description: `Retención 1,5 % para subsidios de seguridad social ${payroll.period}`,
-          });
-        }
-
-        // ── Retenciones separadas por subcuenta (RH-02) ──
-        const ssLiability = Math.round((totalSocialSecurity + employerSocialSecurityTotal) * 100) / 100;
-        if (ssLiability > 0) {
-          lines.push({
-            accountCode: socialSecurityAccount || '460-0020', // Retenciones por Pagar - Contribución a la Seguridad Social
-            debit: 0,
-            credit: ssLiability,
-            description: `Contribución Especial y cuota patronal SS ${payroll.period}`,
-          });
-        }
-        if (totalIncomeTax > 0) {
-          lines.push({
-            accountCode: incomeTaxAccount || '460-0010', // Retenciones por Pagar - Impuesto sobre Ingresos Personales
-            debit: 0,
-            credit: Math.round(totalIncomeTax * 100) / 100,
-            description: `Retención Impuesto sobre Ingresos Personales ${payroll.period}`,
-          });
-        }
-        if (totalUnion > 0) {
-          lines.push({
-            accountCode: unionAccount || '460-0030', // Retenciones por Pagar - Cuotas Sindicales
-            debit: 0,
-            credit: Math.round(totalUnion * 100) / 100,
-            description: `Cuotas Sindicales retenidas ${payroll.period}`,
-          });
-        }
-        if (totalOtherRetention > 0) {
-          lines.push({
-            accountCode: otherRetentionAccount || '460-0050', // Retenciones por Pagar - Otras Retenciones
-            debit: 0,
-            credit: Math.round(totalOtherRetention * 100) / 100,
-            description: `Otras deducciones retenidas ${payroll.period}`,
           });
         }
 
@@ -900,21 +822,6 @@ export class PayrollService {
             MappingType.PAYROLL_CASH,
           ),
         ]);
-        // El débito debe cancelar las mismas subcuentas de Nóminas por Pagar que
-        // se acreditaron al devengar, o los saldos por categoría quedarían
-        // descuadrados.
-        const netByCategory = new Map<string, number>();
-        for (const item of payroll.items || []) {
-          const category = item.occupationalCategory || '0020';
-          netByCategory.set(
-            category,
-            round2((netByCategory.get(category) || 0) + Number(item.netSalary || 0)),
-          );
-        }
-        if (netByCategory.size === 0) {
-          netByCategory.set('0020', netAmount);
-        }
-
         await this.voucherService.createVoucherFromModule(
           companyId,
           'payroll',
@@ -926,16 +833,15 @@ export class PayrollService {
             reference: `PAGO-NOM-${payroll.period}-${payroll.id}`,
             createdBy: 'Sistema',
             lines: [
-              ...Array.from(netByCategory.entries())
-                .filter(([, amount]) => amount > 0)
-                .map(([category, amount]) => ({
-                  accountCode: this.payableAccountForCategory(payableAccount, category),
-                  debit: amount,
-                  credit: 0,
-                  description: `Liquidación nómina ${payroll.period} — ${OCCUPATIONAL_CATEGORY_LABELS[category as OccupationalCategory] || category}`,
-                })),
               {
-                accountCode: cashAccount, // Efectivo en Banco
+                accountCode: payableAccount || '455',
+                subaccountCode: payableAccount || '455',
+                debit: netAmount,
+                credit: 0,
+                description: `Liquidación nómina ${payroll.period}`,
+              },
+              {
+                accountCode: cashAccount || '110', // Efectivo en Banco
                 debit: 0,
                 credit: netAmount,
                 description: `Pago nómina ${payroll.period}`,
@@ -1148,21 +1054,4 @@ export class PayrollService {
     }
   }
 
-  /**
-   * Devuelve la subcuenta de Nóminas por Pagar que corresponde a una categoría
-   * ocupacional. La cuenta 455 es agrupadora y no admite movimientos, por lo que
-   * el neto debe acreditarse en 455-0010 … 455-0050 según la categoría.
-   */
-  private payableAccountForCategory(
-    payableAccount: string | null | undefined,
-    category: string,
-  ): string {
-    const base = payableAccount || '455';
-    // Si el mapeo ya apunta a una subcuenta analítica, se respeta tal cual.
-    if (base.includes('-')) return base;
-    const suffix = OCCUPATIONAL_CATEGORY_LABELS[category as OccupationalCategory]
-      ? category
-      : '0020';
-    return `${base}-${suffix}`;
-  }
 }

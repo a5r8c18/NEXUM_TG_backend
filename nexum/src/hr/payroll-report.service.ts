@@ -109,6 +109,7 @@ export class PayrollReportService {
     companyId: number,
     payrollId: number,
     unit: 'dias' | 'horas' = 'dias',
+    groupBy: 'area' | 'costCenterAccount' | 'none' = 'area',
   ): Promise<Buffer> {
     const payroll = await this.payrollRepo.findOne({
       where: { id: payrollId, companyId },
@@ -127,16 +128,36 @@ export class PayrollReportService {
       : [];
     const codeByEmployee = new Map(employees.map((e) => [e.id, e.employeeCode]));
 
-    // Agrupar por centro de costo (área). Las líneas sin centro van a un grupo
-    // "Sin área asignada" al final.
+    // Agrupar según la opción elegida: área, centro de costo-cuenta o sin agrupar.
+    const groupLabel =
+      groupBy === 'costCenterAccount'
+        ? 'Centro de costo / Cuenta'
+        : groupBy === 'none'
+          ? ''
+          : 'Área';
+    const showHeader = groupBy !== 'none';
+
     const groups = new Map<string, AreaGroup>();
     for (const item of payroll.items ?? []) {
-      const areaName = item.costCenter?.name ?? 'Sin área asignada';
-      if (!groups.has(areaName)) groups.set(areaName, { name: areaName, items: [] });
-      groups.get(areaName)!.items.push(item);
+      let groupName: string;
+      if (groupBy === 'none') {
+        groupName = 'Sin agrupar';
+      } else if (groupBy === 'costCenterAccount') {
+        const cc = item.costCenter?.name ?? 'Sin centro de costo';
+        const acc = item.expenseAccountCode ? ` · Cuenta ${item.expenseAccountCode}` : '';
+        groupName = `${cc}${acc}`;
+      } else {
+        groupName = item.costCenter?.name ?? 'Sin área asignada';
+      }
+      if (!groups.has(groupName)) groups.set(groupName, { name: groupName, items: [] });
+      groups.get(groupName)!.items.push(item);
     }
     const areas = [...groups.values()].sort((a, b) =>
-      a.name === 'Sin área asignada' ? 1 : b.name === 'Sin área asignada' ? -1 : a.name.localeCompare(b.name),
+      a.name === 'Sin área asignada' || a.name === 'Sin centro de costo'
+        ? 1
+        : b.name === 'Sin área asignada' || b.name === 'Sin centro de costo'
+          ? -1
+          : a.name.localeCompare(b.name),
     );
 
     const isVacations = payroll.concept === 'vacaciones';
@@ -220,7 +241,7 @@ export class PayrollReportService {
           : sum(area.items, (i) => (payroll.concept === 'salario' ? Number(i.vacationProvision || 0) : 0)),
       };
       return `
-      <div class="area-header">Área: ${this.esc(area.name)}</div>
+      ${showHeader ? `<div class="area-header">${groupLabel}: ${this.esc(area.name)}</div>` : ''}
       <table>
         <thead>
           <tr>
@@ -249,8 +270,8 @@ export class PayrollReportService {
         </thead>
         <tbody>
           ${rows}
-          <tr class="total-area">
-            <td colspan="6">TOTAL ÁREA</td>
+          ${showHeader ? `<tr class="total-area">
+            <td colspan="6">TOTAL GRUPO</td>
             <td>${this.fmt(t.aCobrar)}</td>
             <td>${this.fmt(t.bonif)}</td>
             <td>${this.fmt(t.pat)}</td>
@@ -262,7 +283,7 @@ export class PayrollReportService {
             <td>${t.vacationTime}</td>
             <td>${this.fmt(t.vacationImporte)}</td>
             <td></td>
-          </tr>
+          </tr>` : ''}
         </tbody>
       </table>`;
     };

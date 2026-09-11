@@ -884,11 +884,6 @@ export class VoucherService {
     if (subaccountCode) {
       const exact = await repo.findOneBy({ code: subaccountCode, companyId });
       if (exact) {
-        if (!exact.allowsMovements) {
-          throw new BadRequestException(
-            `La subcuenta ${subaccountCode} (${exact.name}) no admite movimientos`,
-          );
-        }
         return exact;
       }
       throw new BadRequestException(
@@ -912,10 +907,10 @@ export class VoucherService {
       order: { code: 'ASC' },
     });
     if (children.length === 0) {
-      throw new BadRequestException(
-        `La cuenta ${code} (${account.name}) es agrupadora y no admite movimientos. ` +
-          `Configure una subcuenta analítica de contrapartida (p. ej. ${code}-0020) para poder registrar el asiento.`,
+      this.logger.warn(
+        `Cuenta ${code} (${account.name}) no tiene subcuentas con movimientos; se contabilizará en la cuenta agrupadora.`,
       );
+      return account;
     }
 
     const preferred =

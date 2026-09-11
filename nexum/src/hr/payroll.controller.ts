@@ -61,6 +61,7 @@ export class PayrollController {
     @Req() req: Request,
     @Param('id') id: string,
     @Query('unit') unit: 'dias' | 'horas',
+    @Query('groupBy') groupBy: 'area' | 'costCenterAccount' | 'none',
     @Res() res: Response,
   ) {
     const companyId = getCompanyId(req);
@@ -68,6 +69,7 @@ export class PayrollController {
       companyId,
       parseInt(id),
       unit,
+      groupBy,
     );
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
@@ -143,14 +145,13 @@ export class PayrollController {
   process(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { processedBy: string; costCenterId?: string },
+    @Body() body: { processedBy: string },
   ) {
     const companyId = getCompanyId(req);
     return this.payrollService.process(
       companyId,
       parseInt(id),
       body.processedBy,
-      body.costCenterId,
     );
   }
 
