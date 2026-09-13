@@ -55,6 +55,9 @@ export class AccountMappingService {
     [MappingType.PAYROLL_RETENTION_INCOME_TAX]: '460-0010', // Impuesto sobre Ingresos Personales
     [MappingType.PAYROLL_RETENTION_UNION]: '460-0030', // Cuotas Sindicales
     [MappingType.PAYROLL_RETENTION_OTHER]: '460-0050', // Otras Retenciones
+    // Tributos a cargo de la entidad: obligación directa con el presupuesto.
+    [MappingType.PAYROLL_EMPLOYER_SOCIAL_SECURITY]: '440-0008', // Obligaciones con el Presupuesto - Contribuciones
+    [MappingType.PAYROLL_LABOR_FORCE_TAX]: '440-0007', // Obligaciones con el Presupuesto - Otros Impuestos
     [MappingType.PAYROLL_VACATION_PROVISION]: '492', // Provisión para Vacaciones
     [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
     [MappingType.PAYROLL_SUBSIDY_PROVISION]: '500', // Provisión para Pagos de Subsidios de Seguridad Social a Corto Plazo
@@ -303,6 +306,8 @@ export class AccountMappingService {
       '410-0020': 'Cuentas por Pagar - Fuera del Órgano u Organismo',
       '434': 'Materiales Recibidos de Forma Anticipada',
       '440': 'Obligaciones con el Presupuesto del Estado',
+      '440-0007': 'Otros Impuestos - Obligaciones con el Presupuesto',
+      '440-0008': 'Contribuciones - Obligaciones con el Presupuesto',
       '455': 'Nóminas por Pagar',
       '460': 'Retenciones por Pagar',
       '460-0010': 'Impuesto sobre Ingresos Personales - Retenciones por Pagar',

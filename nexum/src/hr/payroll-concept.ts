@@ -72,11 +72,33 @@ export const MINIMUM_WAGE = 3210;
 /** Cuantía mínima del subsidio: 50 % del salario mínimo vigente (Art. 41). */
 export const MINIMUM_SUBSIDY = MINIMUM_WAGE * 0.5;
 
-/** Retención mensual para el pago de subsidios de seguridad social (Art. 46). */
+/**
+ * Parte del aporte patronal destinada a las prestaciones de seguridad social a
+ * corto plazo (Art. 46). No se entera al presupuesto: se acumula en la
+ * provisión 500 para pagar subsidios, maternidad, etc.
+ */
 export const SUBSIDY_RETENTION_RATE = 0.015;
 
-/** Cuota patronal de Seguridad Social. */
-export const EMPLOYER_SOCIAL_SECURITY_RATE = 0.145;
+/**
+ * Parte del aporte patronal que se entera al Presupuesto del Estado (cuenta
+ * 440 Obligaciones con el Presupuesto del Estado).
+ */
+export const EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE = 0.125;
+
+/**
+ * Contribución a la Seguridad Social a cargo del empleador: 14 % de la nómina,
+ * de los cuales 12,5 % van al presupuesto y 1,5 % a la provisión para
+ * prestaciones a corto plazo.
+ */
+export const EMPLOYER_SOCIAL_SECURITY_RATE =
+  EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE + SUBSIDY_RETENTION_RATE;
+
+/**
+ * Impuesto por la Utilización de la Fuerza de Trabajo: 5 % del total de las
+ * remuneraciones pagadas. Es un tributo a cargo de la entidad, no una
+ * retención al trabajador.
+ */
+export const LABOR_FORCE_TAX_RATE = 0.05;
 
 /** Semanas del año usadas para el salario promedio semanal (Art. 16). */
 export const WEEKS_PER_YEAR = 52;

@@ -40,6 +40,9 @@ export enum MappingType {
   PAYROLL_RETENTION_INCOME_TAX = 'payroll_retention_income_tax', // Impuesto sobre Ingresos Personales
   PAYROLL_RETENTION_UNION = 'payroll_retention_union', // Cuotas Sindicales
   PAYROLL_RETENTION_OTHER = 'payroll_retention_other', // Otras Retenciones
+  // ── Tributos a cargo de la entidad (440 Obligaciones con el Presupuesto del Estado) ──
+  PAYROLL_EMPLOYER_SOCIAL_SECURITY = 'payroll_employer_social_security', // Aporte patronal 12,5 % que se entera al presupuesto
+  PAYROLL_LABOR_FORCE_TAX = 'payroll_labor_force_tax', // Impuesto por la Utilización de la Fuerza de Trabajo (5 %)
   PAYROLL_VACATION_PROVISION = 'payroll_vacation_provision', // 492 Provisión para Vacaciones acumuladas
   PAYROLL_CASH = 'payroll_cash', // Crédito: cuenta de tesorería para el pago de nómina
   // ── Conceptos de nómina distintos del salario ──

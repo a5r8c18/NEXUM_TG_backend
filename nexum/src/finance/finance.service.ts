@@ -218,6 +218,38 @@ export class FinanceService {
     return apRepo.save(ap);
   }
 
+  /**
+   * Anula las cuentas por pagar generadas por un documento de otro módulo
+   * (identificadas por su `invoiceNumber`), siempre que no tengan pagos
+   * aplicados. Se usa, por ejemplo, al cancelar una nómina para dar de baja la
+   * obligación con el presupuesto del estado.
+   */
+  async cancelPayablesByInvoiceNumber(
+    companyId: number,
+    invoiceNumber: string,
+    reason?: string,
+  ) {
+    const payables = await this.apRepo.find({
+      where: { companyId, invoiceNumber },
+    });
+    let cancelled = 0;
+    for (const ap of payables) {
+      if (ap.status === 'cancelled' || ap.status === 'paid') continue;
+      if (Number(ap.paidAmount) > 0) {
+        this.logger.warn(
+          `CxP ${ap.apNumber} tiene pagos aplicados; no se anula automáticamente`,
+        );
+        continue;
+      }
+      ap.status = 'cancelled';
+      ap.balanceAmount = 0;
+      ap.notes = reason ? `${ap.notes ? ap.notes + ' | ' : ''}${reason}` : ap.notes;
+      await this.apRepo.save(ap);
+      cancelled++;
+    }
+    return { cancelled };
+  }
+
   async updatePayable(companyId: number, id: string, data: any) {
     const ap = await this.findOnePayable(companyId, id);
     Object.assign(ap, data);
