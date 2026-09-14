@@ -390,7 +390,6 @@ export class PayrollService {
       healthInsurance?: number;
       pension?: number;
       taxWithholding?: number;
-      unionDues?: number;
       otherDeductions?: number;
       notes?: string;
     }>,
@@ -447,7 +446,6 @@ export class PayrollService {
         Number(item.healthInsurance || 0) +
         Number(item.pension || 0) +
         Number(item.taxWithholding || 0) +
-        Number(item.unionDues || 0) +
         Number(item.otherDeductions || 0);
       const netSalary = grossSalary - totalDeductionsItem;
 
@@ -477,7 +475,9 @@ export class PayrollService {
         healthInsurance: Number(item.healthInsurance || 0),
         pension: Number(item.pension || 0),
         taxWithholding: Number(item.taxWithholding || 0),
-        unionDues: Number(item.unionDues || 0),
+        // La cuota sindical la aporta el trabajador directamente al sindicato:
+        // la entidad no la retiene ni la contabiliza.
+        unionDues: 0,
         otherDeductions: Number(item.otherDeductions || 0),
         totalDeductions: totalDeductionsItem,
         netSalary,
@@ -530,7 +530,6 @@ export class PayrollService {
           payableAccount,
           socialSecurityAccount,
           incomeTaxAccount,
-          unionAccount,
           otherRetentionAccount,
           employerSocialSecurityAccount,
           laborForceTaxAccount,
@@ -541,6 +540,9 @@ export class PayrollService {
           prodExpenseAccount,
           assocExpenseAccount,
           adminExpenseAccount,
+          employerSSExpenseAccount,
+          laborForceTaxExpenseAccount,
+          taxTransitAccount,
         ] = await Promise.all([
           this.accountMappingService.getAccountForMapping(
             companyId,
@@ -553,10 +555,6 @@ export class PayrollService {
           this.accountMappingService.getAccountForMapping(
             companyId,
             MappingType.PAYROLL_RETENTION_INCOME_TAX,
-          ),
-          this.accountMappingService.getAccountForMapping(
-            companyId,
-            MappingType.PAYROLL_RETENTION_UNION,
           ),
           this.accountMappingService.getAccountForMapping(
             companyId,
@@ -598,6 +596,18 @@ export class PayrollService {
             companyId,
             MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE,
           ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_TAX_EXPENSE_SOCIAL_SECURITY,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_TAX_EXPENSE_LABOR_FORCE,
+          ),
+          this.accountMappingService.getAccountForMapping(
+            companyId,
+            MappingType.PAYROLL_TAX_TRANSIT,
+          ),
         ]);
 
         const concept = payroll.concept || 'salario';
@@ -606,10 +616,12 @@ export class PayrollService {
 
         const expenseByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
         const vacationByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
-        // Los tributos a cargo de la entidad (aporte patronal y UFT) son gasto
-        // de la empresa y se contabilizan en el comprobante de impuestos.
-        const employerSSByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
-        const laborForceTaxByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
+        // Los tributos a cargo de la entidad (aporte patronal y UFT) no son
+        // gasto de salario: se cargan a la 855 Otros Impuestos, Tasas y
+        // Contribuciones en el comprobante de impuestos, desglosados solo por
+        // centro de costo.
+        const employerSSByCostCenter = new Map<string, number>();
+        const laborForceTaxByCostCenter = new Map<string, number>();
         let totalVacationProvision = 0;
         // Impuestos empresariales
         let employerSSBudgetTotal = 0;
@@ -618,7 +630,6 @@ export class PayrollService {
         // Impuestos salariales (retenciones)
         let totalSocialSecurity = 0;
         let totalIncomeTax = 0;
-        let totalUnion = 0;
         let totalOtherRetention = 0;
 
         // En maternidad el débito depende del sector de cada trabajador.
@@ -692,27 +703,29 @@ export class PayrollService {
             if (employerSS > 0) {
               employerSSBudgetTotal += ssBudget;
               subsidyProvisionTotal += ssProvision;
-              const ssExisting =
-                employerSSByAccountAndCC.get(key) || { accountCode, amount: 0, costCenterId };
-              ssExisting.amount += employerSS;
-              employerSSByAccountAndCC.set(key, ssExisting);
+              const ccKey = costCenterId || '';
+              employerSSByCostCenter.set(
+                ccKey,
+                (employerSSByCostCenter.get(ccKey) || 0) + employerSS,
+              );
             }
 
             // Impuesto por la Utilización de la Fuerza de Trabajo (5 %).
             const laborForceTax = round2(gross * LABOR_FORCE_TAX_RATE);
             if (laborForceTax > 0) {
               laborForceTaxTotal += laborForceTax;
-              const uftExisting =
-                laborForceTaxByAccountAndCC.get(key) || { accountCode, amount: 0, costCenterId };
-              uftExisting.amount += laborForceTax;
-              laborForceTaxByAccountAndCC.set(key, uftExisting);
+              const ccKey = costCenterId || '';
+              laborForceTaxByCostCenter.set(
+                ccKey,
+                (laborForceTaxByCostCenter.get(ccKey) || 0) + laborForceTax,
+              );
             }
           }
 
           // ── Impuestos salariales: la entidad solo retiene ──
+          // La cuota sindical no se retiene al trabajador, por eso no figura.
           totalSocialSecurity += Number(item.socialSecurity || 0);
           totalIncomeTax += Number(item.taxWithholding || 0);
-          totalUnion += Number(item.unionDues || 0);
           totalOtherRetention += Number(item.otherDeductions || 0);
         }
         employerSSBudgetTotal = round2(employerSSBudgetTotal);
@@ -720,13 +733,14 @@ export class PayrollService {
         laborForceTaxTotal = round2(laborForceTaxTotal);
         totalSocialSecurity = round2(totalSocialSecurity);
         totalIncomeTax = round2(totalIncomeTax);
-        totalUnion = round2(totalUnion);
         totalOtherRetention = round2(totalOtherRetention);
 
         const lines: any[] = [];
         const conceptLabel = PAYROLL_CONCEPT_LABELS[concept] || concept;
 
         // ── Débito según el concepto ──
+        // Subsidio, paternidad y maternidad quedan fuera del comprobante de
+        // nómina: cada uno genera su propio comprobante más abajo.
         if (concept === 'vacaciones') {
           // El pago de vacaciones se carga a la provisión 492, nunca a gasto.
           const vacationDebit = round2(totalGross);
@@ -739,34 +753,7 @@ export class PayrollService {
               description: `Pago de vacaciones ${payroll.period} (cargo a provisión)`,
             });
           }
-        } else if (concept === 'subsidio' || concept === 'paternidad') {
-          // El subsidio se carga a la provisión 500 financiada con el 1,5 %.
-          if (totalGross > 0) {
-            lines.push({
-              accountCode: subsidyProvisionAccount || '500',
-              subaccountCode: subsidyProvisionAccount || '500',
-              debit: totalGross,
-              credit: 0,
-              description: `${conceptLabel} ${payroll.period} (cargo a provisión 500)`,
-            });
-          }
-        } else if (concept === 'maternidad') {
-          if (maternityStateAmount > 0) {
-            lines.push({
-              accountCode: maternityReceivableAccount || '164-0030',
-              subaccountCode: maternityReceivableAccount || '164-0030',
-              debit: round2(maternityStateAmount),
-              credit: 0,
-              description: `Licencia de maternidad ${payroll.period} — recuperable del presupuesto`,
-            });
-          }
-          if (maternityNonStateAmount > 0) {
-            this.logger.warn(
-              `Nómina ${payroll.id}: ${maternityNonStateAmount} CUP de maternidad ` +
-                'del sector no estatal los paga la Filial INSS; no se contabilizan.',
-            );
-          }
-        } else {
+        } else if (chargesExpense) {
           for (const [, { accountCode, amount, costCenterId }] of expenseByAccountAndCC.entries()) {
             lines.push({
               accountCode,
@@ -781,7 +768,7 @@ export class PayrollService {
 
         // El total de la nómina se acredita en la cuenta 455 como un solo monto,
         // sin separar por categorías ocupacionales ni centros de costo.
-        if (totalGross > 0) {
+        if (lines.length > 0) {
           lines.push({
             accountCode: payableAccount || '455',
             subaccountCode: payableAccount || '455',
@@ -789,6 +776,57 @@ export class PayrollService {
             credit: round2(totalGross),
             description: `Nómina por pagar ${payroll.period}`,
           });
+        }
+
+        // ── Comprobante independiente de subsidio y licencia de paternidad ──
+        // El pago se carga a la provisión 500, financiada con el 1,5 % del
+        // aporte patronal, y no a gasto del período.
+        const subsidyLines: any[] = [];
+        if ((concept === 'subsidio' || concept === 'paternidad') && totalGross > 0) {
+          subsidyLines.push({
+            accountCode: subsidyProvisionAccount || '500',
+            subaccountCode: subsidyProvisionAccount || '500',
+            debit: round2(totalGross),
+            credit: 0,
+            description: `${conceptLabel} ${payroll.period} (cargo a provisión 500)`,
+          });
+          subsidyLines.push({
+            accountCode: payableAccount || '455',
+            subaccountCode: payableAccount || '455',
+            debit: 0,
+            credit: round2(totalGross),
+            description: `${conceptLabel} por pagar ${payroll.period}`,
+          });
+        }
+
+        // ── Comprobante independiente de licencia de maternidad ──
+        // Solo el sector estatal se contabiliza, como adeudo recuperable del
+        // presupuesto; el no estatal lo paga la Filial INSS.
+        const maternityLines: any[] = [];
+        if (concept === 'maternidad') {
+          const maternityDebit = round2(maternityStateAmount);
+          if (maternityDebit > 0) {
+            maternityLines.push({
+              accountCode: maternityReceivableAccount || '164-0030',
+              subaccountCode: maternityReceivableAccount || '164-0030',
+              debit: maternityDebit,
+              credit: 0,
+              description: `Licencia de maternidad ${payroll.period} — recuperable del presupuesto`,
+            });
+            maternityLines.push({
+              accountCode: payableAccount || '455',
+              subaccountCode: payableAccount || '455',
+              debit: 0,
+              credit: maternityDebit,
+              description: `Licencia de maternidad por pagar ${payroll.period}`,
+            });
+          }
+          if (maternityNonStateAmount > 0) {
+            this.logger.warn(
+              `Nómina ${payroll.id}: ${maternityNonStateAmount} CUP de maternidad ` +
+                'del sector no estatal los paga la Filial INSS; no se contabilizan.',
+            );
+          }
         }
 
         // ── Comprobante independiente de provisión de vacaciones ──
@@ -813,13 +851,18 @@ export class PayrollService {
           });
         }
 
-        // ── Comprobante independiente de impuestos y retenciones ──
+        // ── Comprobante único de impuestos: salariales y empresariales ──
+        // Débito: las retenciones contra la 455 (disminuyen la nómina por pagar)
+        // y los tributos a cargo de la entidad contra la 855.
+        // Crédito: la transitoria 699 por cada obligación con el presupuesto —la
+        // 440 la registra Finanzas al crear la CxP— y la provisión 500 por el
+        // 1,5 %, que no se entera al presupuesto.
         const taxLines: any[] = [];
+        const transitAccount = taxTransitAccount || '699';
         const employeeRetentions = round2(
-          totalSocialSecurity + totalIncomeTax + totalUnion + totalOtherRetention,
+          totalSocialSecurity + totalIncomeTax + totalOtherRetention,
         );
         if (employeeRetentions > 0) {
-          // Las retenciones al trabajador disminuyen la nómina por pagar.
           taxLines.push({
             accountCode: payableAccount || '455',
             subaccountCode: payableAccount || '455',
@@ -828,55 +871,61 @@ export class PayrollService {
             description: `Retenciones a trabajadores ${payroll.period}`,
           });
         }
-        // Gasto de la entidad por el aporte patronal (14 %) y por la UFT (5 %).
-        for (const [, { accountCode, amount, costCenterId }] of employerSSByAccountAndCC.entries()) {
+        for (const [ccKey, amount] of employerSSByCostCenter.entries()) {
           taxLines.push({
-            accountCode,
-            debit: amount,
+            accountCode: employerSSExpenseAccount || '855',
+            debit: round2(amount),
             credit: 0,
             description: `Aporte patronal a la Seguridad Social ${payroll.period}`,
-            costCenterId,
+            costCenterId: ccKey || undefined,
             subelement: '50400',
           });
         }
-        for (const [, { accountCode, amount, costCenterId }] of laborForceTaxByAccountAndCC.entries()) {
+        for (const [ccKey, amount] of laborForceTaxByCostCenter.entries()) {
           taxLines.push({
-            accountCode,
-            debit: amount,
+            accountCode: laborForceTaxExpenseAccount || '855',
+            debit: round2(amount),
             credit: 0,
             description: `Impuesto por Utilización de la Fuerza de Trabajo ${payroll.period}`,
-            costCenterId,
+            costCenterId: ccKey || undefined,
           });
         }
 
-        // Retención al trabajador: la entidad actúa como agente de retención.
-        if (totalSocialSecurity > 0) {
-          taxLines.push({
-            accountCode: socialSecurityAccount || '460-0020',
-            subaccountCode: socialSecurityAccount || '460-0020',
-            debit: 0,
-            credit: totalSocialSecurity,
-            description: `Contribución Especial a la Seguridad Social retenida ${payroll.period}`,
-          });
-        }
-
-        // Obligaciones directas con el Presupuesto del Estado (440).
-        if (employerSSBudgetTotal > 0) {
-          taxLines.push({
+        // Una obligación por cada impuesto, tanto empresarial como retenido.
+        const budgetObligations = [
+          {
+            amount: employerSSBudgetTotal,
             accountCode: employerSocialSecurityAccount || '440-0008',
-            subaccountCode: employerSocialSecurityAccount || '440-0008',
-            debit: 0,
-            credit: employerSSBudgetTotal,
-            description: `Contribución a la Seguridad Social — aporte patronal 12,5 % ${payroll.period}`,
-          });
-        }
-        if (laborForceTaxTotal > 0) {
-          taxLines.push({
+            description: 'Contribución a la Seguridad Social — aporte patronal 12,5 %',
+          },
+          {
+            amount: laborForceTaxTotal,
             accountCode: laborForceTaxAccount || '440-0007',
-            subaccountCode: laborForceTaxAccount || '440-0007',
+            description: 'Impuesto por la Utilización de la Fuerza de Trabajo 5 %',
+          },
+          {
+            amount: totalSocialSecurity,
+            accountCode: socialSecurityAccount || '440-0008',
+            description: 'Contribución Especial a la Seguridad Social retenida 5 %',
+          },
+          {
+            amount: totalIncomeTax,
+            accountCode: incomeTaxAccount || '440-0005',
+            description: 'Impuesto sobre Ingresos Personales retenido',
+          },
+          {
+            amount: totalOtherRetention,
+            accountCode: otherRetentionAccount || '440-0007',
+            description: 'Otras deducciones retenidas',
+          },
+        ].filter((obligation) => obligation.amount > 0);
+
+        for (const obligation of budgetObligations) {
+          taxLines.push({
+            accountCode: transitAccount,
             debit: 0,
-            credit: laborForceTaxTotal,
-            description: `Impuesto por Utilización de la Fuerza de Trabajo 5 % ${payroll.period}`,
+            credit: round2(obligation.amount),
+            description: `${obligation.description} ${payroll.period}`,
           });
         }
 
@@ -891,40 +940,19 @@ export class PayrollService {
             description: `Provisión para prestaciones de seguridad social a corto plazo 1,5 % ${payroll.period}`,
           });
         }
-        if (totalIncomeTax > 0) {
-          taxLines.push({
-            accountCode: incomeTaxAccount || '460-0010',
-            subaccountCode: incomeTaxAccount || '460-0010',
-            debit: 0,
-            credit: totalIncomeTax,
-            description: `Retención Impuesto sobre Ingresos Personales ${payroll.period}`,
-          });
-        }
-        if (totalUnion > 0) {
-          taxLines.push({
-            accountCode: unionAccount || '460-0030',
-            subaccountCode: unionAccount || '460-0030',
-            debit: 0,
-            credit: totalUnion,
-            description: `Cuotas Sindicales retenidas ${payroll.period}`,
-          });
-        }
-        if (totalOtherRetention > 0) {
-          taxLines.push({
-            accountCode: otherRetentionAccount || '460-0050',
-            subaccountCode: otherRetentionAccount || '460-0050',
-            debit: 0,
-            credit: totalOtherRetention,
-            description: `Otras deducciones retenidas ${payroll.period}`,
-          });
-        }
 
         const date = payroll.endDate || new Date().toISOString().split('T')[0];
         const createdBy = processedBy || 'Sistema';
 
         // Si el concepto no produjo movimientos (p. ej. maternidad íntegramente
         // del sector no estatal), no se genera comprobante.
-        if (lines.length === 0 && vacationLines.length === 0 && taxLines.length === 0) {
+        if (
+          lines.length === 0 &&
+          subsidyLines.length === 0 &&
+          maternityLines.length === 0 &&
+          vacationLines.length === 0 &&
+          taxLines.length === 0
+        ) {
           this.logger.log(
             `Nómina ${payroll.id} (${conceptLabel}): sin movimientos contables`,
           );
@@ -947,6 +975,42 @@ export class PayrollService {
             manager,
           );
           this.logger.log(`Comprobante nómina ${payroll.period} generado`);
+        }
+
+        if (subsidyLines.length > 0) {
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'payroll',
+            `SUB-${payroll.id}`,
+            {
+              date,
+              description: `${conceptLabel} ${payroll.period}`,
+              type: 'payroll',
+              reference: `SUB-${payroll.period}-${payroll.id}`,
+              createdBy,
+              lines: subsidyLines,
+            },
+            manager,
+          );
+          this.logger.log(`Comprobante ${conceptLabel} ${payroll.period} generado`);
+        }
+
+        if (maternityLines.length > 0) {
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'payroll',
+            `MAT-${payroll.id}`,
+            {
+              date,
+              description: `Licencia de maternidad ${payroll.period}`,
+              type: 'payroll',
+              reference: `MAT-${payroll.period}-${payroll.id}`,
+              createdBy,
+              lines: maternityLines,
+            },
+            manager,
+          );
+          this.logger.log(`Comprobante maternidad ${payroll.period} generado`);
         }
 
         if (vacationLines.length > 0) {
@@ -984,47 +1048,16 @@ export class PayrollService {
           );
           this.logger.log(`Comprobante impuestos ${payroll.period} generado`);
 
-          // El comprobante de impuestos genera las obligaciones de pago en
-          // Finanzas: los tributos a cargo de la entidad (440) y también las
-          // retenciones practicadas al trabajador (460), que hay que enterar.
+          // El comprobante de impuestos genera una obligación de pago en
+          // Finanzas por cada tributo, tanto los que son a cargo de la entidad
+          // como las retenciones practicadas al trabajador. Al crearse, Finanzas
+          // cancela la transitoria 699 contra la subcuenta de la 440.
           await this.createTaxObligations(
             companyId,
             payroll,
             date,
-            [
-              {
-                amount: employerSSBudgetTotal,
-                accountCode: employerSocialSecurityAccount || '440-0008',
-                description: 'Contribución a la Seguridad Social — aporte patronal 12,5 %',
-              },
-              {
-                amount: laborForceTaxTotal,
-                accountCode: laborForceTaxAccount || '440-0007',
-                description: 'Impuesto por la Utilización de la Fuerza de Trabajo 5 %',
-              },
-              {
-                amount: totalSocialSecurity,
-                accountCode: socialSecurityAccount || '460-0020',
-                description: 'Contribución Especial a la Seguridad Social retenida 5 %',
-              },
-              {
-                amount: totalIncomeTax,
-                accountCode: incomeTaxAccount || '460-0010',
-                description: 'Impuesto sobre Ingresos Personales retenido',
-              },
-              {
-                amount: totalUnion,
-                accountCode: unionAccount || '460-0030',
-                creditor: 'Sindicato (CTC)',
-                description: 'Cuotas sindicales retenidas',
-              },
-              {
-                amount: totalOtherRetention,
-                accountCode: otherRetentionAccount || '460-0050',
-                creditor: 'Otros acreedores por retenciones',
-                description: 'Otras deducciones retenidas',
-              },
-            ],
+            budgetObligations,
+            transitAccount,
             manager,
           );
         }
@@ -1043,15 +1076,12 @@ export class PayrollService {
   /**
    * Registra en Finanzas las obligaciones de pago derivadas del comprobante de
    * impuestos de la nómina: los tributos a cargo de la entidad (aporte patronal
-   * 12,5 % y UFT, cuenta 440) y las retenciones practicadas al trabajador
-   * (cuenta 460), que la entidad debe enterar al presupuesto o al acreedor
-   * correspondiente.
+   * 12,5 % y UFT) y las retenciones practicadas al trabajador, que la entidad
+   * debe enterar al presupuesto. Se genera una CxP por cada tributo.
    *
-   * El acreedor por defecto es el Presupuesto del Estado; las obligaciones con
-   * otros terceros (sindicato, etc.) lo indican explícitamente.
-   *
-   * No genera comprobante contable propio: el asiento ya se hizo en el
-   * comprobante de impuestos, así se evita duplicar el pasivo.
+   * El asiento del pasivo lo hace Finanzas al crear cada CxP: debita la
+   * transitoria 699 que acreditó el comprobante de impuestos y acredita la
+   * subcuenta de la 440, de modo que la obligación nace donde se gestiona.
    */
   private async createTaxObligations(
     companyId: number,
@@ -1063,10 +1093,12 @@ export class PayrollService {
       description: string;
       creditor?: string;
     }[],
+    transitAccountCode: string,
     manager: EntityManager,
   ) {
     const invoiceNumber = `IMP-${payroll.period}-${payroll.id}`;
-    const dueDate = PayrollService.taxDueDate(date);
+    // Las obligaciones tributarias con el presupuesto no tienen vencimiento.
+    const dueDate: null = null;
 
     for (const obligation of obligations) {
       if (obligation.amount <= 0) continue;
@@ -1082,6 +1114,7 @@ export class PayrollService {
             originalAmount: obligation.amount,
             dueDate,
             accountCode: obligation.accountCode,
+            transitAccountCode,
             currency: 'CUP',
             exchangeRate: 1,
             paymentTerms: 'mensual',
@@ -1107,7 +1140,8 @@ export class PayrollService {
     const [year, month] = date.split('-').map(Number);
     const dueYear = month === 12 ? year + 1 : year;
     const dueMonth = month === 12 ? 1 : month + 1;
-    return `${dueYear}-${String(dueMonth).padStart(2, '0')}-10`;
+    // No se usa: las obligaciones tributarias de nómina no tienen vencimiento.
+    return date;
   }
 
   async markAsPaid(companyId: number, id: number, bankAccountId?: string) {
@@ -1254,6 +1288,8 @@ export class PayrollService {
     // Anular los comprobantes de procesamiento y de pago asociados.
     const sourceIds = [
       String(payroll.id),
+      `SUB-${payroll.id}`,
+      `MAT-${payroll.id}`,
       `VAC-${payroll.id}`,
       `IMP-${payroll.id}`,
       `PAY-${payroll.id}`,

@@ -59,8 +59,8 @@ export class AccountPayable {
   @Column({ name: 'paid_amount', type: 'decimal', precision: 20, scale: 8, default: 0 })
   paidAmount: number;
 
-  @Column({ name: 'due_date', type: 'date' })
-  dueDate: string;
+  @Column({ name: 'due_date', type: 'date', nullable: true })
+  dueDate: string | null;
 
   @Column({ name: 'aging_days', type: 'integer', default: 0 })
   agingDays: number;
@@ -73,7 +73,7 @@ export class AccountPayable {
 
   /**
    * Cuenta del Nomenclador en la que está registrada la obligación
-   * (410 proveedores, 455 nóminas, 460 retenciones, 440 tributos…).
+   * (410 proveedores, 455 nóminas, 440 tributos y retenciones…).
    * Determina la cuenta que se debita al pagar; si es nula se asume proveedores.
    */
   @Column({ name: 'account_code', type: 'varchar', length: 20, nullable: true })

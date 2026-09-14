@@ -36,13 +36,23 @@ export enum MappingType {
   PAYROLL_PROCESSING_ASSOCIATED = 'payroll_processing_associated',
   PAYROLL_PROCESSING_ADMINISTRATIVE = 'payroll_processing_administrative',
   PAYROLL_PAYMENT = 'payroll_payment',
+  // ── Retenciones al trabajador (440 Obligaciones con el Presupuesto del Estado) ──
+  // La entidad actúa como agente de retención y entera lo retenido, por eso se
+  // acreditan en subcuentas de la 440 y no en cuentas de terceros.
   PAYROLL_RETENTION = 'payroll_retention', // Crédito: Contribución Especial a la Seguridad Social
   PAYROLL_RETENTION_INCOME_TAX = 'payroll_retention_income_tax', // Impuesto sobre Ingresos Personales
-  PAYROLL_RETENTION_UNION = 'payroll_retention_union', // Cuotas Sindicales
   PAYROLL_RETENTION_OTHER = 'payroll_retention_other', // Otras Retenciones
   // ── Tributos a cargo de la entidad (440 Obligaciones con el Presupuesto del Estado) ──
   PAYROLL_EMPLOYER_SOCIAL_SECURITY = 'payroll_employer_social_security', // Aporte patronal 12,5 % que se entera al presupuesto
   PAYROLL_LABOR_FORCE_TAX = 'payroll_labor_force_tax', // Impuesto por la Utilización de la Fuerza de Trabajo (5 %)
+  // ── Gasto por impuestos de nómina (855-864 Otros Impuestos, Tasas y Contribuciones) ──
+  // Los tributos a cargo de la entidad no se cargan a las cuentas de gasto de
+  // salario, sino a la 855 o a la subcuenta que defina el contador.
+  PAYROLL_TAX_EXPENSE_SOCIAL_SECURITY = 'payroll_tax_expense_social_security', // Débito del aporte patronal 14 %
+  PAYROLL_TAX_EXPENSE_LABOR_FORCE = 'payroll_tax_expense_labor_force', // Débito del Impuesto por Utilización de la Fuerza de Trabajo
+  // Transitoria que enlaza el comprobante de impuestos con la CxP de Finanzas:
+  // RRHH acredita la 699 y Finanzas la cancela contra la 440 al crear la CxP.
+  PAYROLL_TAX_TRANSIT = 'payroll_tax_transit', // 699 Transitoria del Sistema Automatizado
   PAYROLL_VACATION_PROVISION = 'payroll_vacation_provision', // 492 Provisión para Vacaciones acumuladas
   PAYROLL_CASH = 'payroll_cash', // Crédito: cuenta de tesorería para el pago de nómina
   // ── Conceptos de nómina distintos del salario ──

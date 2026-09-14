@@ -85,6 +85,7 @@ export class FinanceService {
       for (const record of records as Array<AccountReceivable | AccountPayable>) {
         if (['paid', 'written_off'].includes(record.status)) continue;
         if (Number(record.balanceAmount) <= 0) continue;
+        if (!record.dueDate) continue;
 
         const due = new Date(record.dueDate);
         due.setHours(0, 0, 0, 0);
@@ -201,7 +202,19 @@ export class FinanceService {
     return ap;
   }
 
+  /**
+   * Registra una cuenta por pagar.
+   *
+   * Si el módulo de origen envía `transitAccountCode` (p. ej. el comprobante de
+   * impuestos de nómina, que acredita la transitoria 699), la obligación nace
+   * contablemente aquí: se debita esa transitoria y se acredita la cuenta del
+   * pasivo (440 Obligaciones con el Presupuesto, 410 proveedores…), de modo que
+   * el pasivo se reconoce en el módulo donde se gestiona y la transitoria queda
+   * en cero. Sin `transitAccountCode` no se genera asiento, porque el pasivo ya
+   * viene asentado en el documento de origen.
+   */
   async createPayable(companyId: number, data: any, manager?: EntityManager) {
+    const { transitAccountCode, ...payableData } = data;
     const apNumber = await this.sequenceService.nextFormatted(
       companyId,
       'account-payable',
@@ -210,12 +223,51 @@ export class FinanceService {
     );
     const apRepo = manager ? manager.getRepository(AccountPayable) : this.apRepo;
     const ap = apRepo.create({
-      ...data,
+      ...payableData,
       companyId,
       apNumber,
-      balanceAmount: data.originalAmount,
+      balanceAmount: payableData.originalAmount,
     });
-    return apRepo.save(ap);
+    const saved = (await apRepo.save(ap)) as unknown as AccountPayable;
+
+    const amount = Number(payableData.originalAmount);
+    if (transitAccountCode && payableData.accountCode && amount > 0) {
+      const description =
+        `Obligación por pagar ${saved.apNumber} — ` +
+        `${payableData.notes || payableData.supplierName || ''}`.trim();
+      await this.voucherService.createVoucherFromModule(
+        companyId,
+        'finance',
+        `AP-${saved.id}`,
+        {
+          date: payableData.invoiceDate || new Date().toISOString().split('T')[0],
+          description,
+          type: 'otro',
+          reference: payableData.invoiceNumber || saved.apNumber,
+          createdBy: payableData.createdBy || 'Sistema',
+          lines: [
+            {
+              accountCode: transitAccountCode,
+              debit: amount,
+              credit: 0,
+              description: `Cancelación de transitoria ${saved.apNumber}`,
+            },
+            {
+              accountCode: payableData.accountCode,
+              subaccountCode: payableData.accountCode,
+              debit: 0,
+              credit: amount,
+              description,
+              reference: payableData.supplierName || null,
+            },
+          ],
+        },
+        manager,
+      );
+      this.logger.log(`Voucher de obligación generado para CxP ${saved.apNumber}`);
+    }
+
+    return saved;
   }
 
   /**
@@ -246,6 +298,27 @@ export class FinanceService {
       ap.notes = reason ? `${ap.notes ? ap.notes + ' | ' : ''}${reason}` : ap.notes;
       await this.apRepo.save(ap);
       cancelled++;
+
+      // Reversar el asiento con que nació la obligación, si lo hubo.
+      const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
+        companyId,
+        `AP-${ap.id}`,
+      );
+      for (const voucher of vouchers) {
+        if (voucher.status === 'cancelled') continue;
+        try {
+          await this.voucherService.updateVoucherStatus(
+            companyId,
+            voucher.id,
+            'cancelled',
+          );
+        } catch (error) {
+          this.logger.error(
+            `Error anulando comprobante ${voucher.voucherNumber} de la CxP ${ap.apNumber}: ` +
+              `${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
     }
     return { cancelled };
   }

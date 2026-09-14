@@ -85,12 +85,12 @@ export class WorkingCapitalService {
 
     // ── 2. CxP ──
     const payables = await this.apRepo.find({ where: { companyId } });
-    const pendingAP = payables.filter(p => p.status !== 'paid' && p.status !== 'cancelled');
-    const overdueAP = pendingAP.filter(p => p.dueDate < todayStr);
+    const pendingAP = payables.filter(p => p.status !== 'paid' && p.status !== 'cancelled' && p.dueDate);
+    const overdueAP = pendingAP.filter(p => p.dueDate! < todayStr);
     const totalApBalance = pendingAP.reduce((s, p) => s + Number(p.balanceAmount), 0);
     const totalApOverdue = overdueAP.reduce((s, p) => s + Number(p.balanceAmount), 0);
     const apAging = this.buildAgingBuckets(
-      pendingAP.map(p => ({ dueDate: p.dueDate, balance: Number(p.balanceAmount) })),
+      pendingAP.map(p => ({ dueDate: p.dueDate!, balance: Number(p.balanceAmount) })),
       todayStr,
     );
     const dpo = this.averageAge(pendingAP.map(p => p.createdAt), today);

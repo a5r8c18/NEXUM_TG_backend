@@ -51,13 +51,21 @@ export class AccountMappingService {
     // Cuenta agrupadora: el servicio de nómina le añade la subcuenta de categoría
     // ocupacional (455-0010 Dirigentes … 455-0050 Otros Trabajadores).
     [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
-    [MappingType.PAYROLL_RETENTION]: '460-0020', // Retenciones por Pagar - Contribución a la Seguridad Social
-    [MappingType.PAYROLL_RETENTION_INCOME_TAX]: '460-0010', // Impuesto sobre Ingresos Personales
-    [MappingType.PAYROLL_RETENTION_UNION]: '460-0030', // Cuotas Sindicales
-    [MappingType.PAYROLL_RETENTION_OTHER]: '460-0050', // Otras Retenciones
+    // Retenciones practicadas al trabajador: la entidad actúa como agente de
+    // retención y las entera al Presupuesto del Estado, por lo que se acreditan
+    // en las subcuentas de la 440 del Nomenclador 2016 (0001-0016). El contador
+    // puede sustituirlas por sus propias subcuentas desde Mapeo de Cuentas.
+    [MappingType.PAYROLL_RETENTION]: '440-0008', // Contribuciones (CESS retenida al trabajador)
+    [MappingType.PAYROLL_RETENTION_INCOME_TAX]: '440-0005', // Impuesto sobre Ingresos Personales
+    [MappingType.PAYROLL_RETENTION_OTHER]: '440-0007', // Otros Impuestos (otras retenciones)
     // Tributos a cargo de la entidad: obligación directa con el presupuesto.
     [MappingType.PAYROLL_EMPLOYER_SOCIAL_SECURITY]: '440-0008', // Obligaciones con el Presupuesto - Contribuciones
     [MappingType.PAYROLL_LABOR_FORCE_TAX]: '440-0007', // Obligaciones con el Presupuesto - Otros Impuestos
+    // Gasto por los tributos a cargo de la entidad. El contador puede abrir
+    // subcuentas de la 855 y asignar una distinta a cada tributo.
+    [MappingType.PAYROLL_TAX_EXPENSE_SOCIAL_SECURITY]: '855', // Otros Impuestos, Tasas y Contribuciones
+    [MappingType.PAYROLL_TAX_EXPENSE_LABOR_FORCE]: '855', // Otros Impuestos, Tasas y Contribuciones
+    [MappingType.PAYROLL_TAX_TRANSIT]: '699', // Transitoria del Sistema Automatizado
     [MappingType.PAYROLL_VACATION_PROVISION]: '492', // Provisión para Vacaciones
     [MappingType.PAYROLL_CASH]: '110', // Efectivo en Banco (pago de nómina)
     [MappingType.PAYROLL_SUBSIDY_PROVISION]: '500', // Provisión para Pagos de Subsidios de Seguridad Social a Corto Plazo
@@ -306,9 +314,11 @@ export class AccountMappingService {
       '410-0020': 'Cuentas por Pagar - Fuera del Órgano u Organismo',
       '434': 'Materiales Recibidos de Forma Anticipada',
       '440': 'Obligaciones con el Presupuesto del Estado',
+      '440-0005': 'Impuesto sobre Ingresos Personales - Obligaciones con el Presupuesto',
       '440-0007': 'Otros Impuestos - Obligaciones con el Presupuesto',
       '440-0008': 'Contribuciones - Obligaciones con el Presupuesto',
       '455': 'Nóminas por Pagar',
+      '855': 'Otros Impuestos, Tasas y Contribuciones',
       '460': 'Retenciones por Pagar',
       '460-0010': 'Impuesto sobre Ingresos Personales - Retenciones por Pagar',
       '460-0020': 'Contribución a la Seguridad Social - Retenciones por Pagar',

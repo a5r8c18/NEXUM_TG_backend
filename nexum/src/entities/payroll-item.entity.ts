@@ -100,7 +100,7 @@ export class PayrollItem {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   taxWithholding: number;
 
-  /** Cuotas sindicales retenidas. Se acreditan a la subcuenta 460-0030. */
+  /** Cuotas sindicales retenidas. Se acreditan a la subcuenta 440-0007. */
   @Column({ name: 'union_dues', type: 'decimal', precision: 10, scale: 2, default: 0 })
   unionDues: number;
 
