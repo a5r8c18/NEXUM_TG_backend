@@ -25,12 +25,27 @@ export function round4(value: number): number {
 }
 
 /**
- * Contribución Especial a la Seguridad Social del trabajador: 5 % hasta 150 000
- * CUP y 10 % por encima de esa cifra.
+ * Contribución Especial a la Seguridad Social del trabajador: 5 % hasta
+ * 15 000 CUP y 10 % solo sobre el excedente.
  */
 export function calculateSocialSecurity(grossSalary: number): number {
-  const rate = grossSalary > 150000 ? 0.1 : 0.05;
-  return round2(grossSalary * rate);
+  const brackets = [
+    { limit: 15000, rate: 0.05 },
+    { limit: Infinity, rate: 0.1 },
+  ];
+
+  let tax = 0;
+  let previousLimit = 0;
+  for (const bracket of brackets) {
+    if (grossSalary <= previousLimit) break;
+    const upper = bracket.limit === Infinity ? grossSalary : bracket.limit;
+    const taxableInBracket = Math.min(grossSalary, upper) - previousLimit;
+    if (taxableInBracket > 0) {
+      tax += taxableInBracket * bracket.rate;
+    }
+    previousLimit = upper;
+  }
+  return round2(tax);
 }
 
 /**

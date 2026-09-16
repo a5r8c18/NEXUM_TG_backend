@@ -695,10 +695,11 @@ export class PayrollService {
 
           // ── Tributos a cargo de la entidad (comprobante de impuestos) ──
           if (chargesExpense) {
+            const retentionBase = round2(gross + vacation);
             // Aporte patronal 14 %: 12,5 % al presupuesto + 1,5 % a la provisión 500.
-            const ssBudget = round2(gross * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE);
+            const ssBudget = round2(retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE);
             const ssProvision = Number(item.subsidyRetention || 0) ||
-              round2(gross * SUBSIDY_RETENTION_RATE);
+              round2(retentionBase * SUBSIDY_RETENTION_RATE);
             const employerSS = round2(ssBudget + ssProvision);
             if (employerSS > 0) {
               employerSSBudgetTotal += ssBudget;
@@ -711,7 +712,7 @@ export class PayrollService {
             }
 
             // Impuesto por la Utilización de la Fuerza de Trabajo (5 %).
-            const laborForceTax = round2(gross * LABOR_FORCE_TAX_RATE);
+            const laborForceTax = round2(retentionBase * LABOR_FORCE_TAX_RATE);
             if (laborForceTax > 0) {
               laborForceTaxTotal += laborForceTax;
               const ccKey = costCenterId || '';
