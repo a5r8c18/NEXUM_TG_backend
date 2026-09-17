@@ -408,10 +408,14 @@ export class VoucherService {
         line.subaccountCode,
       );
 
-      // Resolver nombres de la cuenta padre y de la subcuenta por separado
-      const parentAccount = account.parentCode
-        ? await accountRepo.findOneBy({ code: account.parentCode, companyId })
-        : null;
+      // Resolver nombres de la cuenta padre y de la subcuenta por separado.
+      // Solo las cuentas por debajo del nivel de cuenta (nivel 4+) se muestran
+      // como subcuenta: si el padre es un nivel agrupador del plan (20.1,
+      // 10.1, 30…), la cuenta es la propia resuelta (492, 500, 164, 699…).
+      const parentAccount =
+        account.parentCode && Number(account.level) >= 4
+          ? await accountRepo.findOneBy({ code: account.parentCode, companyId })
+          : null;
       const accountCode = parentAccount?.code ?? account.code;
       const accountName = parentAccount?.name ?? account.name;
       const subaccountCode = parentAccount ? account.code : null;
@@ -931,6 +935,7 @@ export class VoucherService {
         let accountId = line.accountId;
         let accountCode = line.accountCode;
         let accountName = line.accountName;
+        let subaccountCode = line.subaccountCode;
 
         if (!accountId) {
           const account = await this.resolvePostableAccount(
@@ -941,21 +946,29 @@ export class VoucherService {
           );
           accountId = account.id;
 
-          // Si la cuenta resuelta tiene padre, guardar el padre en accountCode/accountName
-          const parent = account.parentCode
-            ? await manager
-                .getRepository(Account)
-                .findOneBy({ code: account.parentCode, companyId })
-            : null;
+          // Si la cuenta resuelta tiene padre, guardar el padre en accountCode/accountName.
+          // Solo cuando la resuelta es una subcuenta real (nivel 4+): un padre
+          // agrupador del plan (20.1, 10.1, 30…) no es la cuenta.
+          const parent =
+            account.parentCode && Number(account.level) >= 4
+              ? await manager
+                  .getRepository(Account)
+                  .findOneBy({ code: account.parentCode, companyId })
+              : null;
           accountCode = parent?.code ?? account.code;
           accountName = parent?.name ?? account.name;
+          // Si la resolución terminó en una subcuenta distinta a la pedida
+          // (cuenta agrupadora → subcuenta analítica), reflejarla.
+          if (parent && !subaccountCode) {
+            subaccountCode = account.code;
+          }
         }
 
         // Subcuenta
         let subaccountName: string | null = null;
-        if (line.subaccountCode) {
+        if (subaccountCode) {
           const account = await manager.getRepository(Account).findOneBy({
-            code: line.subaccountCode,
+            code: subaccountCode,
             companyId,
           });
           if (account) {
@@ -1009,7 +1022,7 @@ export class VoucherService {
           accountId,
           accountCode: accountCode || line.accountCode,
           accountName: accountName || line.accountName,
-          subaccountCode: line.subaccountCode || null,
+          subaccountCode: subaccountCode || null,
           subaccountName,
           element: line.element || null,
           elementName,
