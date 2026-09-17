@@ -15,13 +15,13 @@ import {
 } from './payroll-concept';
 
 describe('Contribución a la Seguridad Social', () => {
-  it('aplica el 5 % hasta 150 000 CUP', () => {
+  it('aplica el 5 % hasta 15 000 CUP', () => {
     expect(calculateSocialSecurity(10000)).toBe(500);
-    expect(calculateSocialSecurity(150000)).toBe(7500);
+    expect(calculateSocialSecurity(15000)).toBe(750);
   });
 
-  it('aplica el 10 % por encima de 150 000 CUP', () => {
-    expect(calculateSocialSecurity(150001)).toBe(15000.1);
+  it('aplica el 10 % por encima de 15 000 CUP', () => {
+    expect(calculateSocialSecurity(15001)).toBe(750.1);
   });
 });
 

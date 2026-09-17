@@ -616,6 +616,12 @@ export class PayrollService {
 
         const expenseByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
         const vacationByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
+        // Las retenciones practicadas al trabajador se debitan en el
+        // comprobante de impuestos a la misma cuenta que financió el pago
+        // (gasto en salario/libre, 492 en vacaciones, 500 en subsidio y
+        // paternidad, 164-0030 en maternidad estatal), porque la 455 solo
+        // recoge el neto a pagar.
+        const deductionsByFunding = new Map<string, { accountCode: string; amount: number; costCenterId?: string; subelement?: string }>();
         // Los tributos a cargo de la entidad (aporte patronal y UFT) no son
         // gasto de salario: se cargan a la 855 Otros Impuestos, Tasas y
         // Contribuciones en el comprobante de impuestos, desglosados solo por
@@ -631,6 +637,8 @@ export class PayrollService {
         let totalSocialSecurity = 0;
         let totalIncomeTax = 0;
         let totalOtherRetention = 0;
+        let totalHealthInsurance = 0;
+        let totalPension = 0;
 
         // En maternidad el débito depende del sector de cada trabajador.
         let maternityStateAmount = 0;
@@ -662,12 +670,16 @@ export class PayrollService {
             free: freeConceptAccount,
           }, concept);
           const gross = Number(item.grossSalary);
+          // La 455 solo recoge el neto: el débito del comprobante de nómina
+          // distribuye el neto de cada línea por cuenta de gasto y centro de
+          // costo.
+          const net = Number(item.netSalary || 0);
 
           const costCenterId = item.costCenterId || undefined;
           const key = `${accountCode}#${costCenterId || ''}`;
           if (chargesExpense) {
             const existing = expenseByAccountAndCC.get(key) || { accountCode, amount: 0, costCenterId };
-            existing.amount += gross;
+            existing.amount += net;
             expenseByAccountAndCC.set(key, existing);
           }
 
@@ -680,7 +692,7 @@ export class PayrollService {
               maternityNonStateAmount += gross;
               continue;
             }
-            maternityStateAmount += gross;
+            maternityStateAmount += net;
           }
 
           // ── Provisión de vacaciones (RH-01) ──
@@ -728,6 +740,32 @@ export class PayrollService {
           totalSocialSecurity += Number(item.socialSecurity || 0);
           totalIncomeTax += Number(item.taxWithholding || 0);
           totalOtherRetention += Number(item.otherDeductions || 0);
+          totalHealthInsurance += Number(item.healthInsurance || 0);
+          totalPension += Number(item.pension || 0);
+
+          // Las retenciones se debitan en el comprobante de impuestos a la
+          // cuenta que financió el pago de la línea.
+          const itemDeductions = Number(item.totalDeductions || 0);
+          if (itemDeductions > 0) {
+            const fundingAccount =
+              concept === 'vacaciones'
+                ? vacationProvisionAccount || '492'
+                : concept === 'subsidio' || concept === 'paternidad'
+                  ? subsidyProvisionAccount || '500'
+                  : concept === 'maternidad'
+                    ? maternityReceivableAccount || '164-0030'
+                    : accountCode;
+            const dedCc = chargesExpense ? costCenterId : undefined;
+            const dedKey = `${fundingAccount}#${dedCc || ''}`;
+            const dedEntry = deductionsByFunding.get(dedKey) || {
+              accountCode: fundingAccount,
+              amount: 0,
+              costCenterId: dedCc,
+              subelement: chargesExpense ? '50100' : undefined,
+            };
+            dedEntry.amount += itemDeductions;
+            deductionsByFunding.set(dedKey, dedEntry);
+          }
         }
         employerSSBudgetTotal = round2(employerSSBudgetTotal);
         subsidyProvisionTotal = round2(subsidyProvisionTotal);
@@ -735,16 +773,20 @@ export class PayrollService {
         totalSocialSecurity = round2(totalSocialSecurity);
         totalIncomeTax = round2(totalIncomeTax);
         totalOtherRetention = round2(totalOtherRetention);
+        totalHealthInsurance = round2(totalHealthInsurance);
+        totalPension = round2(totalPension);
 
         const lines: any[] = [];
         const conceptLabel = PAYROLL_CONCEPT_LABELS[concept] || concept;
 
-        // ── Débito según el concepto ──
-        // Subsidio, paternidad y maternidad quedan fuera del comprobante de
-        // nómina: cada uno genera su propio comprobante más abajo.
+        // ── Débitos del comprobante de nómina ──
+        // La 455 solo recoge el líquido a pagar (neto); las retenciones se
+        // debitan en el comprobante de impuestos a la cuenta que financió el
+        // pago. Subsidio, paternidad y maternidad quedan fuera de este
+        // comprobante: cada uno genera el suyo más abajo.
         if (concept === 'vacaciones') {
           // El pago de vacaciones se carga a la provisión 492, nunca a gasto.
-          const vacationDebit = round2(totalGross);
+          const vacationDebit = round2(totalNet);
           if (vacationDebit > 0) {
             lines.push({
               accountCode: vacationProvisionAccount || '492',
@@ -767,27 +809,48 @@ export class PayrollService {
           }
         }
 
-        // El total de la nómina se acredita en la cuenta 455 como un solo monto,
-        // sin separar por categorías ocupacionales ni centros de costo.
-        if (lines.length > 0) {
+        // ── Provisión de vacaciones dentro del mismo comprobante (RH-01) ──
+        for (const [, { accountCode, amount, costCenterId }] of vacationByAccountAndCC.entries()) {
+          lines.push({
+            accountCode,
+            debit: amount,
+            credit: 0,
+            description: `Provisión mensual de vacaciones ${payroll.period}`,
+            costCenterId,
+            subelement: '50300',
+          });
+        }
+        if (totalVacationProvision > 0) {
+          lines.push({
+            accountCode: vacationProvisionAccount || '492',
+            subaccountCode: vacationProvisionAccount || '492',
+            debit: 0,
+            credit: round2(totalVacationProvision),
+            description: `Provisión para vacaciones ${payroll.period}`,
+          });
+        }
+
+        // La nómina se acredita en la 455 por el neto a pagar, como un solo
+        // monto, sin separar por categorías ocupacionales ni centros de costo.
+        if (lines.length > 0 && totalNet > 0) {
           lines.push({
             accountCode: payableAccount || '455',
             subaccountCode: payableAccount || '455',
             debit: 0,
-            credit: round2(totalGross),
+            credit: round2(totalNet),
             description: `Nómina por pagar ${payroll.period}`,
           });
         }
 
         // ── Comprobante independiente de subsidio y licencia de paternidad ──
         // El pago se carga a la provisión 500, financiada con el 1,5 % del
-        // aporte patronal, y no a gasto del período.
+        // aporte patronal, y no a gasto del período. La 455 recoge solo el neto.
         const subsidyLines: any[] = [];
-        if ((concept === 'subsidio' || concept === 'paternidad') && totalGross > 0) {
+        if ((concept === 'subsidio' || concept === 'paternidad') && totalNet > 0) {
           subsidyLines.push({
             accountCode: subsidyProvisionAccount || '500',
             subaccountCode: subsidyProvisionAccount || '500',
-            debit: round2(totalGross),
+            debit: round2(totalNet),
             credit: 0,
             description: `${conceptLabel} ${payroll.period} (cargo a provisión 500)`,
           });
@@ -795,7 +858,7 @@ export class PayrollService {
             accountCode: payableAccount || '455',
             subaccountCode: payableAccount || '455',
             debit: 0,
-            credit: round2(totalGross),
+            credit: round2(totalNet),
             description: `${conceptLabel} por pagar ${payroll.period}`,
           });
         }
@@ -830,46 +893,25 @@ export class PayrollService {
           }
         }
 
-        // ── Comprobante independiente de provisión de vacaciones ──
-        const vacationLines: any[] = [];
-        for (const [, { accountCode, amount, costCenterId }] of vacationByAccountAndCC.entries()) {
-          vacationLines.push({
-            accountCode,
-            debit: amount,
-            credit: 0,
-            description: `Provisión mensual de vacaciones ${payroll.period}`,
-            costCenterId,
-            subelement: '50300',
-          });
-        }
-        if (totalVacationProvision > 0) {
-          vacationLines.push({
-            accountCode: vacationProvisionAccount || '492',
-            subaccountCode: vacationProvisionAccount || '492',
-            debit: 0,
-            credit: round2(totalVacationProvision),
-            description: `Provisión para vacaciones ${payroll.period}`,
-          });
-        }
-
         // ── Comprobante único de impuestos: salariales y empresariales ──
-        // Débito: las retenciones contra la 455 (disminuyen la nómina por pagar)
-        // y los tributos a cargo de la entidad contra la 855.
+        // Débito: las retenciones a la cuenta que financió el pago (gasto, 492,
+        // 500 o 164-0030), porque la 455 ya recogió solo el neto, y los
+        // tributos a cargo de la entidad contra la 855.
         // Crédito: la transitoria 699 por cada obligación con el presupuesto —la
         // 440 la registra Finanzas al crear la CxP— y la provisión 500 por el
         // 1,5 %, que no se entera al presupuesto.
         const taxLines: any[] = [];
         const transitAccount = taxTransitAccount || '699';
-        const employeeRetentions = round2(
-          totalSocialSecurity + totalIncomeTax + totalOtherRetention,
-        );
-        if (employeeRetentions > 0) {
+        for (const [, ded] of deductionsByFunding.entries()) {
+          const dedAmount = round2(ded.amount);
+          if (dedAmount <= 0) continue;
           taxLines.push({
-            accountCode: payableAccount || '455',
-            subaccountCode: payableAccount || '455',
-            debit: employeeRetentions,
+            accountCode: ded.accountCode,
+            debit: dedAmount,
             credit: 0,
             description: `Retenciones a trabajadores ${payroll.period}`,
+            costCenterId: ded.costCenterId,
+            subelement: ded.subelement,
           });
         }
         for (const [ccKey, amount] of employerSSByCostCenter.entries()) {
@@ -919,6 +961,16 @@ export class PayrollService {
             accountCode: otherRetentionAccount || '440-0007',
             description: 'Otras deducciones retenidas',
           },
+          {
+            amount: totalPension,
+            accountCode: socialSecurityAccount || '440-0008',
+            description: 'Pensión retenida a trabajadores',
+          },
+          {
+            amount: totalHealthInsurance,
+            accountCode: otherRetentionAccount || '440-0007',
+            description: 'Seguro de salud retenido a trabajadores',
+          },
         ].filter((obligation) => obligation.amount > 0);
 
         for (const obligation of budgetObligations) {
@@ -951,7 +1003,6 @@ export class PayrollService {
           lines.length === 0 &&
           subsidyLines.length === 0 &&
           maternityLines.length === 0 &&
-          vacationLines.length === 0 &&
           taxLines.length === 0
         ) {
           this.logger.log(
@@ -1012,24 +1063,6 @@ export class PayrollService {
             manager,
           );
           this.logger.log(`Comprobante maternidad ${payroll.period} generado`);
-        }
-
-        if (vacationLines.length > 0) {
-          await this.voucherService.createVoucherFromModule(
-            companyId,
-            'payroll',
-            `VAC-${payroll.id}`,
-            {
-              date,
-              description: `Provisión de vacaciones ${payroll.period}`,
-              type: 'payroll',
-              reference: `VAC-${payroll.period}-${payroll.id}`,
-              createdBy,
-              lines: vacationLines,
-            },
-            manager,
-          );
-          this.logger.log(`Comprobante vacaciones ${payroll.period} generado`);
         }
 
         if (taxLines.length > 0) {
@@ -1168,7 +1201,23 @@ export class PayrollService {
     await manager.getRepository(Payroll).save(payroll);
 
     // ── Contabilización de pago de nómina ──
-    const netAmount = Number(payroll.totalNet);
+    let netAmount = Number(payroll.totalNet);
+    if (payroll.concept === 'maternidad') {
+      // El sector no estatal lo paga la Filial INSS: nunca se acreditó a la
+      // 455 ni debe salir de caja de la empresa.
+      const employeeIds = [...new Set(payroll.items.map((i) => i.employeeId))];
+      const emps = employeeIds.length
+        ? await this.employeeRepo.findBy({ companyId, id: In(employeeIds) })
+        : [];
+      const sectorById = new Map(
+        emps.map((e) => [e.id, e.employmentSector || 'state']),
+      );
+      netAmount = round2(
+        payroll.items
+          .filter((i) => (sectorById.get(i.employeeId) || 'state') !== 'non_state')
+          .reduce((s, i) => s + Number(i.netSalary || 0), 0),
+      );
+    }
     if (netAmount > 0) {
       try {
         const [payableAccount, cashAccount] = await Promise.all([
