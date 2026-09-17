@@ -27,6 +27,7 @@ import {
   PayrollConcept,
   PAYROLL_CONCEPT_LABELS,
   WEEKS_PER_YEAR,
+  WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
 
 interface GenerateInput {
@@ -279,9 +280,12 @@ export class PayrollConceptService {
         data.endDate,
       );
 
-      // Cálculo de vacaciones: salario contractual × 9.09%.
+      // Pago de vacaciones: salario diario (base de 24 días laborables) por
+      // los días disfrutados que caen en el período. El 9,09 % es la tasa de
+      // provisión mensual que financia la 492, no la del pago.
       const salary = Number(emp.salary || 0);
-      const gross = round2(salary * 0.0909);
+      const dailyRate = round2(salary / WORKING_DAYS_PER_MONTH);
+      const gross = round2(dailyRate * days);
       const socialSecurity = calculateSocialSecurity(gross);
       const taxWithholding = calculateIncomeTax(gross);
       const totalDeductions = round2(socialSecurity + taxWithholding);
@@ -298,7 +302,9 @@ export class PayrollConceptService {
         averageSalary: salary,
         paidUnits: days,
         appliedRate: 1,
-        notes: `Vacaciones ${leave.startDate} a ${leave.endDate} (${days} días en el período)`,
+        notes:
+          `Vacaciones ${leave.startDate} a ${leave.endDate}: ` +
+          `${days} días × ${dailyRate} (salario / ${WORKING_DAYS_PER_MONTH})`,
       });
     }
 

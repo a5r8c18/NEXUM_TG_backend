@@ -796,6 +796,27 @@ export class PayrollService {
               description: `Pago de vacaciones ${payroll.period} (cargo a provisión)`,
             });
           }
+
+          // La 492 absorbe el bruto completo: el neto en este comprobante y
+          // las retenciones en el de impuestos. Si el saldo acreedor
+          // contabilizado no lo cubre, la cuenta queda temporalmente en
+          // deudor hasta que se posteen las provisiones acumuladas.
+          const vacationCharge = round2(totalGross);
+          if (vacationCharge > 0) {
+            const provisionAccount = vacationProvisionAccount || '492';
+            const provisionBalance = await this.getPostedAccountBalance(
+              companyId,
+              provisionAccount,
+            );
+            if (provisionBalance < vacationCharge) {
+              this.logger.warn(
+                `Nómina ${payroll.id} (vacaciones ${payroll.period}): el cargo a la ` +
+                  `${provisionAccount} (${vacationCharge}) excede su saldo acreedor ` +
+                  `contabilizado (${round2(provisionBalance)}). Quedará en saldo ` +
+                  `deudor hasta contabilizar las provisiones pendientes.`,
+              );
+            }
+          }
         } else if (chargesExpense) {
           for (const [, { accountCode, amount, costCenterId }] of expenseByAccountAndCC.entries()) {
             lines.push({
@@ -1452,6 +1473,27 @@ export class PayrollService {
    * tiene prioridad; después se usa la del centro de costo y, en último lugar,
    * los mapeos por tipo de centro.
    */
+  /**
+   * Saldo contabilizado de una cuenta (créditos − débitos en comprobantes
+   * posted). Incluye líneas persistidas con la cuenta como subcuenta
+   * (representación anterior a la corrección cuenta/subcuenta).
+   */
+  private async getPostedAccountBalance(
+    companyId: number,
+    accountCode: string,
+  ): Promise<number> {
+    const rows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(vl.credit) - SUM(vl.debit), 0) AS balance
+       FROM voucher_lines vl
+       JOIN vouchers v ON v.id = vl.voucher_id
+       WHERE v.company_id = $1
+         AND v.status = 'posted'
+         AND (vl.account_code = $2 OR vl.subaccount_code = $2)`,
+      [companyId, accountCode],
+    );
+    return Number(rows[0]?.balance || 0);
+  }
+
   private resolveExpenseAccount(
     item: PayrollItem,
     defaults: {
