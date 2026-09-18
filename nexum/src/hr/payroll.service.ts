@@ -280,20 +280,25 @@ export class PayrollService {
         },
       });
       // Los días sin sueldo se descuentan como días laborables (base 24),
-      // igual que se computan los días trabajados.
-      const unpaidDays = unpaidLeaves.reduce(
-        (sum, l) =>
-          sum +
-          Math.min(
-            overlapWorkingDays(
-              l.startDate,
-              l.endDate,
-              data.startDate,
-              data.endDate,
-            ),
-            WORKING_DAYS_PER_MONTH,
-          ),
-        0,
+      // igual que se computan los días trabajados. Una licencia que cubre
+      // todo el período descuenta los 24 laborables del mes.
+      const unpaidDays = Math.min(
+        unpaidLeaves.reduce((sum, l) => {
+          const coversPeriod =
+            l.startDate <= data.startDate && l.endDate >= data.endDate;
+          return (
+            sum +
+            (coversPeriod
+              ? WORKING_DAYS_PER_MONTH
+              : overlapWorkingDays(
+                  l.startDate,
+                  l.endDate,
+                  data.startDate,
+                  data.endDate,
+                ))
+          );
+        }, 0),
+        WORKING_DAYS_PER_MONTH,
       );
       const dailyRate = baseSalary / WORKING_DAYS_PER_MONTH;
       const unpaidDeduction = Math.round(unpaidDays * dailyRate * 100) / 100;
