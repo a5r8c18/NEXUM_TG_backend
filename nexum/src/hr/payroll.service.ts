@@ -21,7 +21,7 @@ import { FinanceService } from '../finance/finance.service';
 import {
   calculateIncomeTax,
   calculateSocialSecurity,
-  overlapDays,
+  overlapWorkingDays,
   round2,
 } from './payroll-calculations';
 import {
@@ -30,12 +30,11 @@ import {
   PAYROLL_CONCEPT_LABELS,
   PayrollConcept,
   SUBSIDY_RETENTION_RATE,
+  WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
 
 // Jornada legal mensual promedio en Cuba (horas) para el cálculo del salario/hora.
 const MONTHLY_LEGAL_HOURS = 190.6;
-// Días promedio del mes para el cálculo del salario diario (descuentos por ausencia).
-const DAYS_PER_MONTH = 30;
 
 @Injectable()
 export class PayrollService {
@@ -280,12 +279,23 @@ export class PayrollService {
           status: 'approved',
         },
       });
+      // Los días sin sueldo se descuentan como días laborables (base 24),
+      // igual que se computan los días trabajados.
       const unpaidDays = unpaidLeaves.reduce(
         (sum, l) =>
-          sum + overlapDays(l.startDate, l.endDate, data.startDate, data.endDate),
+          sum +
+          Math.min(
+            overlapWorkingDays(
+              l.startDate,
+              l.endDate,
+              data.startDate,
+              data.endDate,
+            ),
+            WORKING_DAYS_PER_MONTH,
+          ),
         0,
       );
-      const dailyRate = baseSalary / DAYS_PER_MONTH;
+      const dailyRate = baseSalary / WORKING_DAYS_PER_MONTH;
       const unpaidDeduction = Math.round(unpaidDays * dailyRate * 100) / 100;
 
       // ── Ausencias no remuneradas: reducen el devengo, no son retención (RH-03) ──
@@ -336,7 +346,7 @@ export class PayrollService {
         otherDeductions: 0,
         totalDeductions: totalDeductionsItem,
         netSalary,
-        paidUnits: DAYS_PER_MONTH - unpaidDays,
+        paidUnits: Math.max(0, WORKING_DAYS_PER_MONTH - unpaidDays),
         vacationProvision,
         subsidyRetention,
         averageSalary: baseSalary,
@@ -429,8 +439,10 @@ export class PayrollService {
 
       let grossSalary: number;
       if (isSalary) {
-        const paidUnits = Number(item.paidUnits || 0) || 30;
-        const baseEarnings = round2((Number(item.baseSalary || 0) / 30) * paidUnits);
+        const paidUnits = Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH;
+        const baseEarnings = round2(
+          (Number(item.baseSalary || 0) / WORKING_DAYS_PER_MONTH) * paidUnits,
+        );
         grossSalary =
           baseEarnings +
           Number(item.overtimePay || 0) +
@@ -464,7 +476,7 @@ export class PayrollService {
         expenseAccountCode: employee?.expenseAccountCode || null,
         occupationalCategory: employee?.occupationalCategory || '0020',
         baseSalary: Number(item.baseSalary || 0),
-        paidUnits: isSalary ? Number(item.paidUnits || 0) || 30 : Number(item.paidUnits || 0),
+        paidUnits: isSalary ? Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH : Number(item.paidUnits || 0),
         overtimeHours: Number(item.overtimeHours || 0),
         overtimePay: Number(item.overtimePay || 0),
         bonuses: Number(item.bonuses || 0),

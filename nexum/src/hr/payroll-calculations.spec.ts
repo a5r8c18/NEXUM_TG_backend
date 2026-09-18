@@ -7,6 +7,7 @@ import {
   calculateWeeklyAverageSalary,
   evaluateSubsidyLimit,
   overlapDays,
+  overlapWorkingDays,
 } from './payroll-calculations';
 import {
   MINIMUM_SUBSIDY,
@@ -212,5 +213,34 @@ describe('Solapamiento de rangos de fechas', () => {
 
   it('recorta la licencia al período de la nómina', () => {
     expect(overlapDays('2026-05-01', '2026-05-31', '2026-04-20', '2026-05-04')).toBe(4);
+  });
+});
+
+describe('Días laborables de solapamiento (vacaciones)', () => {
+  // Septiembre 2026: 1 = martes; 5-6 y 12-13 son sábado-domingo.
+  it('excluye sábados y domingos del conteo', () => {
+    // Licencia de lunes 7 a domingo 13 → 7 días naturales, 5 laborables.
+    expect(
+      overlapWorkingDays('2026-09-07', '2026-09-13', '2026-09-01', '2026-09-30'),
+    ).toBe(5);
+  });
+
+  it('cuenta 10 días laborables en dos semanas naturales', () => {
+    expect(
+      overlapWorkingDays('2026-09-07', '2026-09-18', '2026-09-01', '2026-09-30'),
+    ).toBe(10);
+  });
+
+  it('devuelve cero si el solapamiento cae solo en fin de semana', () => {
+    expect(
+      overlapWorkingDays('2026-09-05', '2026-09-06', '2026-09-01', '2026-09-30'),
+    ).toBe(0);
+  });
+
+  it('recorta la licencia al período contando solo laborables', () => {
+    // Licencia vie 4 - mar 8, período desde lun 7 → solapan lun 7 y mar 8 = 2.
+    expect(
+      overlapWorkingDays('2026-09-04', '2026-09-08', '2026-09-07', '2026-09-30'),
+    ).toBe(2);
   });
 });

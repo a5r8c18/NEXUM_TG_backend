@@ -10,6 +10,7 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { Company } from '../entities/company.entity';
 import { CostCenter } from '../entities/cost-center.entity';
+import { WORKING_DAYS_PER_MONTH } from './payroll-concept';
 
 /** Horas legales mensuales usadas para la tarifa horaria del modelo. */
 const MONTHLY_LEGAL_HOURS = 190.6;
@@ -163,18 +164,27 @@ export class PayrollReportService {
     const isVacations = payroll.concept === 'vacaciones';
     const isHours = unit === 'horas';
     const unitLabel = isHours ? 'Horas' : 'Días';
-    const DAYS_PER_MONTH = 30;
-    const HOURS_PER_DAY = MONTHLY_LEGAL_HOURS / DAYS_PER_MONTH;
+    const HOURS_PER_DAY = MONTHLY_LEGAL_HOURS / WORKING_DAYS_PER_MONTH;
     const round2 = (v: number) => Math.round(v * 100) / 100;
+    // Vacaciones acumuladas: 2,18 días por cada 24 días laborables trabajados
+    // (paidUnits ya está en base laborable; un mes completo → 2,18).
+    const VACATION_DAYS_ACCRUAL_RATE = 2.18 / WORKING_DAYS_PER_MONTH;
+    const accruedVacationDays = (item: PayrollItem): number => {
+      const units =
+        Number(item.paidUnits || 0) > 0
+          ? Number(item.paidUnits)
+          : WORKING_DAYS_PER_MONTH;
+      return Math.min(units, WORKING_DAYS_PER_MONTH) * VACATION_DAYS_ACCRUAL_RATE;
+    };
 
     const rowHtml = (item: PayrollItem): string => {
       const baseForRate = Number(item.baseSalary || item.averageSalary || 0);
       const rate = isHours
         ? baseForRate / MONTHLY_LEGAL_HOURS
-        : baseForRate / DAYS_PER_MONTH;
+        : baseForRate / WORKING_DAYS_PER_MONTH;
       const rawUnits = Number(item.paidUnits || 0) > 0
         ? Number(item.paidUnits)
-        : (isHours ? MONTHLY_LEGAL_HOURS : DAYS_PER_MONTH);
+        : (isHours ? MONTHLY_LEGAL_HOURS : WORKING_DAYS_PER_MONTH);
       const timeUnits = isHours ? rawUnits * HOURS_PER_DAY : rawUnits;
 
       const bonif =
@@ -187,7 +197,9 @@ export class PayrollReportService {
 
       const vacationTime = isVacations
         ? String(Number(item.paidUnits || 0).toFixed(3))
-        : (payroll.concept === 'salario' ? '' : '—');
+        : (payroll.concept === 'salario'
+          ? accruedVacationDays(item).toFixed(3)
+          : '—');
       const vacationAmount = isVacations
         ? gross
         : (payroll.concept === 'salario'
@@ -235,7 +247,9 @@ export class PayrollReportService {
         pagado: sum(area.items, (i) => Number(i.netSalary || 0)),
         vacationTime: isVacations
           ? sum(area.items, (i) => Number(i.paidUnits || 0)).toFixed(3)
-          : '',
+          : (payroll.concept === 'salario'
+            ? sum(area.items, accruedVacationDays).toFixed(3)
+            : ''),
         vacationImporte: isVacations
           ? sum(area.items, (i) => Number(i.grossSalary || 0))
           : sum(area.items, (i) => (payroll.concept === 'salario' ? Number(i.vacationProvision || 0) : 0)),

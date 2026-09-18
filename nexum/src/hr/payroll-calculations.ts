@@ -95,6 +95,40 @@ export function overlapDays(
   return Math.floor(ms / (1000 * 60 * 60 * 24)) + 1;
 }
 
+/** Convierte 'YYYY-MM-DD[...]' a Date local para evaluar el día de la semana. */
+function parseLocalDate(value: string): Date {
+  const [y, m, d] = value.slice(0, 10).split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+/**
+ * Días laborables (lunes a viernes) de solapamiento entre dos rangos de
+ * fechas. Los fines de semana no computan porque el salario diario se expresa
+ * en días laborables (base de 24 por mes).
+ */
+export function overlapWorkingDays(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string,
+): number {
+  const start = new Date(
+    Math.max(parseLocalDate(aStart).getTime(), parseLocalDate(bStart).getTime()),
+  );
+  const end = new Date(
+    Math.min(parseLocalDate(aEnd).getTime(), parseLocalDate(bEnd).getTime()),
+  );
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return 0;
+  let days = 0;
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const dow = cursor.getDay();
+    if (dow !== 0 && dow !== 6) days++;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
 // ── Subsidio por enfermedad o accidente (Art. 39-46) ──
 
 export interface SubsidyInput {

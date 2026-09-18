@@ -21,6 +21,7 @@ import {
   calculateWeeklyAverageSalary,
   evaluateSubsidyLimit,
   overlapDays,
+  overlapWorkingDays,
   round2,
 } from './payroll-calculations';
 import {
@@ -273,16 +274,18 @@ export class PayrollConceptService {
       });
       if (!emp) continue;
 
-      const days = overlapDays(
+      const days = overlapWorkingDays(
         leave.startDate,
         leave.endDate,
         data.startDate,
         data.endDate,
       );
+      if (days <= 0) continue;
 
       // Pago de vacaciones: salario diario (base de 24 días laborables) por
-      // los días disfrutados que caen en el período. El 9,09 % es la tasa de
-      // provisión mensual que financia la 492, no la del pago.
+      // los días laborables disfrutados que caen en el período; los fines de
+      // semana no computan. El 9,09 % es la tasa de provisión mensual que
+      // financia la 492, no la del pago.
       const salary = Number(emp.salary || 0);
       const dailyRate = round2(salary / WORKING_DAYS_PER_MONTH);
       const gross = round2(dailyRate * days);
@@ -304,7 +307,7 @@ export class PayrollConceptService {
         appliedRate: 1,
         notes:
           `Vacaciones ${leave.startDate} a ${leave.endDate}: ` +
-          `${days} días × ${dailyRate} (salario / ${WORKING_DAYS_PER_MONTH})`,
+          `${days} días laborables × ${dailyRate} (salario / ${WORKING_DAYS_PER_MONTH})`,
       });
     }
 
