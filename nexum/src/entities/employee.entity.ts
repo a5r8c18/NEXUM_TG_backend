@@ -74,6 +74,14 @@ export class Employee {
   @Column({ type: 'varchar', nullable: true })
   documentId: string | null;
 
+  /** Banco donde se acredita el salario. Alimenta el fichero de acreditación. */
+  @Column({ name: 'bank_name', type: 'varchar', length: 100, nullable: true })
+  bankName: string | null;
+
+  /** Número de cuenta o tarjeta magnética para la acreditación del salario. */
+  @Column({ name: 'bank_account', type: 'varchar', length: 40, nullable: true })
+  bankAccount: string | null;
+
   /**
    * Cuenta de gasto de nómina seleccionada al crear el trabajador. Tiene
    * prioridad sobre la cuenta del centro de costo y sobre los mapeos por tipo.

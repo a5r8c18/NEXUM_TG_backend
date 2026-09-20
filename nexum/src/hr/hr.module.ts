@@ -11,6 +11,8 @@ import {
   LeavesController,
 } from './hr-management.controller';
 import { HrManagementService } from './hr-management.service';
+import { HrReportController } from './hr-report.controller';
+import { HrReportService } from './hr-report.service';
 import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
 import { JobPosition } from '../entities/job-position.entity';
@@ -52,8 +54,9 @@ import { FinanceModule } from '../finance/finance.module';
     PayrollController,
     AttendanceController,
     LeavesController,
+    HrReportController,
   ],
-  providers: [HrService, PayrollService, PayrollConceptService, PayrollReportService, HrManagementService],
-  exports: [HrService, PayrollService, PayrollConceptService, PayrollReportService, HrManagementService],
+  providers: [HrService, PayrollService, PayrollConceptService, PayrollReportService, HrManagementService, HrReportService],
+  exports: [HrService, PayrollService, PayrollConceptService, PayrollReportService, HrManagementService, HrReportService],
 })
 export class HrModule {}

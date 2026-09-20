@@ -24,6 +24,10 @@ export class JobPosition {
   @Column({ name: 'base_salary', type: 'decimal', precision: 15, scale: 2, default: 0 })
   baseSalary: number;
 
+  /** Plazas aprobadas del cargo en la plantilla. Las cubiertas se computan. */
+  @Column({ name: 'approved_count', type: 'int', default: 1 })
+  approvedCount: number;
+
   /** Jornada laboral en horas. */
   @Column({ name: 'working_hours', type: 'decimal', precision: 5, scale: 2, default: 8 })
   workingHours: number;
