@@ -83,6 +83,17 @@ export class Employee {
   bankAccount: string | null;
 
   /**
+   * Saldo inicial de vacaciones al entrar al sistema: días e importe que el
+   * trabajador traía acumulados antes de la primera nómina registrada. Es la
+   * base sobre la que crece el acumulado del Art. 102 y de la que se paga.
+   */
+  @Column({ name: 'initial_vacation_days', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  initialVacationDays: number;
+
+  @Column({ name: 'initial_vacation_amount', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  initialVacationAmount: number;
+
+  /**
    * Cuenta de gasto de nómina seleccionada al crear el trabajador. Tiene
    * prioridad sobre la cuenta del centro de costo y sobre los mapeos por tipo.
    */

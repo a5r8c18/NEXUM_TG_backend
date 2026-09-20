@@ -97,6 +97,15 @@ export class HrReportService {
       balances.set(id, acc);
     };
 
+    // Saldo de apertura: lo que cada trabajador traía acumulado antes de la
+    // primera nómina del sistema.
+    const employees = await this.employeeRepo.find({ where: { companyId } });
+    for (const emp of employees) {
+      const days = Number(emp.initialVacationDays || 0);
+      const amount = Number(emp.initialVacationAmount || 0);
+      if (days > 0 || amount > 0) add(emp.id, days, amount);
+    }
+
     for (const payroll of payrolls) {
       for (const item of payroll.items || []) {
         if (payroll.concept === 'vacaciones') {
