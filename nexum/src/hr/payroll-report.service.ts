@@ -10,7 +10,10 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { Company } from '../entities/company.entity';
 import { CostCenter } from '../entities/cost-center.entity';
-import { WORKING_DAYS_PER_MONTH } from './payroll-concept';
+import {
+  VACATION_ACCRUAL_RATE,
+  WORKING_DAYS_PER_MONTH,
+} from './payroll-concept';
 
 /** Horas legales mensuales usadas para la tarifa horaria del modelo. */
 const MONTHLY_LEGAL_HOURS = 190.6;
@@ -166,15 +169,14 @@ export class PayrollReportService {
     const unitLabel = isHours ? 'Horas' : 'Días';
     const HOURS_PER_DAY = MONTHLY_LEGAL_HOURS / WORKING_DAYS_PER_MONTH;
     const round2 = (v: number) => Math.round(v * 100) / 100;
-    // Vacaciones acumuladas: 2,18 días por cada 24 días laborables trabajados
-    // (paidUnits ya está en base laborable; un mes completo → 2,18).
-    const VACATION_DAYS_ACCRUAL_RATE = 2.18 / WORKING_DAYS_PER_MONTH;
+    // Vacaciones acumuladas (Art. 102): 9,09 % de los días efectivamente
+    // laborados, o sea 2,18 por cada 24 laborables del mes.
     const accruedVacationDays = (item: PayrollItem): number => {
       const units =
         Number(item.paidUnits || 0) > 0
           ? Number(item.paidUnits)
           : WORKING_DAYS_PER_MONTH;
-      return Math.min(units, WORKING_DAYS_PER_MONTH) * VACATION_DAYS_ACCRUAL_RATE;
+      return Math.min(units, WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
     };
 
     const rowHtml = (item: PayrollItem): string => {

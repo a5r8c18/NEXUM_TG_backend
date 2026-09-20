@@ -66,6 +66,14 @@ export type SocialBenefitVariant = 'a' | 'b' | 'c';
 /** Días hábiles promedio del mes usados para el salario diario del subsidio. */
 export const WORKING_DAYS_PER_MONTH = 24;
 
+/**
+ * Tasa de acumulación de vacaciones anuales pagadas (Art. 102 Ley 116): se
+ * multiplican por 9,09 % los días efectivamente laborados y los salarios
+ * percibidos. Equivale a 2,18 días por cada 24 laborables, o sea un mes de
+ * descanso por cada once de trabajo.
+ */
+export const VACATION_ACCRUAL_RATE = 0.0909;
+
 /** Salario mínimo vigente en CUP. */
 export const MINIMUM_WAGE = 3210;
 

@@ -6,11 +6,15 @@ import {
   calculateSubsidy,
   calculateWeeklyAverageSalary,
   evaluateSubsidyLimit,
+  nonWorkedWorkingDays,
   overlapDays,
   overlapWorkingDays,
+  round2,
 } from './payroll-calculations';
 import {
   MINIMUM_SUBSIDY,
+  VACATION_ACCRUAL_RATE,
+  WORKING_DAYS_PER_MONTH,
   subsidyRate,
   subsidyWaitingDays,
 } from './payroll-concept';
@@ -242,5 +246,101 @@ describe('Días laborables de solapamiento (vacaciones)', () => {
     expect(
       overlapWorkingDays('2026-09-04', '2026-09-08', '2026-09-07', '2026-09-30'),
     ).toBe(2);
+  });
+});
+
+describe('Días no pagados con salario ordinario', () => {
+  const start = '2026-09-01';
+  const end = '2026-09-30';
+
+  it('no descuenta nada sin licencias', () => {
+    expect(nonWorkedWorkingDays([], start, end)).toBe(0);
+  });
+
+  it('descuenta los días laborables de una licencia parcial', () => {
+    // Lunes 7 a viernes 18 → 10 laborables.
+    expect(
+      nonWorkedWorkingDays(
+        [{ startDate: '2026-09-07', endDate: '2026-09-18' }],
+        start,
+        end,
+      ),
+    ).toBe(10);
+  });
+
+  it('suma licencias de distinto concepto sin pagar dos veces el día', () => {
+    // 5 laborables de vacaciones + 5 de certificado médico = 10 no pagados.
+    expect(
+      nonWorkedWorkingDays(
+        [
+          { startDate: '2026-09-07', endDate: '2026-09-11' },
+          { startDate: '2026-09-14', endDate: '2026-09-18' },
+        ],
+        start,
+        end,
+      ),
+    ).toBe(10);
+  });
+
+  it('cuenta 24 días cuando la licencia cubre todo el período', () => {
+    expect(
+      nonWorkedWorkingDays(
+        [{ startDate: '2026-08-15', endDate: '2026-10-15' }],
+        start,
+        end,
+      ),
+    ).toBe(24);
+  });
+
+  it('topa el acumulado de varias licencias en los 24 días del mes', () => {
+    expect(
+      nonWorkedWorkingDays(
+        [
+          { startDate: '2026-09-01', endDate: '2026-09-18' },
+          { startDate: '2026-09-14', endDate: '2026-09-30' },
+        ],
+        start,
+        end,
+      ),
+    ).toBe(24);
+  });
+
+  it('ignora licencias fuera del período', () => {
+    expect(
+      nonWorkedWorkingDays(
+        [{ startDate: '2026-07-01', endDate: '2026-07-31' }],
+        start,
+        end,
+      ),
+    ).toBe(0);
+  });
+});
+
+describe('Acumulación de vacaciones (Art. 102)', () => {
+  it('acumula 2,18 días por un mes completo de 24 laborables', () => {
+    expect(
+      round2(WORKING_DAYS_PER_MONTH * VACATION_ACCRUAL_RATE),
+    ).toBeCloseTo(2.18, 2);
+  });
+
+  it('acumula un mes de descanso por cada once de trabajo', () => {
+    // 11 meses × 24 laborables × 9,09 % ≈ 24 días laborables = un mes.
+    expect(
+      Math.round(11 * WORKING_DAYS_PER_MONTH * VACATION_ACCRUAL_RATE),
+    ).toBe(WORKING_DAYS_PER_MONTH);
+  });
+
+  it('no acumula por los días no trabajados', () => {
+    // Mes con 10 días de licencia: solo acumulan los 14 laborables pagados.
+    const paidUnits = WORKING_DAYS_PER_MONTH - 10;
+    expect(round2(paidUnits * VACATION_ACCRUAL_RATE)).toBeCloseTo(1.27, 2);
+  });
+
+  it('la provisión es el 9,09 % de los salarios percibidos, no del contractual', () => {
+    const baseSalary = 5000;
+    // 10 días de licencia → devengo de 14/24 del salario contractual.
+    const gross = round2((baseSalary / WORKING_DAYS_PER_MONTH) * 14);
+    expect(round2(gross * VACATION_ACCRUAL_RATE)).toBeCloseTo(265.13, 2);
+    expect(round2(baseSalary * VACATION_ACCRUAL_RATE)).toBeCloseTo(454.5, 2);
   });
 });

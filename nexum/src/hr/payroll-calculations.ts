@@ -129,6 +129,55 @@ export function overlapWorkingDays(
   return days;
 }
 
+/**
+ * Licencias que no generan salario ordinario en el período: las no retribuidas
+ * y las que se pagan por otro concepto (vacaciones, subsidio, maternidad y
+ * paternidad tienen su propia nómina). Registrar ambas evita pagar dos veces
+ * el mismo día.
+ */
+export const NON_SALARY_LEAVE_TYPES = [
+  'unpaid',
+  'vacation',
+  'sick',
+  'maternity',
+  'paternity',
+] as const;
+
+/** Licencia reducida a lo que necesita el cálculo de días no trabajados. */
+export interface LeavePeriod {
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * Días laborables del período que no se remuneran con salario ordinario, ya
+ * sea porque la licencia no es retribuida o porque la paga otra nómina por
+ * concepto. Una licencia que cubre todo el período consume los 24 días
+ * laborables del mes, y el total nunca excede esa base.
+ */
+export function nonWorkedWorkingDays(
+  leaves: LeavePeriod[],
+  periodStart: string,
+  periodEnd: string,
+): number {
+  const days = leaves.reduce((sum, leave) => {
+    const coversPeriod =
+      leave.startDate <= periodStart && leave.endDate >= periodEnd;
+    return (
+      sum +
+      (coversPeriod
+        ? WORKING_DAYS_PER_MONTH
+        : overlapWorkingDays(
+            leave.startDate,
+            leave.endDate,
+            periodStart,
+            periodEnd,
+          ))
+    );
+  }, 0);
+  return Math.min(days, WORKING_DAYS_PER_MONTH);
+}
+
 // ── Subsidio por enfermedad o accidente (Art. 39-46) ──
 
 export interface SubsidyInput {

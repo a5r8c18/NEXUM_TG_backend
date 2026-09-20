@@ -19,9 +19,10 @@ import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
 import { FinanceService } from '../finance/finance.service';
 import {
+  NON_SALARY_LEAVE_TYPES,
   calculateIncomeTax,
   calculateSocialSecurity,
-  overlapWorkingDays,
+  nonWorkedWorkingDays,
   round2,
 } from './payroll-calculations';
 import {
@@ -30,6 +31,7 @@ import {
   PAYROLL_CONCEPT_LABELS,
   PayrollConcept,
   SUBSIDY_RETENTION_RATE,
+  VACATION_ACCRUAL_RATE,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
 
@@ -270,35 +272,22 @@ export class PayrollService {
       // El recargo por hora extra se pacta en convenio; se usa la tarifa base.
       const overtimePay = Math.round(overtimeHours * hourlyRate * 100) / 100;
 
-      // ── Descuento por licencias NO remuneradas aprobadas que solapan el período ──
-      const unpaidLeaves = await this.leaveRepo.find({
+      // ── Días del período que no se pagan con salario ordinario ──
+      // Además de las licencias sin sueldo, se excluyen las que se liquidan en
+      // su propia nómina (vacaciones, subsidio, maternidad y paternidad): de lo
+      // contrario el trabajador cobraría dos veces el mismo día.
+      const nonSalaryLeaves = await this.leaveRepo.find({
         where: {
           companyId,
           employeeId: emp.id,
-          type: 'unpaid',
+          type: In([...NON_SALARY_LEAVE_TYPES]),
           status: 'approved',
         },
       });
-      // Los días sin sueldo se descuentan como días laborables (base 24),
-      // igual que se computan los días trabajados. Una licencia que cubre
-      // todo el período descuenta los 24 laborables del mes.
-      const unpaidDays = Math.min(
-        unpaidLeaves.reduce((sum, l) => {
-          const coversPeriod =
-            l.startDate <= data.startDate && l.endDate >= data.endDate;
-          return (
-            sum +
-            (coversPeriod
-              ? WORKING_DAYS_PER_MONTH
-              : overlapWorkingDays(
-                  l.startDate,
-                  l.endDate,
-                  data.startDate,
-                  data.endDate,
-                ))
-          );
-        }, 0),
-        WORKING_DAYS_PER_MONTH,
+      const unpaidDays = nonWorkedWorkingDays(
+        nonSalaryLeaves,
+        data.startDate,
+        data.endDate,
       );
       const dailyRate = baseSalary / WORKING_DAYS_PER_MONTH;
       const unpaidDeduction = Math.round(unpaidDays * dailyRate * 100) / 100;
@@ -314,9 +303,11 @@ export class PayrollService {
         Math.round((socialSecurity + taxWithholding) * 100) / 100;
       const netSalary = Math.round((grossSalary - totalDeductionsItem) * 100) / 100;
 
-      // ── Provisión mensual de vacaciones (RH-01) ──
-      // 9.09% del salario contractual mensual.
-      const vacationProvision = round2(baseSalary * 0.0909);
+      // ── Provisión mensual de vacaciones (Art. 102 Ley 116) ──
+      // 9,09 % de los salarios percibidos, no del salario contractual: las
+      // ausencias interrumpen la acumulación, de modo que el importe acumulado
+      // avanza al mismo ritmo que los días (9,09 % de los días laborados).
+      const vacationProvision = round2(grossSalary * VACATION_ACCRUAL_RATE);
 
       // ── Retención del 1,5 % para el pago de subsidios (Art. 46) ──
       // Se acumula en la provisión 500 y es gasto de la empresa, por lo que no
@@ -355,7 +346,10 @@ export class PayrollService {
         vacationProvision,
         subsidyRetention,
         averageSalary: baseSalary,
-        notes: unpaidDays > 0 ? `${unpaidDays} día(s) sin sueldo descontados del devengo` : undefined,
+        notes:
+          unpaidDays > 0
+            ? `${unpaidDays} día(s) laborable(s) no pagados con salario: licencia sin sueldo o liquidados en otra nómina por concepto`
+            : undefined,
       });
     }
 
@@ -498,9 +492,11 @@ export class PayrollService {
         otherDeductions: Number(item.otherDeductions || 0),
         totalDeductions: totalDeductionsItem,
         netSalary,
-        // La provisión y la retención del 1,5 % se recalculan sobre el salario
-        // contractual mensual, no del bruto del período.
-        vacationProvision: round2(Number(item.baseSalary || 0) * 0.0909),
+        // La provisión de vacaciones se recalcula sobre los salarios percibidos
+        // del período (Art. 102), igual que en la generación.
+        vacationProvision: isSalary
+          ? round2(grossSalary * VACATION_ACCRUAL_RATE)
+          : 0,
         subsidyRetention: round2(grossSalary * SUBSIDY_RETENTION_RATE),
         notes: item.notes,
       });
