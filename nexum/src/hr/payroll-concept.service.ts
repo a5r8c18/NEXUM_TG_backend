@@ -27,6 +27,7 @@ import {
   vacationDailyRate,
 } from './payroll-calculations';
 import {
+  LEGAL_VACATION_PERIODS,
   PayrollConcept,
   PAYROLL_CONCEPT_LABELS,
   VACATION_ACCRUAL_RATE,
@@ -313,6 +314,22 @@ export class PayrollConceptService {
       );
       if (days <= 0) continue;
 
+      // Art. 105: el descanso se otorga por períodos de 30, 20, 15, 10 o 7
+      // días naturales. Es un aviso y no un bloqueo porque el propio artículo
+      // admite pactar excepciones a solicitud del trabajador.
+      const naturalDays = overlapDays(
+        leave.startDate,
+        leave.endDate,
+        leave.startDate,
+        leave.endDate,
+      );
+      if (!LEGAL_VACATION_PERIODS.includes(naturalDays)) {
+        warnings.push(
+          `${emp.firstName} ${emp.lastName}: licencia de ${naturalDays} días ` +
+            'naturales — los períodos del Art. 105 son 30, 20, 15, 10 o 7',
+        );
+      }
+
       // ── Retribución de las vacaciones (Art. 102 Ley 116) ──
       // La cuantía es lo acumulado, no la tarifa vigente: se paga a razón del
       // importe acumulado por día acumulado. Así pagar N días debita del fondo
@@ -377,6 +394,87 @@ export class PayrollConceptService {
       items,
       warnings.length ? warnings.join(' | ') : undefined,
     );
+  }
+
+  // ── Liquidación por terminación de la relación laboral (Art. 52) ──
+
+  /**
+   * Paga al trabajador la totalidad de su saldo de vacaciones acumulado al
+   * terminar el vínculo laboral. Se carga íntegramente a la provisión 492,
+   * igual que el disfrute, de modo que el submayor y el mayor llegan a cero
+   * juntos. La unicidad es por trabajador y período —pueden terminar varios
+   * en el mismo mes—, no por concepto como el resto de las nóminas.
+   */
+  async generateVacationSettlement(
+    companyId: number,
+    data: GenerateInput & { employeeId?: string },
+  ) {
+    if (!data.employeeId) {
+      throw new BadRequestException(
+        'La liquidación de vacaciones requiere indicar el trabajador',
+      );
+    }
+    const emp = await this.employeeRepo.findOne({
+      where: { id: data.employeeId, companyId },
+    });
+    if (!emp) {
+      throw new NotFoundException('Trabajador no encontrado');
+    }
+    const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
+
+    // Unicidad por trabajador dentro del período.
+    const settlements = await this.payrollRepo.find({
+      where: { companyId, concept: 'liquidacion', period: data.period },
+      relations: ['items'],
+    });
+    const duplicated = settlements
+      .filter((p) => p.status !== 'cancelled')
+      .some((p) =>
+        (p.items || []).some((i) => i.employeeId === data.employeeId),
+      );
+    if (duplicated) {
+      throw new BadRequestException(
+        `Ya existe una liquidación de ${employeeName} en el período ${data.period}`,
+      );
+    }
+
+    const balances = await this.hrReportService.vacationBalances(
+      companyId,
+      data.period,
+    );
+    const balance = balances.get(emp.id);
+    if (!balance || balance.days <= 0 || balance.amount <= 0) {
+      throw new BadRequestException(
+        `${employeeName} no tiene vacaciones acumuladas que liquidar`,
+      );
+    }
+
+    const days = round2(balance.days);
+    const gross = round2(balance.amount);
+    const rate = round2(balance.amount / balance.days);
+    const socialSecurity = calculateSocialSecurity(gross);
+    const taxWithholding = calculateIncomeTax(gross);
+    const totalDeductions = round2(socialSecurity + taxWithholding);
+
+    const items: Partial<PayrollItem>[] = [
+      {
+        ...this.baseItem(emp, companyId),
+        baseSalary: Number(emp.salary || 0),
+        grossSalary: gross,
+        socialSecurity,
+        taxWithholding,
+        totalDeductions,
+        netSalary: round2(gross - totalDeductions),
+        averageSalary: Number(emp.salary || 0),
+        paidUnits: days,
+        appliedRate: 1,
+        notes:
+          `Liquidación por terminación (Art. 52): ` +
+          `${days} días acumulados × ${rate}`,
+      },
+    ];
+
+    return this.savePayrollWithItems(companyId, 'liquidacion', data, items);
   }
 
   // ── Subsidio por enfermedad o accidente (Art. 39-46) ──

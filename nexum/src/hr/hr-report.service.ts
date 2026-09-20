@@ -8,6 +8,7 @@ import { Employee } from '../entities/employee.entity';
 import { JobPosition } from '../entities/job-position.entity';
 import {
   VACATION_ACCRUAL_RATE,
+  VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
 
@@ -82,8 +83,15 @@ export class HrReportService {
         companyId,
         period: LessThanOrEqual(period),
         // Acumulan el salario y los conceptos que la ley cuenta como días
-        // laborados (reposo médico y maternidad); las vacaciones consumen.
-        concept: In(['salario', 'subsidio', 'maternidad', 'vacaciones']),
+        // laborados (reposo médico y maternidad); las vacaciones y la
+        // liquidación del Art. 52 consumen.
+        concept: In([
+          'salario',
+          'subsidio',
+          'maternidad',
+          'vacaciones',
+          'liquidacion',
+        ]),
         status: In(['processed', 'paid']),
       },
       relations: ['items'],
@@ -108,8 +116,8 @@ export class HrReportService {
 
     for (const payroll of payrolls) {
       for (const item of payroll.items || []) {
-        if (payroll.concept === 'vacaciones') {
-          // Vacaciones disfrutadas: consumen días e importe del acumulado.
+        if (VACATION_FUND_CONCEPTS.includes(payroll.concept)) {
+          // Vacaciones disfrutadas y liquidación: consumen días e importe.
           add(
             item.employeeId,
             -Number(item.paidUnits || 0),

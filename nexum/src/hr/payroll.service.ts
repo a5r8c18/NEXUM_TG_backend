@@ -31,7 +31,9 @@ import {
   PAYROLL_CONCEPT_LABELS,
   PayrollConcept,
   SUBSIDY_RETENTION_RATE,
+  UNION_DUES_RATE,
   VACATION_ACCRUAL_RATE,
+  VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
 
@@ -269,8 +271,10 @@ export class PayrollService {
         0,
       );
       const hourlyRate = baseSalary / MONTHLY_LEGAL_HOURS;
-      // El recargo por hora extra se pacta en convenio; se usa la tarifa base.
-      const overtimePay = Math.round(overtimeHours * hourlyRate * 100) / 100;
+      // El recargo por hora extra se pacta en convenio colectivo y se guarda
+      // en la ficha del trabajador (1 = tarifa base sin recargo).
+      const overtimePay =
+        Math.round(overtimeHours * hourlyRate * Number(emp.overtimeRate || 1) * 100) / 100;
 
       // ── Días del período que no se pagan con salario ordinario ──
       // Además de las licencias sin sueldo, se excluyen las que se liquidan en
@@ -299,8 +303,12 @@ export class PayrollService {
       );
       const socialSecurity = calculateSocialSecurity(grossSalary);
       const taxWithholding = calculateIncomeTax(grossSalary);
+      // Cuota sindical: 1 % del devengado, solo a los trabajadores afiliados.
+      const unionDues = emp.unionMember
+        ? round2(grossSalary * UNION_DUES_RATE)
+        : 0;
       const totalDeductionsItem =
-        Math.round((socialSecurity + taxWithholding) * 100) / 100;
+        Math.round((socialSecurity + taxWithholding + unionDues) * 100) / 100;
       const netSalary = Math.round((grossSalary - totalDeductionsItem) * 100) / 100;
 
       // ── Provisión mensual de vacaciones (Art. 102 Ley 116) ──
@@ -340,7 +348,7 @@ export class PayrollService {
         healthInsurance: 0,
         pension: 0,
         taxWithholding,
-        unionDues: 0,
+        unionDues,
         otherDeductions: 0,
         totalDeductions: totalDeductionsItem,
         netSalary,
@@ -455,11 +463,16 @@ export class PayrollService {
         grossSalary = Number(item.grossSalary || 0);
       }
 
+      const unionDues =
+        isSalary && employee?.unionMember
+          ? round2(grossSalary * UNION_DUES_RATE)
+          : Number((item as Partial<PayrollItem>).unionDues || 0);
       const totalDeductionsItem =
         Number(item.socialSecurity || 0) +
         Number(item.healthInsurance || 0) +
         Number(item.pension || 0) +
         Number(item.taxWithholding || 0) +
+        unionDues +
         Number(item.otherDeductions || 0);
       const netSalary = grossSalary - totalDeductionsItem;
 
@@ -489,9 +502,9 @@ export class PayrollService {
         healthInsurance: Number(item.healthInsurance || 0),
         pension: Number(item.pension || 0),
         taxWithholding: Number(item.taxWithholding || 0),
-        // La cuota sindical la aporta el trabajador directamente al sindicato:
-        // la entidad no la retiene ni la contabiliza.
-        unionDues: 0,
+        // Cuota sindical: 1 % del devengado retenido al trabajador afiliado;
+        // se enteró a la organización sindical como obligación.
+        unionDues,
         otherDeductions: Number(item.otherDeductions || 0),
         totalDeductions: totalDeductionsItem,
         netSalary,
@@ -662,6 +675,7 @@ export class PayrollService {
         let totalOtherRetention = 0;
         let totalHealthInsurance = 0;
         let totalPension = 0;
+        let totalUnionDues = 0;
 
         // En maternidad el débito depende del sector de cada trabajador.
         let maternityStateAmount = 0;
@@ -721,10 +735,10 @@ export class PayrollService {
           // ── Provisión de vacaciones (Art. 102) ──
           // Se acumula en todo concepto que genere derecho: además del
           // salario, el reposo médico y la maternidad, que la ley cuenta como
-          // días efectivamente laborados. Solo las vacaciones no provisionan,
-          // porque consumen la provisión en lugar de formarla.
+          // días efectivamente laborados. Las vacaciones y la liquidación no
+          // provisionan, porque consumen la provisión en lugar de formarla.
           const vacation = Number(item.vacationProvision || 0);
-          if (vacation > 0 && concept !== 'vacaciones') {
+          if (vacation > 0 && !VACATION_FUND_CONCEPTS.includes(concept)) {
             totalVacationProvision += vacation;
             const vacKey = `${accountCode}#${costCenterId || ''}`;
             const vacExisting = vacationByAccountAndCC.get(vacKey) || { accountCode, amount: 0, costCenterId };
@@ -763,19 +777,21 @@ export class PayrollService {
           }
 
           // ── Impuestos salariales: la entidad solo retiene ──
-          // La cuota sindical no se retiene al trabajador, por eso no figura.
+          // La cuota sindical se retiene al trabajador afiliado y se entera a
+          // la organización sindical como obligación del comprobante.
           totalSocialSecurity += Number(item.socialSecurity || 0);
           totalIncomeTax += Number(item.taxWithholding || 0);
           totalOtherRetention += Number(item.otherDeductions || 0);
           totalHealthInsurance += Number(item.healthInsurance || 0);
           totalPension += Number(item.pension || 0);
+          totalUnionDues += Number(item.unionDues || 0);
 
           // Las retenciones se debitan en el comprobante de impuestos a la
           // cuenta que financió el pago de la línea.
           const itemDeductions = Number(item.totalDeductions || 0);
           if (itemDeductions > 0) {
             const fundingAccount =
-              concept === 'vacaciones'
+              VACATION_FUND_CONCEPTS.includes(concept)
                 ? vacationProvisionAccount || '492'
                 : concept === 'subsidio' || concept === 'paternidad'
                   ? subsidyProvisionAccount || '500'
@@ -802,6 +818,7 @@ export class PayrollService {
         totalOtherRetention = round2(totalOtherRetention);
         totalHealthInsurance = round2(totalHealthInsurance);
         totalPension = round2(totalPension);
+        totalUnionDues = round2(totalUnionDues);
 
         const lines: any[] = [];
         const conceptLabel = PAYROLL_CONCEPT_LABELS[concept] || concept;
@@ -811,8 +828,9 @@ export class PayrollService {
         // debitan en el comprobante de impuestos a la cuenta que financió el
         // pago. Subsidio, paternidad y maternidad quedan fuera de este
         // comprobante: cada uno genera el suyo más abajo.
-        if (concept === 'vacaciones') {
-          // El pago de vacaciones se carga a la provisión 492, nunca a gasto.
+        if (VACATION_FUND_CONCEPTS.includes(concept)) {
+          // El pago de vacaciones y la liquidación se cargan a la provisión
+          // 492, nunca a gasto.
           const vacationDebit = round2(totalNet);
           if (vacationDebit > 0) {
             lines.push({
@@ -820,7 +838,7 @@ export class PayrollService {
               subaccountCode: vacationProvisionAccount || '492',
               debit: vacationDebit,
               credit: 0,
-              description: `Pago de vacaciones ${payroll.period} (cargo a provisión)`,
+              description: `${conceptLabel} ${payroll.period} (cargo a provisión)`,
             });
           }
 
@@ -837,7 +855,7 @@ export class PayrollService {
             );
             if (provisionBalance < vacationCharge) {
               this.logger.warn(
-                `Nómina ${payroll.id} (vacaciones ${payroll.period}): el cargo a la ` +
+                `Nómina ${payroll.id} (${concept} ${payroll.period}): el cargo a la ` +
                   `${provisionAccount} (${vacationCharge}) excede su saldo acreedor ` +
                   `contabilizado (${round2(provisionBalance)}). Quedará en saldo ` +
                   `deudor hasta contabilizar las provisiones pendientes.`,
@@ -1018,6 +1036,11 @@ export class PayrollService {
             amount: totalHealthInsurance,
             accountCode: otherRetentionAccount || '440-0007',
             description: 'Seguro de salud retenido a trabajadores',
+          },
+          {
+            amount: totalUnionDues,
+            accountCode: otherRetentionAccount || '440-0007',
+            description: 'Cuota sindical retenida a trabajadores 1 %',
           },
         ].filter((obligation) => obligation.amount > 0);
 

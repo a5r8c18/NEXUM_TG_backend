@@ -11,6 +11,7 @@ export type PayrollConcept =
   | 'subsidio'
   | 'maternidad'
   | 'paternidad'
+  | 'liquidacion'
   | 'libre';
 
 export const PAYROLL_CONCEPTS: PayrollConcept[] = [
@@ -19,6 +20,7 @@ export const PAYROLL_CONCEPTS: PayrollConcept[] = [
   'subsidio',
   'maternidad',
   'paternidad',
+  'liquidacion',
   'libre',
 ];
 
@@ -28,8 +30,18 @@ export const PAYROLL_CONCEPT_LABELS: Record<PayrollConcept, string> = {
   subsidio: 'Subsidio por enfermedad o accidente',
   maternidad: 'Licencia de maternidad',
   paternidad: 'Licencia de paternidad',
+  liquidacion: 'Liquidación por terminación',
   libre: 'Concepto libre',
 };
+
+/**
+ * Conceptos que consumen el fondo de vacaciones (492): el disfrute y la
+ * liquidación del Art. 52. Todo lo demás acumula o es ajeno.
+ */
+export const VACATION_FUND_CONCEPTS: PayrollConcept[] = [
+  'vacaciones',
+  'liquidacion',
+];
 
 /**
  * Categoría ocupacional del trabajador. Determina la subcuenta analítica de
@@ -73,6 +85,12 @@ export const WORKING_DAYS_PER_MONTH = 24;
  * descanso por cada once de trabajo.
  */
 export const VACATION_ACCRUAL_RATE = 0.0909;
+
+/** Períodos en días naturales en que puede otorgarse el descanso (Art. 105). */
+export const LEGAL_VACATION_PERIODS: readonly number[] = [30, 20, 15, 10, 7];
+
+/** Cuota sindical: 1 % del devengado, retenido al trabajador afiliado. */
+export const UNION_DUES_RATE = 0.01;
 
 /** Salario mínimo vigente en CUP. */
 export const MINIMUM_WAGE = 3210;

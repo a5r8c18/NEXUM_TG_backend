@@ -94,6 +94,20 @@ export class Employee {
   initialVacationAmount: number;
 
   /**
+   * Afiliado al sindicato: si lo es, la nómina de salario le retiene la cuota
+   * sindical del 1 % del devengado.
+   */
+  @Column({ name: 'union_member', type: 'boolean', default: false })
+  unionMember: boolean;
+
+  /**
+   * Multiplicador del salario/hora para las horas extra, pactado en convenio
+   * colectivo (1 = tarifa base sin recargo, 1.5 = +50 %, 2 = +100 %).
+   */
+  @Column({ name: 'overtime_rate', type: 'decimal', precision: 5, scale: 2, default: 1 })
+  overtimeRate: number;
+
+  /**
    * Cuenta de gasto de nómina seleccionada al crear el trabajador. Tiene
    * prioridad sobre la cuenta del centro de costo y sobre los mapeos por tipo.
    */

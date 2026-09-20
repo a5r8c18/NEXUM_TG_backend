@@ -119,6 +119,12 @@ export class PayrollController {
     return this.payrollConceptService.generateSubsidy(companyId, body);
   }
 
+  @Post('generate/liquidacion')
+  generateVacationSettlement(@Req() req: Request, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.payrollConceptService.generateVacationSettlement(companyId, body);
+  }
+
   @Post('generate/maternidad')
   generateMaternity(@Req() req: Request, @Body() body: any) {
     const companyId = getCompanyId(req);
