@@ -170,8 +170,11 @@ export class PayrollReportService {
     const HOURS_PER_DAY = MONTHLY_LEGAL_HOURS / WORKING_DAYS_PER_MONTH;
     const round2 = (v: number) => Math.round(v * 100) / 100;
     // Vacaciones acumuladas (Art. 102): 9,09 % de los días efectivamente
-    // laborados, o sea 2,18 por cada 24 laborables del mes.
+    // laborados, o sea 2,18 por cada 24 laborables del mes. Las nóminas
+    // anteriores a la columna vacation_days se derivan de los días pagados.
     const accruedVacationDays = (item: PayrollItem): number => {
+      const stored = Number(item.vacationDays || 0);
+      if (stored > 0) return stored;
       const units =
         Number(item.paidUnits || 0) > 0
           ? Number(item.paidUnits)

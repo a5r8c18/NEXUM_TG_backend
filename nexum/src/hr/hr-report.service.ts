@@ -81,7 +81,9 @@ export class HrReportService {
       where: {
         companyId,
         period: LessThanOrEqual(period),
-        concept: In(['salario', 'vacaciones']),
+        // Acumulan el salario y los conceptos que la ley cuenta como días
+        // laborados (reposo médico y maternidad); las vacaciones consumen.
+        concept: In(['salario', 'subsidio', 'maternidad', 'vacaciones']),
         status: In(['processed', 'paid']),
       },
       relations: ['items'],
@@ -97,24 +99,22 @@ export class HrReportService {
 
     for (const payroll of payrolls) {
       for (const item of payroll.items || []) {
-        if (payroll.concept === 'salario') {
-          // Días acumulados: 9,09 % de los días efectivamente laborados
-          // (2,18 por cada 24). El importe es la provisión ya contabilizada.
-          const paidDays =
-            Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH;
-          add(
-            item.employeeId,
-            paidDays * VACATION_ACCRUAL_RATE,
-            Number(item.vacationProvision || 0),
-          );
-        } else {
+        if (payroll.concept === 'vacaciones') {
           // Vacaciones disfrutadas: consumen días e importe del acumulado.
           add(
             item.employeeId,
             -Number(item.paidUnits || 0),
             -Number(item.grossSalary || 0),
           );
+          continue;
         }
+        // Días e importe acumulados por la línea. Las nóminas anteriores a la
+        // columna vacation_days no la traen: se deriva de los días pagados.
+        const days =
+          Number(item.vacationDays || 0) ||
+          (Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH) *
+            VACATION_ACCRUAL_RATE;
+        add(item.employeeId, days, Number(item.vacationProvision || 0));
       }
     }
     return balances;

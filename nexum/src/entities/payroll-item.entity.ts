@@ -113,9 +113,17 @@ export class PayrollItem {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   netSalary: number;
 
-  /** Provisión mensual de vacaciones: 1/12 del gasto salarial acumulado del trabajador. */
+  /** Provisión de vacaciones del período: 9,09 % de los salarios percibidos (Art. 102). */
   @Column({ name: 'vacation_provision', type: 'decimal', precision: 10, scale: 2, default: 0 })
   vacationProvision: number;
+
+  /**
+   * Días de vacaciones que acumula la línea: 9,09 % de los días efectivamente
+   * laborados (Art. 102). Es la contraparte en tiempo de la provisión y lo que
+   * alimenta el submayor de vacaciones.
+   */
+  @Column({ name: 'vacation_days', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  vacationDays: number;
 
   /**
    * Retención del 1,5 % destinada al pago de los subsidios de seguridad social a

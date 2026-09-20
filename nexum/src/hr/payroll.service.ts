@@ -308,6 +308,8 @@ export class PayrollService {
       // ausencias interrumpen la acumulación, de modo que el importe acumulado
       // avanza al mismo ritmo que los días (9,09 % de los días laborados).
       const vacationProvision = round2(grossSalary * VACATION_ACCRUAL_RATE);
+      const paidUnits = Math.max(0, WORKING_DAYS_PER_MONTH - unpaidDays);
+      const vacationDays = round2(paidUnits * VACATION_ACCRUAL_RATE);
 
       // ── Retención del 1,5 % para el pago de subsidios (Art. 46) ──
       // Se acumula en la provisión 500 y es gasto de la empresa, por lo que no
@@ -342,8 +344,9 @@ export class PayrollService {
         otherDeductions: 0,
         totalDeductions: totalDeductionsItem,
         netSalary,
-        paidUnits: Math.max(0, WORKING_DAYS_PER_MONTH - unpaidDays),
+        paidUnits,
         vacationProvision,
+        vacationDays,
         subsidyRetention,
         averageSalary: baseSalary,
         notes:
@@ -493,10 +496,17 @@ export class PayrollService {
         totalDeductions: totalDeductionsItem,
         netSalary,
         // La provisión de vacaciones se recalcula sobre los salarios percibidos
-        // del período (Art. 102), igual que en la generación.
+        // del período (Art. 102), igual que en la generación. En los demás
+        // conceptos se conserva el valor que ya trae la línea.
         vacationProvision: isSalary
           ? round2(grossSalary * VACATION_ACCRUAL_RATE)
-          : 0,
+          : Number((item as Partial<PayrollItem>).vacationProvision || 0),
+        vacationDays: isSalary
+          ? round2(
+              (Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH) *
+                VACATION_ACCRUAL_RATE,
+            )
+          : Number((item as Partial<PayrollItem>).vacationDays || 0),
         subsidyRetention: round2(grossSalary * SUBSIDY_RETENTION_RATE),
         notes: item.notes,
       });
@@ -708,9 +718,13 @@ export class PayrollService {
             maternityStateAmount += net;
           }
 
-          // ── Provisión de vacaciones (RH-01) ──
+          // ── Provisión de vacaciones (Art. 102) ──
+          // Se acumula en todo concepto que genere derecho: además del
+          // salario, el reposo médico y la maternidad, que la ley cuenta como
+          // días efectivamente laborados. Solo las vacaciones no provisionan,
+          // porque consumen la provisión en lugar de formarla.
           const vacation = Number(item.vacationProvision || 0);
-          if (vacation > 0 && chargesExpense) {
+          if (vacation > 0 && concept !== 'vacaciones') {
             totalVacationProvision += vacation;
             const vacKey = `${accountCode}#${costCenterId || ''}`;
             const vacExisting = vacationByAccountAndCC.get(vacKey) || { accountCode, amount: 0, costCenterId };

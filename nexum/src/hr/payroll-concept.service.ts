@@ -29,6 +29,7 @@ import {
 import {
   PayrollConcept,
   PAYROLL_CONCEPT_LABELS,
+  VACATION_ACCRUAL_RATE,
   WEEKS_PER_YEAR,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
@@ -217,6 +218,28 @@ export class PayrollConceptService {
       where: { id: payroll.id },
       relations: ['items'],
     });
+  }
+
+  /**
+   * Acumulación de vacaciones por los días que el Art. 102 considera
+   * efectivamente laborados aunque no se pague salario: reposo por certificado
+   * médico y licencias retribuidas de maternidad.
+   *
+   * El importe se calcula sobre el salario que el trabajador habría percibido
+   * —no sobre la prestación, que es menor— para que enfermar o parir no
+   * deteriore su fondo de vacaciones.
+   */
+  private vacationAccrual(
+    emp: Employee,
+    workingDays: number,
+  ): { vacationDays: number; vacationProvision: number } {
+    const days = Math.max(0, Math.min(workingDays, WORKING_DAYS_PER_MONTH));
+    const referenceSalary =
+      (Number(emp.salary || 0) / WORKING_DAYS_PER_MONTH) * days;
+    return {
+      vacationDays: round2(days * VACATION_ACCRUAL_RATE),
+      vacationProvision: round2(referenceSalary * VACATION_ACCRUAL_RATE),
+    };
   }
 
   private baseItem(emp: Employee, companyId: number): Partial<PayrollItem> {
@@ -480,6 +503,8 @@ export class PayrollConceptService {
         averageSalary: average,
         paidUnits: result.paidDays,
         appliedRate: result.rate,
+        // Los días de reposo médico acumulan vacaciones (Art. 102).
+        ...this.vacationAccrual(emp, result.paidDays),
         notes:
           `Subsidio ${origin === 'occupational' ? 'profesional' : 'común'}` +
           `${hospitalized ? ' hospitalizado' : ''}: ${result.paidDays} días × ` +
@@ -580,6 +605,9 @@ export class PayrollConceptService {
         averageSalary: weeklyAverage,
         paidUnits: weeks,
         appliedRate: 1,
+        // La licencia retribuida de maternidad acumula vacaciones (Art. 102);
+        // se computan 5 días laborables por semana de prestación.
+        ...this.vacationAccrual(emp, weeks * 5),
         notes:
           `Maternidad plazo ${data.installment} (${weeks} semanas × ${weeklyAverage})` +
           (isStateSector
