@@ -11,6 +11,12 @@ import {
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
 
+/** Saldo acumulado de vacaciones de un trabajador: días e importe. */
+export interface VacationBalance {
+  days: number;
+  amount: number;
+}
+
 export interface VacationSubmayorRow {
   employeeName: string;
   documentId: string | null;
@@ -55,19 +61,22 @@ export class HrReportService {
   ) {}
 
   /**
-   * Submayor de vacaciones: saldo acumulado por trabajador hasta el período,
-   * según el Art. 102 de la Ley 116 (9,09 % de los días laborados y de los
-   * salarios percibidos).
+   * Saldo acumulado de vacaciones por trabajador hasta el período, según el
+   * Art. 102 de la Ley 116 (9,09 % de los días laborados y de los salarios
+   * percibidos).
    *
    * Acredita lo provisionado en las nóminas de salario contabilizadas —el
    * importe es el mismo que se acredita a la cuenta 492, de modo que el
    * submayor cuadra con el mayor— y debita el bruto de las nóminas de
    * vacaciones pagadas, que es lo que consume la provisión.
+   *
+   * Se deriva de las nóminas en lugar de guardarse: si una se anula o se
+   * edita, el saldo se corrige solo.
    */
-  async vacationSubmayor(
+  async vacationBalances(
     companyId: number,
     period: string,
-  ): Promise<VacationSubmayorRow[]> {
+  ): Promise<Map<string, VacationBalance>> {
     const payrolls = await this.payrollRepo.find({
       where: {
         companyId,
@@ -78,7 +87,7 @@ export class HrReportService {
       relations: ['items'],
     });
 
-    const balances = new Map<string, { days: number; amount: number }>();
+    const balances = new Map<string, VacationBalance>();
     const add = (id: string, days: number, amount: number) => {
       const acc = balances.get(id) || { days: 0, amount: 0 };
       acc.days += days;
@@ -108,6 +117,15 @@ export class HrReportService {
         }
       }
     }
+    return balances;
+  }
+
+  /** Submayor de vacaciones: el saldo acumulado, con los datos del trabajador. */
+  async vacationSubmayor(
+    companyId: number,
+    period: string,
+  ): Promise<VacationSubmayorRow[]> {
+    const balances = await this.vacationBalances(companyId, period);
     if (balances.size === 0) return [];
 
     const employees = await this.employeeRepo.find({

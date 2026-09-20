@@ -12,6 +12,7 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
+import { HrReportService } from './hr-report.service';
 import {
   calculateIncomeTax,
   calculateMaternityBenefit,
@@ -23,6 +24,7 @@ import {
   overlapDays,
   overlapWorkingDays,
   round2,
+  vacationDailyRate,
 } from './payroll-calculations';
 import {
   PayrollConcept,
@@ -68,6 +70,7 @@ export class PayrollConceptService {
     private readonly attendanceRepo: Repository<Attendance>,
     @InjectRepository(LeaveRequest)
     private readonly leaveRepo: Repository<LeaveRequest>,
+    private readonly hrReportService: HrReportService,
   ) {}
 
   // ── Datos de apoyo ──
@@ -267,6 +270,11 @@ export class PayrollConceptService {
 
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
+    // Saldo acumulado por trabajador: es el fondo del que sale la retribución.
+    const balances = await this.hrReportService.vacationBalances(
+      companyId,
+      data.period,
+    );
 
     for (const leave of leaves) {
       const emp = await this.employeeRepo.findOne({
@@ -282,16 +290,35 @@ export class PayrollConceptService {
       );
       if (days <= 0) continue;
 
-      // Pago de vacaciones: salario diario (base de 24 días laborables) por
-      // los días laborables disfrutados que caen en el período; los fines de
-      // semana no computan. El 9,09 % es la tasa de provisión mensual que
-      // financia la 492, no la del pago.
+      // ── Retribución de las vacaciones (Art. 102 Ley 116) ──
+      // La cuantía es lo acumulado, no la tarifa vigente: se paga a razón del
+      // importe acumulado por día acumulado. Así pagar N días debita del fondo
+      // exactamente lo que esos N días generaron y la 492 vuelve a cero al
+      // agotarse el saldo, sin el descuadre que provocaría un cambio de
+      // salario entre la acumulación y el disfrute.
       const salary = Number(emp.salary || 0);
-      const dailyRate = round2(salary / WORKING_DAYS_PER_MONTH);
+      const balance = balances.get(emp.id);
+      const contractualRate = round2(salary / WORKING_DAYS_PER_MONTH);
+      const hasBalance = !!balance && balance.days > 0 && balance.amount > 0;
+      // Sin acumulado —primer año o apertura del sistema— se paga a la tarifa
+      // contractual, dejando constancia en la línea.
+      const dailyRate = vacationDailyRate(balance, contractualRate);
       const gross = round2(dailyRate * days);
       const socialSecurity = calculateSocialSecurity(gross);
       const taxWithholding = calculateIncomeTax(gross);
       const totalDeductions = round2(socialSecurity + taxWithholding);
+
+      const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
+      if (!hasBalance) {
+        warnings.push(
+          `${employeeName}: sin acumulado de vacaciones, se paga a la tarifa contractual`,
+        );
+      } else if (days > balance.days) {
+        warnings.push(
+          `${employeeName}: disfruta ${days} días laborables y solo tiene ` +
+            `${round2(balance.days)} acumulados`,
+        );
+      }
 
       items.push({
         ...this.baseItem(emp, companyId),
@@ -307,7 +334,10 @@ export class PayrollConceptService {
         appliedRate: 1,
         notes:
           `Vacaciones ${leave.startDate} a ${leave.endDate}: ` +
-          `${days} días laborables × ${dailyRate} (salario / ${WORKING_DAYS_PER_MONTH})`,
+          `${days} días laborables × ${dailyRate} ` +
+          (hasBalance
+            ? `(tarifa acumulada: ${round2(balance.amount)} / ${round2(balance.days)} días)`
+            : `(salario / ${WORKING_DAYS_PER_MONTH}, sin acumulado)`),
       });
     }
 

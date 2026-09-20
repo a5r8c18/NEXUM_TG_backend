@@ -178,6 +178,26 @@ export function nonWorkedWorkingDays(
   return Math.min(days, WORKING_DAYS_PER_MONTH);
 }
 
+/**
+ * Tarifa diaria con que se retribuyen las vacaciones (Art. 102 Ley 116): la
+ * cuantía es lo acumulado, o sea el importe acumulado entre los días
+ * acumulados. Pagar N días debita del fondo exactamente lo que esos N días
+ * generaron, así que un cambio de salario entre la acumulación y el disfrute
+ * no deja la provisión 492 en déficit ni con excedente.
+ *
+ * Sin acumulado —primer año o apertura del sistema— se recurre a la tarifa
+ * contractual: `salario / 24`.
+ */
+export function vacationDailyRate(
+  balance: { days: number; amount: number } | undefined,
+  contractualRate: number,
+): number {
+  if (!balance || balance.days <= 0 || balance.amount <= 0) {
+    return round2(contractualRate);
+  }
+  return round2(balance.amount / balance.days);
+}
+
 // ── Subsidio por enfermedad o accidente (Art. 39-46) ──
 
 export interface SubsidyInput {

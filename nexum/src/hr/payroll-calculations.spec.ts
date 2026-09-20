@@ -10,6 +10,7 @@ import {
   overlapDays,
   overlapWorkingDays,
   round2,
+  vacationDailyRate,
 } from './payroll-calculations';
 import {
   MINIMUM_SUBSIDY,
@@ -342,5 +343,49 @@ describe('Acumulación de vacaciones (Art. 102)', () => {
     const gross = round2((baseSalary / WORKING_DAYS_PER_MONTH) * 14);
     expect(round2(gross * VACATION_ACCRUAL_RATE)).toBeCloseTo(265.13, 2);
     expect(round2(baseSalary * VACATION_ACCRUAL_RATE)).toBeCloseTo(454.5, 2);
+  });
+});
+
+describe('Retribución de las vacaciones (Art. 102)', () => {
+  const contractualRate = round2(5000 / WORKING_DAYS_PER_MONTH); // 208.33
+
+  it('paga a la tarifa del fondo acumulado', () => {
+    // 11 meses a 5 000: 24 días y 4 999,50 acumulados → ~208,31 por día.
+    const balance = { days: 24, amount: 4999.5 };
+    expect(vacationDailyRate(balance, contractualRate)).toBeCloseTo(208.31, 2);
+  });
+
+  it('el fondo cubre el mes de vacaciones del Art. 101', () => {
+    // Once meses de acumulación pagan un mes completo de descanso.
+    const monthlyAccrual = round2(5000 * VACATION_ACCRUAL_RATE);
+    const balance = {
+      days: 11 * WORKING_DAYS_PER_MONTH * VACATION_ACCRUAL_RATE,
+      amount: 11 * monthlyAccrual,
+    };
+    const rate = vacationDailyRate(balance, contractualRate);
+    expect(round2(rate * WORKING_DAYS_PER_MONTH)).toBeCloseTo(5000, 0);
+  });
+
+  it('ignora el aumento de salario posterior a la acumulación', () => {
+    // El fondo se formó con 5 000; el salario subió a 8 000. Se paga lo
+    // acumulado, no la tarifa nueva: la 492 no queda en déficit.
+    const balance = { days: 24, amount: 4999.5 };
+    const newContractualRate = round2(8000 / WORKING_DAYS_PER_MONTH);
+    const rate = vacationDailyRate(balance, newContractualRate);
+    expect(rate).toBeCloseTo(208.31, 2);
+    expect(round2(rate * 24)).toBeCloseTo(balance.amount, 0);
+  });
+
+  it('recurre a la tarifa contractual si no hay acumulado', () => {
+    expect(vacationDailyRate(undefined, contractualRate)).toBe(contractualRate);
+    expect(vacationDailyRate({ days: 0, amount: 0 }, contractualRate)).toBe(
+      contractualRate,
+    );
+  });
+
+  it('recurre a la tarifa contractual si el saldo quedó en negativo', () => {
+    expect(
+      vacationDailyRate({ days: -2, amount: -400 }, contractualRate),
+    ).toBe(contractualRate);
   });
 });
