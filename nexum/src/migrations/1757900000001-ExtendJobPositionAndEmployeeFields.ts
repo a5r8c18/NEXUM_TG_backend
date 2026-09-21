@@ -36,6 +36,10 @@ export class ExtendJobPositionAndEmployeeFields1757900000001 implements Migratio
     `);
     await queryRunner.query(`
       ALTER TABLE "employees"
+        ADD COLUMN IF NOT EXISTS "contract_type" character varying(20) NOT NULL DEFAULT 'work_execution'
+    `);
+    await queryRunner.query(`
+      ALTER TABLE "employees"
         ALTER COLUMN "contract_type" SET DEFAULT 'indeterminate'
     `);
     await queryRunner.query(`
@@ -57,7 +61,8 @@ export class ExtendJobPositionAndEmployeeFields1757900000001 implements Migratio
     `);
     await queryRunner.query(`
       ALTER TABLE "employees"
-        DROP COLUMN IF EXISTS "activity"
+        DROP COLUMN IF EXISTS "activity",
+        DROP COLUMN IF EXISTS "contract_type"
     `);
   }
 }
