@@ -1340,7 +1340,7 @@ export class PayrollService {
       // la contabilización ya se hizo arriba, evitando duplicar el asiento.
       if (bankAccountId) {
         try {
-          await this.financeService.createBankTransaction(companyId, {
+          const bankTx: any = await this.financeService.createBankTransaction(companyId, {
             transactionNumber: `TXB-NOM-${payroll.period}-${payroll.id}`,
             bankAccountId,
             transactionDate: payroll.paidAt || new Date().toISOString().split('T')[0],
@@ -1355,6 +1355,9 @@ export class PayrollService {
           },
           manager,
         );
+
+          payroll.bankTransactionId = bankTx.id;
+          await manager.getRepository(Payroll).save(payroll);
 
           // ── Payment asociado para conciliación y reportes (FIN-07) ──
           const paymentRepo = manager.getRepository(Payment);
@@ -1394,82 +1397,89 @@ export class PayrollService {
    * que reconstruye los saldos; los borradores simplemente se anulan.
    */
   async cancel(companyId: number, id: number, reason?: string) {
-    const payroll = await this.payrollRepo.findOne({
+    const initial = await this.payrollRepo.findOne({
       where: { id, companyId },
     });
 
-    if (!payroll) {
+    if (!initial) {
       throw new NotFoundException(`Payroll #${id} not found`);
     }
 
-    if (payroll.status === 'cancelled') {
+    if (initial.status === 'cancelled') {
       throw new BadRequestException('La nómina ya está cancelada');
     }
 
-    // Anular los comprobantes de procesamiento y de pago asociados.
-    const sourceIds = [
-      String(payroll.id),
-      `SUB-${payroll.id}`,
-      `MAT-${payroll.id}`,
-      `VAC-${payroll.id}`,
-      `IMP-${payroll.id}`,
-      `PAY-${payroll.id}`,
-    ];
-    for (const sourceId of sourceIds) {
-      const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
-        companyId,
-        sourceId,
-      );
-      for (const voucher of vouchers) {
-        if (voucher.status === 'cancelled') continue;
-        try {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const payrollRepo = manager.getRepository(Payroll);
+      const payroll = await payrollRepo.findOne({
+        where: { id, companyId },
+      });
+
+      if (!payroll) {
+        throw new NotFoundException(`Payroll #${id} not found`);
+      }
+
+      if (payroll.status === 'cancelled') {
+        throw new BadRequestException('La nómina ya está cancelada');
+      }
+
+      // Anular los comprobantes de procesamiento y de pago asociados.
+      const sourceIds = [
+        String(payroll.id),
+        `SUB-${payroll.id}`,
+        `MAT-${payroll.id}`,
+        `VAC-${payroll.id}`,
+        `IMP-${payroll.id}`,
+        `PAY-${payroll.id}`,
+      ];
+      for (const sourceId of sourceIds) {
+        const vouchers =
+          await this.voucherService.findVouchersBySourceDocumentId(
+            companyId,
+            sourceId,
+          );
+        for (const voucher of vouchers) {
+          if (voucher.status === 'cancelled') continue;
           await this.voucherService.updateVoucherStatus(
             companyId,
             voucher.id,
             'cancelled',
-          );
-        } catch (error) {
-          this.logger.error(
-            `Error anulando comprobante ${voucher.voucherNumber}: ${error instanceof Error ? error.message : String(error)}`,
+            manager,
           );
         }
       }
-    }
 
-    // ── Anular la obligación con el presupuesto del estado en Finanzas ──
-    try {
+      // ── Anular la obligación con el presupuesto del estado en Finanzas ──
       await this.financeService.cancelPayablesByInvoiceNumber(
         companyId,
         `IMP-${payroll.period}-${payroll.id}`,
         `Anulada por cancelación de nómina ${payroll.period}`,
+        manager,
       );
-    } catch (error) {
-      this.logger.error(
-        `Error anulando obligaciones tributarias de nómina ${payroll.id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
 
-    // ── Reversar el movimiento bancario si la nómina fue pagada con banco (RH-07) ──
-    if (payroll.status === 'paid') {
-      try {
+      // ── Reversar el movimiento bancario si la nómina fue pagada (RH-07) ──
+      if (payroll.status === 'paid') {
+        const referenceNumber = `PAGO-NOM-${payroll.period}-${payroll.id}`;
         await this.financeService.reverseBankTransaction(
           companyId,
-          `PAGO-NOM-${payroll.period}-${payroll.id}`,
+          referenceNumber,
           `Reverso por cancelación de nómina ${payroll.period}`,
+          manager,
+          payroll.bankTransactionId || undefined,
         );
-      } catch (error) {
-        this.logger.error(`Error reversando movimiento bancario: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
 
-    payroll.status = 'cancelled';
-    payroll.notes = reason
-      ? `${payroll.notes ? payroll.notes + ' | ' : ''}Cancelada: ${reason}`
-      : payroll.notes;
-    await this.payrollRepo.save(payroll);
+      payroll.status = 'cancelled';
+      payroll.notes = reason
+        ? `${payroll.notes ? payroll.notes + ' | ' : ''}Cancelada: ${reason}`
+        : payroll.notes;
+      await payrollRepo.save(payroll);
 
-    this.logger.log(`Nómina ${payroll.period} (#${payroll.id}) cancelada`);
-    return { payroll };
+      this.logger.log(`Nómina ${payroll.period} (#${payroll.id}) cancelada`);
+      return { payroll };
+    });
+
+    return result;
   }
 
   async getStatistics(companyId: number) {

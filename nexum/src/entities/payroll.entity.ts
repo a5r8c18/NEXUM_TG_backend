@@ -73,6 +73,10 @@ export class Payroll {
   @Column({ type: 'date', nullable: true })
   paidAt?: string;
 
+  /** Identificador real de la transacción bancaria generada al pagar. */
+  @Column({ name: 'bank_transaction_id', type: 'uuid', nullable: true })
+  bankTransactionId?: string | null;
+
   @OneToMany('PayrollItem', 'payroll')
   items: any[];
 

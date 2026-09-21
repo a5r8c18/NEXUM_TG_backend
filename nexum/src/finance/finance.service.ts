@@ -280,8 +280,12 @@ export class FinanceService {
     companyId: number,
     invoiceNumber: string,
     reason?: string,
+    manager?: EntityManager,
   ) {
-    const payables = await this.apRepo.find({
+    const apRepo = manager
+      ? manager.getRepository(AccountPayable)
+      : this.apRepo;
+    const payables = await apRepo.find({
       where: { companyId, invoiceNumber },
     });
     let cancelled = 0;
@@ -296,7 +300,7 @@ export class FinanceService {
       ap.status = 'cancelled';
       ap.balanceAmount = 0;
       ap.notes = reason ? `${ap.notes ? ap.notes + ' | ' : ''}${reason}` : ap.notes;
-      await this.apRepo.save(ap);
+      await apRepo.save(ap);
       cancelled++;
 
       // Reversar el asiento con que nació la obligación, si lo hubo.
@@ -306,18 +310,12 @@ export class FinanceService {
       );
       for (const voucher of vouchers) {
         if (voucher.status === 'cancelled') continue;
-        try {
-          await this.voucherService.updateVoucherStatus(
-            companyId,
-            voucher.id,
-            'cancelled',
-          );
-        } catch (error) {
-          this.logger.error(
-            `Error anulando comprobante ${voucher.voucherNumber} de la CxP ${ap.apNumber}: ` +
-              `${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+        await this.voucherService.updateVoucherStatus(
+          companyId,
+          voucher.id,
+          'cancelled',
+          manager,
+        );
       }
     }
     return { cancelled };
@@ -453,16 +451,26 @@ export class FinanceService {
    * Crea una nueva transacción del tipo opuesto con parentTransactionId
    * apuntando al original, restaurando el saldo bancario (RH-07).
    */
-  async reverseBankTransaction(companyId: number, referenceNumber: string, description?: string) {
-    const original = await this.txRepo.findOne({
-      where: { companyId, referenceNumber },
-    });
+  async reverseBankTransaction(
+    companyId: number,
+    referenceNumber: string,
+    description?: string,
+    manager?: EntityManager,
+    bankTransactionId?: string,
+  ) {
+    const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
+
+    const where = bankTransactionId
+      ? { companyId, id: bankTransactionId }
+      : { companyId, referenceNumber };
+    const original = await txRepo.findOne({ where });
     if (!original) {
-      this.logger.warn(`No se encontró BankTransaction con reference ${referenceNumber}`);
-      return null;
+      throw new NotFoundException(
+        `No se encontró BankTransaction con ${bankTransactionId ? `id ${bankTransactionId}` : `reference ${referenceNumber}`}`,
+      );
     }
 
-    const existingReversal = await this.txRepo.findOne({
+    const existingReversal = await txRepo.findOne({
       where: { companyId, parentTransactionId: original.id },
     });
     if (existingReversal) {
@@ -478,7 +486,7 @@ export class FinanceService {
     );
 
     const reverseType = original.transactionType === 'credit' ? 'debit' : 'credit';
-    const reversal = this.txRepo.create({
+    const reversal = txRepo.create({
       companyId,
       bankAccountId: original.bankAccountId,
       transactionNumber: reverseNumber,
@@ -492,12 +500,13 @@ export class FinanceService {
       category: original.category,
       parentTransactionId: original.id,
     });
-    const saved = await this.txRepo.save(reversal);
+    const saved = await txRepo.save(reversal);
 
     await this.applyBankBalanceDelta(
       companyId,
       original.bankAccountId,
       reverseType === 'credit' ? Number(original.amount) : -Number(original.amount),
+      manager,
     );
 
     this.logger.log(`BankTransaction ${original.transactionNumber} reversada por ${saved.transactionNumber}`);

@@ -608,9 +608,14 @@ export class VoucherService {
     return result;
   }
 
-  async updateVoucherStatus(companyId: number, id: string, status: string) {
-    const statusResult = await this.entityManager.transaction(async (manager) => {
-      const voucher = await manager.getRepository(Voucher).findOne({
+  async updateVoucherStatus(
+    companyId: number,
+    id: string,
+    status: string,
+    manager?: EntityManager,
+  ) {
+    const execute = async (mgr: EntityManager) => {
+      const voucher = await mgr.getRepository(Voucher).findOne({
         where: { id, companyId },
       });
 
@@ -631,7 +636,7 @@ export class VoucherService {
 
       if (status === 'posted') {
         const result = await this.postVoucherInTransaction(
-          manager,
+          mgr,
           companyId,
           id,
         );
@@ -652,7 +657,7 @@ export class VoucherService {
       }
 
       if (status === 'cancelled' && voucher.status === 'posted') {
-        await this.reverseVoucherBalancesInTransaction(manager, voucher);
+        await this.reverseVoucherBalancesInTransaction(mgr, voucher);
 
         // Log audit for voucher cancellation
         await this.auditService.log({
@@ -668,7 +673,7 @@ export class VoucherService {
       }
 
       voucher.status = status as any;
-      const result = await manager.getRepository(Voucher).save(voucher);
+      const result = await mgr.getRepository(Voucher).save(voucher);
 
       // Log audit for status change
       await this.auditService.log({
@@ -683,7 +688,11 @@ export class VoucherService {
       });
 
       return result;
-    });
+    };
+
+    const statusResult = manager
+      ? await execute(manager)
+      : await this.entityManager.transaction(execute);
     await this.invalidateReportCache(companyId);
     return statusResult;
   }
