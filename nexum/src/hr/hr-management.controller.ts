@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import {
   Controller,
   Get,
@@ -17,6 +16,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import { CreateContractDto, UpdateContractDto } from './dto/contract.dto';
+import { CreateAttendanceDto, UpdateAttendanceDto } from './dto/attendance.dto';
+import {
+  CreateLeaveDto,
+  UpdateLeaveDto,
+  SetLeaveStatusDto,
+} from './dto/leave.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -35,12 +41,16 @@ export class ContractsController {
   }
 
   @Post()
-  create(@Req() req: Request, @Body() body: any) {
+  create(@Req() req: Request, @Body() body: CreateContractDto) {
     return this.service.createContract(getCompanyId(req), body);
   }
 
   @Put(':id')
-  update(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+  update(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateContractDto,
+  ) {
     return this.service.updateContract(getCompanyId(req), id, body);
   }
 
@@ -75,12 +85,16 @@ export class AttendanceController {
   }
 
   @Post()
-  create(@Req() req: Request, @Body() body: any) {
+  create(@Req() req: Request, @Body() body: CreateAttendanceDto) {
     return this.service.createAttendance(getCompanyId(req), body);
   }
 
   @Put(':id')
-  update(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+  update(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateAttendanceDto,
+  ) {
     return this.service.updateAttendance(getCompanyId(req), id, body);
   }
 
@@ -111,12 +125,16 @@ export class LeavesController {
   }
 
   @Post()
-  create(@Req() req: Request, @Body() body: any) {
+  create(@Req() req: Request, @Body() body: CreateLeaveDto) {
     return this.service.createLeave(getCompanyId(req), body);
   }
 
   @Put(':id')
-  update(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+  update(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateLeaveDto,
+  ) {
     return this.service.updateLeave(getCompanyId(req), id, body);
   }
 
@@ -124,7 +142,7 @@ export class LeavesController {
   setStatus(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { status: 'approved' | 'rejected' | 'cancelled'; approvedBy?: string },
+    @Body() body: SetLeaveStatusDto,
   ) {
     return this.service.setLeaveStatus(
       getCompanyId(req),

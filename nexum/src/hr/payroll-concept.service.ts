@@ -422,17 +422,23 @@ export class PayrollConceptService {
     }
     const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
 
-    // Unicidad por trabajador dentro del período.
-    const settlements = await this.payrollRepo.find({
+    // El índice único es por concepto y período, así que todas las
+    // terminaciones del mes comparten una sola nómina de liquidación: la
+    // unicidad real es por trabajador dentro de esa nómina.
+    const settlement = await this.payrollRepo.findOne({
       where: { companyId, concept: 'liquidacion', period: data.period },
       relations: ['items'],
     });
-    const duplicated = settlements
-      .filter((p) => p.status !== 'cancelled')
-      .some((p) =>
-        (p.items || []).some((i) => i.employeeId === data.employeeId),
+    if (settlement && settlement.status === 'cancelled') {
+      throw new BadRequestException(
+        `Ya existe una nómina de liquidación cancelada para ${data.period}: ` +
+          'elimínela o genere la liquidación en otro período',
       );
-    if (duplicated) {
+    }
+    const alreadySettled = (settlement?.items || []).some(
+      (i) => i.employeeId === data.employeeId,
+    );
+    if (alreadySettled) {
       throw new BadRequestException(
         `Ya existe una liquidación de ${employeeName} en el período ${data.period}`,
       );
@@ -456,25 +462,53 @@ export class PayrollConceptService {
     const taxWithholding = calculateIncomeTax(gross);
     const totalDeductions = round2(socialSecurity + taxWithholding);
 
-    const items: Partial<PayrollItem>[] = [
-      {
-        ...this.baseItem(emp, companyId),
-        baseSalary: Number(emp.salary || 0),
-        grossSalary: gross,
-        socialSecurity,
-        taxWithholding,
-        totalDeductions,
-        netSalary: round2(gross - totalDeductions),
-        averageSalary: Number(emp.salary || 0),
-        paidUnits: days,
-        appliedRate: 1,
-        notes:
-          `Liquidación por terminación (Art. 52): ` +
-          `${days} días acumulados × ${rate}`,
-      },
-    ];
+    const item: Partial<PayrollItem> = {
+      ...this.baseItem(emp, companyId),
+      baseSalary: Number(emp.salary || 0),
+      grossSalary: gross,
+      socialSecurity,
+      taxWithholding,
+      totalDeductions,
+      netSalary: round2(gross - totalDeductions),
+      averageSalary: Number(emp.salary || 0),
+      paidUnits: days,
+      appliedRate: 1,
+      notes:
+        `Liquidación por terminación (Art. 52): ` +
+        `${days} días acumulados × ${rate}`,
+    };
 
-    return this.savePayrollWithItems(companyId, 'liquidacion', data, items);
+    // Si el período ya tiene su nómina de liquidación en borrador, la nueva
+    // terminación se añade como línea y se recalculan los totales.
+    if (settlement) {
+      if (settlement.status !== 'draft') {
+        throw new BadRequestException(
+          `La nómina de liquidación del período ${data.period} ya está ` +
+            `${settlement.status === 'processed' ? 'procesada' : 'pagada'}: ` +
+            'no se pueden añadir trabajadores',
+        );
+      }
+      await this.payrollItemRepo.save({
+        ...item,
+        payrollId: settlement.id,
+      });
+      settlement.totalGross = round2(
+        Number(settlement.totalGross) + gross,
+      );
+      settlement.totalDeductions = round2(
+        Number(settlement.totalDeductions) + totalDeductions,
+      );
+      settlement.totalNet = round2(
+        Number(settlement.totalNet) + item.netSalary!,
+      );
+      await this.payrollRepo.save(settlement);
+      return this.payrollRepo.findOne({
+        where: { id: settlement.id },
+        relations: ['items'],
+      });
+    }
+
+    return this.savePayrollWithItems(companyId, 'liquidacion', data, [item]);
   }
 
   // ── Subsidio por enfermedad o accidente (Art. 39-46) ──

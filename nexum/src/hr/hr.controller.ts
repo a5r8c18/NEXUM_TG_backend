@@ -16,6 +16,9 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
+import { CreateDepartmentDto, UpdateDepartmentDto } from './dto/department.dto';
+import { CreatePositionDto, UpdatePositionDto } from './dto/position.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -63,7 +66,7 @@ export class HrController {
   }
 
   @Post('employees')
-  createEmployee(@Req() req: Request, @Body() body: any) {
+  createEmployee(@Req() req: Request, @Body() body: CreateEmployeeDto) {
     const companyId = getCompanyId(req);
     return this.hrService.createEmployee(companyId, body);
   }
@@ -72,7 +75,7 @@ export class HrController {
   updateEmployee(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: any,
+    @Body() body: UpdateEmployeeDto,
   ) {
     const companyId = getCompanyId(req);
     return this.hrService.updateEmployee(companyId, id, body);
@@ -93,7 +96,7 @@ export class HrController {
   }
 
   @Post('departments')
-  createDepartment(@Req() req: Request, @Body() body: any) {
+  createDepartment(@Req() req: Request, @Body() body: CreateDepartmentDto) {
     const companyId = getCompanyId(req);
     return this.hrService.createDepartment(companyId, body);
   }
@@ -102,7 +105,7 @@ export class HrController {
   updateDepartment(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: any,
+    @Body() body: UpdateDepartmentDto,
   ) {
     const companyId = getCompanyId(req);
     return this.hrService.updateDepartment(companyId, id, body);
@@ -125,7 +128,7 @@ export class HrController {
   }
 
   @Post('positions')
-  createPosition(@Req() req: Request, @Body() body: any) {
+  createPosition(@Req() req: Request, @Body() body: CreatePositionDto) {
     const companyId = getCompanyId(req);
     return this.hrService.createPosition(companyId, body);
   }
@@ -134,7 +137,7 @@ export class HrController {
   updatePosition(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: any,
+    @Body() body: UpdatePositionDto,
   ) {
     const companyId = getCompanyId(req);
     return this.hrService.updatePosition(companyId, id, body);

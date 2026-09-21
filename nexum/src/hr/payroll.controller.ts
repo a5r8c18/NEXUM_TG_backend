@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import {
   Controller,
   Get,
@@ -20,6 +19,17 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
+import {
+  CancelPayrollDto,
+  CreatePayrollDto,
+  GenerateFreeDto,
+  GenerateMaternityDto,
+  GeneratePayrollDto,
+  GenerateSettlementDto,
+  PayPayrollDto,
+  ProcessPayrollDto,
+  UpdatePayrollItemsDto,
+} from './dto/create-payroll.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
@@ -29,7 +39,7 @@ export class PayrollController {
     private readonly payrollService: PayrollService,
     private readonly payrollConceptService: PayrollConceptService,
     private readonly payrollReportService: PayrollReportService,
-    ) {}
+  ) {}
 
   @Get()
   findAll(
@@ -87,52 +97,46 @@ export class PayrollController {
   }
 
   @Post()
-  create(@Req() req: Request, @Body() body: any) {
+  create(@Req() req: Request, @Body() body: CreatePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollService.create(companyId, body);
   }
 
   @Post('generate')
-  generate(
-    @Req() req: Request,
-    @Body()
-    body: {
-      period: string;
-      startDate: string;
-      endDate: string;
-      processedBy?: string;
-    },
-  ) {
+  generate(@Req() req: Request, @Body() body: GeneratePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollService.generateFromEmployees(companyId, body);
   }
 
   @Post('generate/vacaciones')
-  generateVacations(@Req() req: Request, @Body() body: any) {
+  generateVacations(@Req() req: Request, @Body() body: GeneratePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateVacations(companyId, body);
   }
 
   @Post('generate/subsidio')
-  generateSubsidy(@Req() req: Request, @Body() body: any) {
+  generateSubsidy(@Req() req: Request, @Body() body: GeneratePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateSubsidy(companyId, body);
   }
 
   @Post('generate/liquidacion')
-  generateVacationSettlement(@Req() req: Request, @Body() body: any) {
+  generateVacationSettlement(
+    @Req() req: Request,
+    @Body() body: GenerateSettlementDto,
+  ) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateVacationSettlement(companyId, body);
   }
 
   @Post('generate/maternidad')
-  generateMaternity(@Req() req: Request, @Body() body: any) {
+  generateMaternity(@Req() req: Request, @Body() body: GenerateMaternityDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateMaternity(companyId, body);
   }
 
   @Post('generate/libre')
-  generateFree(@Req() req: Request, @Body() body: any) {
+  generateFree(@Req() req: Request, @Body() body: GenerateFreeDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateFree(companyId, body);
   }
@@ -141,7 +145,7 @@ export class PayrollController {
   updateItems(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { items: any[] },
+    @Body() body: UpdatePayrollItemsDto,
   ) {
     const companyId = getCompanyId(req);
     return this.payrollService.updateItems(companyId, parseInt(id), body.items);
@@ -151,33 +155,33 @@ export class PayrollController {
   process(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { processedBy: string },
+    @Body() body: ProcessPayrollDto,
   ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.process(
-      companyId,
-      parseInt(id),
-      body.processedBy,
-    );
+    return this.payrollService.process(companyId, parseInt(id), body.processedBy);
   }
 
   @Put(':id/pay')
   markAsPaid(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { bankAccountId?: string },
+    @Body() body: PayPayrollDto,
   ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.markAsPaid(companyId, parseInt(id), body?.bankAccountId);
+    return this.payrollService.markAsPaid(
+      companyId,
+      parseInt(id),
+      body.bankAccountId,
+    );
   }
 
   @Put(':id/cancel')
   cancel(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { reason?: string },
+    @Body() body: CancelPayrollDto,
   ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.cancel(companyId, parseInt(id), body?.reason);
+    return this.payrollService.cancel(companyId, parseInt(id), body.reason);
   }
 }
