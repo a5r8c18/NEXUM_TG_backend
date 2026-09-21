@@ -49,10 +49,28 @@ export function calculateSocialSecurity(grossSalary: number): number {
 }
 
 /**
- * Impuesto sobre los Ingresos Personales. Escala progresiva por tramos: cada
- * porcentaje se aplica solo a la porción del salario comprendida en su tramo.
+ * Impuesto sobre los Ingresos Personales para trabajadores asalariados.
+ *
+ * Escala progresiva según Resolución 310/2020 (Gaceta Oficial Extraordinaria
+ * No. 70 de 2020): exento hasta 3 260 CUP, 3 % entre 3 260 y 9 510 CUP,
+ * y 5 % por encima de 9 510 CUP.
  */
-export function calculateIncomeTax(grossSalary: number): number {
+export function calculateIncomeTaxSalaried(grossSalary: number): number {
+  if (grossSalary <= 3260) return 0;
+  if (grossSalary <= 9510) {
+    return round2((grossSalary - 3260) * 0.03);
+  }
+  const firstBracket = (9510 - 3260) * 0.03;
+  return round2(firstBracket + (grossSalary - 9510) * 0.05);
+}
+
+/**
+ * Impuesto sobre los Ingresos Personales para trabajadores por cuenta propia.
+ *
+ * Escala progresiva de 7 tramos según Resolución 271/2024 (Gaceta Oficial
+ * No. 78 Ordinaria de 2024): 0 %, 3 %, 5 %, 7.5 %, 10 %, 15 % y 20 %.
+ */
+export function calculateIncomeTaxTcp(grossSalary: number): number {
   const brackets = [
     { limit: 3260, rate: 0 },
     { limit: 9510, rate: 0.03 },

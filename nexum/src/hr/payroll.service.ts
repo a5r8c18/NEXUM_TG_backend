@@ -20,7 +20,7 @@ import { MappingType } from '../entities/account-mapping.entity';
 import { FinanceService } from '../finance/finance.service';
 import {
   NON_SALARY_LEAVE_TYPES,
-  calculateIncomeTax,
+  calculateIncomeTaxSalaried,
   calculateSocialSecurity,
   nonWorkedWorkingDays,
   round2,
@@ -302,7 +302,7 @@ export class PayrollService {
         Math.round((baseSalary + overtimePay - unpaidDeduction) * 100) / 100,
       );
       const socialSecurity = calculateSocialSecurity(grossSalary);
-      const taxWithholding = calculateIncomeTax(grossSalary);
+      const taxWithholding = calculateIncomeTaxSalaried(grossSalary);
       // Cuota sindical: 1 % del devengado, solo a los trabajadores afiliados.
       const unionDues = emp.unionMember
         ? round2(grossSalary * UNION_DUES_RATE)

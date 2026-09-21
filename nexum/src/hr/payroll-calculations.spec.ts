@@ -1,5 +1,6 @@
 import {
-  calculateIncomeTax,
+  calculateIncomeTaxSalaried,
+  calculateIncomeTaxTcp,
   calculateMaternityBenefit,
   calculateSocialBenefit,
   calculateSocialSecurity,
@@ -31,24 +32,48 @@ describe('Contribución a la Seguridad Social', () => {
   });
 });
 
-describe('Impuesto sobre los Ingresos Personales', () => {
+describe('Impuesto sobre los Ingresos Personales — asalariados (Res. 310/2020)', () => {
+  it('exime hasta 3 260 CUP', () => {
+    expect(calculateIncomeTaxSalaried(0)).toBe(0);
+    expect(calculateIncomeTaxSalaried(3260)).toBe(0);
+  });
+
+  it('aplica 3 % por encima de 3 260 CUP', () => {
+    // 3 261 − 3 260 = 1 CUP × 3 % = 0.03
+    expect(calculateIncomeTaxSalaried(3261)).toBe(0.03);
+    // (9 510 − 3 260) × 3 % = 6 250 × 0.03 = 187.50
+    expect(calculateIncomeTaxSalaried(9510)).toBe(187.5);
+  });
+
+  it('aplica 5 % por encima de 9 510 CUP', () => {
+    // 187.50 + (9 511 − 9 510) × 5 % = 187.55
+    expect(calculateIncomeTaxSalaried(9511)).toBe(187.55);
+    // 187.50 + (15 000 − 9 510) × 5 % = 462
+    expect(calculateIncomeTaxSalaried(15000)).toBe(462);
+    // 187.50 + (50 000 − 9 510) × 5 % = 2 212
+    expect(calculateIncomeTaxSalaried(50000)).toBe(2212);
+  });
+});
+
+describe('Impuesto sobre los Ingresos Personales — TCP (Res. 271/2024)', () => {
   it('exime el primer tramo', () => {
-    expect(calculateIncomeTax(3260)).toBe(0);
+    expect(calculateIncomeTaxTcp(3260)).toBe(0);
   });
 
   it('aplica la escala de forma progresiva, no plana', () => {
-    // 3260 exentos + 6250 al 3 % = 187.50
-    expect(calculateIncomeTax(9510)).toBe(187.5);
+    // 3 260 exentos + 6 250 al 3 % = 187.50
+    expect(calculateIncomeTaxTcp(9510)).toBe(187.5);
   });
 
   it('acumula los tramos intermedios', () => {
-    // 187.50 + (15000 − 9510) × 5 % = 187.50 + 274.50 = 462
-    expect(calculateIncomeTax(15000)).toBe(462);
+    // 187.50 + (15 000 − 9 510) × 5 % = 462
+    expect(calculateIncomeTaxTcp(15000)).toBe(462);
   });
 
   it('aplica el 20 % solo al exceso sobre 30 000', () => {
-    const at30k = calculateIncomeTax(30000);
-    expect(calculateIncomeTax(40000)).toBe(Math.round((at30k + 2000) * 100) / 100);
+    // En 30 000: 1 877.50; en 40 000 se suman 10 000 × 20 % = 2 000
+    expect(calculateIncomeTaxTcp(30000)).toBe(2087);
+    expect(calculateIncomeTaxTcp(40000)).toBe(4087);
   });
 });
 

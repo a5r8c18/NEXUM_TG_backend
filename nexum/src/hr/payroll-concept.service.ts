@@ -14,7 +14,7 @@ import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { HrReportService } from './hr-report.service';
 import {
-  calculateIncomeTax,
+  calculateIncomeTaxSalaried,
   calculateMaternityBenefit,
   calculateSocialBenefit,
   calculateSocialSecurity,
@@ -345,7 +345,7 @@ export class PayrollConceptService {
       const dailyRate = vacationDailyRate(balance, contractualRate);
       const gross = round2(dailyRate * days);
       const socialSecurity = calculateSocialSecurity(gross);
-      const taxWithholding = calculateIncomeTax(gross);
+      const taxWithholding = calculateIncomeTaxSalaried(gross);
       const totalDeductions = round2(socialSecurity + taxWithholding);
 
       const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
@@ -459,7 +459,7 @@ export class PayrollConceptService {
     const gross = round2(balance.amount);
     const rate = round2(balance.amount / balance.days);
     const socialSecurity = calculateSocialSecurity(gross);
-    const taxWithholding = calculateIncomeTax(gross);
+    const taxWithholding = calculateIncomeTaxSalaried(gross);
     const totalDeductions = round2(socialSecurity + taxWithholding);
 
     const item: Partial<PayrollItem> = {
@@ -799,7 +799,7 @@ export class PayrollConceptService {
       if (gross <= 0) continue;
 
       const socialSecurity = calculateSocialSecurity(gross);
-      const taxWithholding = calculateIncomeTax(gross);
+      const taxWithholding = calculateIncomeTaxSalaried(gross);
       const totalDeductions = round2(socialSecurity + taxWithholding);
 
       items.push({
