@@ -28,8 +28,10 @@ import {
 } from './payroll-calculations';
 import {
   LEGAL_VACATION_PERIODS,
+  MINIMUM_WAGE,
   PayrollConcept,
   PAYROLL_CONCEPT_LABELS,
+  SOCIAL_BENEFIT_RATE,
   VACATION_ACCRUAL_RATE,
   WEEKS_PER_YEAR,
   WORKING_DAYS_PER_MONTH,
@@ -663,14 +665,16 @@ export class PayrollConceptService {
   // ── Maternidad (DL 56/2021, mod. DL 71/2023) ──
 
   /**
-   * Genera la nómina de maternidad para un plazo (installment 1, 2 o 3).
-   * En el sector estatal el débito va a 164-0030; en el no estatal la Filial
-   * INSS paga directamente y la nómina queda solo informativa.
+   * Genera la nómina de maternidad: plazos 1-3 pagan la prestación económica
+   * (Art. 18 DL 56/2021) y el plazo 4 la prestación social mensual del período
+   * (Art. 30.1). En el sector estatal el débito va a 164-0030; en el no
+   * estatal la Filial INSS paga directamente y la nómina queda informativa.
    */
   async generateMaternity(companyId: number, data: GenerateInput) {
-    if (!data.installment || data.installment < 1 || data.installment > 3) {
+    if (!data.installment || data.installment < 1 || data.installment > 4) {
       throw new BadRequestException(
-        'La nómina de maternidad requiere el plazo (installment 1, 2 o 3)',
+        'La nómina de maternidad requiere el plazo (installment 1-3) o la ' +
+          'prestación social mensual (installment 4)',
       );
     }
     await this.ensureUnique(
@@ -679,6 +683,12 @@ export class PayrollConceptService {
       data.period,
       data.installment,
     );
+
+    // Plazo 4: prestación social mensual, que corre desde el vencimiento de la
+    // licencia posnatal hasta que el menor arribe a su primer año de vida.
+    if (data.installment === 4) {
+      return this.generateMaternitySocialBenefit(companyId, data);
+    }
 
     const leaves = await this.approvedLeaves(
       companyId,
@@ -751,6 +761,144 @@ export class PayrollConceptService {
     if (items.length === 0) {
       throw new BadRequestException(
         'Ninguna licencia de maternidad generó prestación en el período',
+      );
+    }
+
+    return this.savePayrollWithItems(
+      companyId,
+      'maternidad',
+      data,
+      items,
+      warnings.length ? warnings.join(' | ') : undefined,
+    );
+  }
+
+  /**
+   * Prestación social mensual (Art. 30.1 DL 56/2021, mod. DL 71/2023): 60 %
+   * de la base de cálculo de la prestación económica —variantes a y b— o del
+   * salario promedio mensual del padre o abuelo que asume el cuidado —variante
+   * c—, calculado sobre los doce meses anteriores al nacimiento del menor.
+   *
+   * Corre desde el vencimiento de la licencia posnatal hasta que el menor
+   * arribe a su primer año de vida (Art. 8) y su cuantía mensual nunca es
+   * inferior al salario mínimo vigente (Art. 9).
+   */
+  private async generateMaternitySocialBenefit(
+    companyId: number,
+    data: GenerateInput,
+  ) {
+    // La ventana de la prestación social se extiende más allá de la licencia,
+    // así que no se filtra por solape con el período sino por su propia ventana.
+    const leaves = await this.leaveRepo.find({
+      where: { companyId, type: 'maternity', status: 'approved' },
+    });
+
+    const items: Partial<PayrollItem>[] = [];
+    const warnings: string[] = [];
+    const periodDays = daysBetween(data.startDate, data.endDate);
+
+    for (const leave of leaves) {
+      const variant = leave.socialBenefitVariant;
+      if (!variant) continue;
+
+      // Sin la fecha del parto no se puede fijar el primer año del menor.
+      if (!leave.birthDate) {
+        warnings.push(
+          `${leave.employeeName}: sin fecha de parto no se fija el fin de la prestación social`,
+        );
+        continue;
+      }
+
+      const socialStart = new Date(leave.endDate);
+      socialStart.setDate(socialStart.getDate() + 1);
+      const socialEnd = new Date(leave.birthDate);
+      socialEnd.setFullYear(socialEnd.getFullYear() + 1);
+      socialEnd.setDate(socialEnd.getDate() - 1);
+      const windowStart = socialStart.toISOString().split('T')[0];
+      const windowEnd = socialEnd.toISOString().split('T')[0];
+
+      const coveredDays = overlapDays(
+        windowStart,
+        windowEnd,
+        data.startDate,
+        data.endDate,
+      );
+      if (coveredDays <= 0) continue;
+
+      // Variante c: cobra el padre o abuelo que asume el cuidado del menor.
+      const beneficiaryId =
+        variant === 'c' ? leave.beneficiaryEmployeeId : leave.employeeId;
+      if (!beneficiaryId) {
+        warnings.push(
+          `${leave.employeeName}: la variante c exige el beneficiario que asume el cuidado (Art. 30.1.c)`,
+        );
+        continue;
+      }
+      const emp = await this.employeeRepo.findOne({
+        where: { id: beneficiaryId, companyId },
+      });
+      if (!emp) {
+        warnings.push(`${leave.employeeName}: beneficiario no encontrado`);
+        continue;
+      }
+
+      // En la variante c la base es lo devengado por el beneficiario en los 12
+      // meses anteriores al nacimiento; en a y b, la base de la prestación
+      // económica de la madre.
+      const referenceDate =
+        variant === 'c' ? leave.birthDate : leave.startDate;
+      const { average, warning } = await this.averageMonthlySalary(
+        companyId,
+        emp.id,
+        referenceDate,
+      );
+      if (warning) warnings.push(`${emp.firstName} ${emp.lastName}: ${warning}`);
+
+      // Art. 30.1: 60 %; Art. 9: la cuantía mensual no baja del salario mínimo.
+      const monthlyBenefit = Math.max(
+        calculateSocialBenefit(average),
+        MINIMUM_WAGE,
+      );
+      const amount = round2((monthlyBenefit * coveredDays) / periodDays);
+      if (amount <= 0) continue;
+
+      const isStateSector = emp.employmentSector !== 'non_state';
+      items.push({
+        ...this.baseItem(emp, companyId),
+        grossSalary: amount,
+        totalDeductions: 0,
+        netSalary: amount,
+        leaveRequestId: leave.id,
+        averageSalary: average,
+        paidUnits: coveredDays,
+        appliedRate: SOCIAL_BENEFIT_RATE,
+        // En la variante b la madre trabaja y acumula vacaciones por su
+        // salario; en a y c el tiempo de prestación cuenta como servicio
+        // (Art. 12.1 DL 56/2021) y provisiona aquí.
+        ...(variant === 'b'
+          ? {}
+          : this.vacationAccrual(
+              emp,
+              overlapWorkingDays(
+                windowStart,
+                windowEnd,
+                data.startDate,
+                data.endDate,
+              ),
+            )),
+        notes:
+          `Prestación social ${variant} (60 %, Art. 30.1.${variant} DL 56/2021): ` +
+          `${coveredDays}/${periodDays} días × ${monthlyBenefit} mensual` +
+          (isStateSector
+            ? ''
+            : ' — sector no estatal: paga la Filial INSS (Art. 37 DL 56/2021), sin asiento'),
+      });
+    }
+
+    if (items.length === 0) {
+      throw new BadRequestException(
+        'Ninguna licencia de maternidad generó prestación social en el período. ' +
+          warnings.join(' | '),
       );
     }
 

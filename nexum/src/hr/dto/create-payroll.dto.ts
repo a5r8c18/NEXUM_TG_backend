@@ -151,10 +151,14 @@ export class GeneratePayrollDto {
 }
 
 export class GenerateMaternityDto extends GeneratePayrollDto {
+  /**
+   * 1-3: plazos de la prestación económica (Art. 18 DL 56/2021).
+   * 4: prestación social mensual del período (Art. 30.1).
+   */
   @IsNumber()
   @IsInt()
   @Min(1)
-  @Max(3)
+  @Max(4)
   @Type(() => Number)
   installment: number;
 }
