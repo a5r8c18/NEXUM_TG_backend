@@ -47,6 +47,21 @@ export const VACATION_FUND_CONCEPTS: PayrollConcept[] = [
 ];
 
 /**
+ * Conceptos cuya retribución integra la base imponible mensual del Impuesto
+ * sobre Ingresos Personales (Res. 310/2020: "el total de las remuneraciones…
+ * por todos los conceptos de pago; incluyendo el pago por descanso
+ * retribuido") y de la Contribución Especial a la Seguridad Social
+ * (Res. 41/2023). El subsidio y la maternidad son prestaciones sociales, no
+ * remuneraciones: están exentas y no entran en la base.
+ */
+export const TAXABLE_INCOME_CONCEPTS: PayrollConcept[] = [
+  'salario',
+  'vacaciones',
+  'liquidacion',
+  'libre',
+];
+
+/**
  * Categoría ocupacional del trabajador. Determina la subcuenta analítica de
  * Nóminas por Pagar (455-00X0) donde se acredita el neto, según el Nomenclador
  * Cubano 2016.

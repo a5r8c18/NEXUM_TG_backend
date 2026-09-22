@@ -7,6 +7,8 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { JobPosition } from '../entities/job-position.entity';
 import {
+  PayrollConcept,
+  TAXABLE_INCOME_CONCEPTS,
   VACATION_ACCRUAL_RATE,
   VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
@@ -165,16 +167,17 @@ export class HrReportService {
       .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
   }
 
-  /** Nóminas de salario ya liquidadas del período. */
-  private async salaryPayrolls(
+  /** Nóminas liquidadas del período de los conceptos indicados. */
+  private async periodPayrolls(
     companyId: number,
     period: string,
+    concepts: PayrollConcept[],
   ): Promise<Payroll[]> {
     return this.payrollRepo.find({
       where: {
         companyId,
         period,
-        concept: 'salario',
+        concept: In(concepts),
         status: In(['processed', 'paid']),
       },
       relations: ['items'],
@@ -183,53 +186,96 @@ export class HrReportService {
 
   /**
    * Salario devengado (CNC): por trabajador, el devengado, la contribución
-   * especial a la seguridad social (5 %), el impuesto sobre ingresos y el
-   * neto a pagar, tomados de las líneas de la nómina de salario procesada.
+   * especial a la seguridad social, el impuesto sobre ingresos y el neto,
+   * agregados sobre TODOS los conceptos de pago gravables del período —la
+   * Res. 310/2020 grava "todos los conceptos de pago; incluyendo el pago por
+   * descanso retribuido"—. El subsidio y la maternidad son prestaciones
+   * sociales exentas y no forman parte de esta declaración.
    */
   async payrollCnc(
     companyId: number,
     period: string,
   ): Promise<PayrollCncRow[]> {
-    const payrolls = await this.salaryPayrolls(companyId, period);
-    return payrolls
-      .flatMap((p) => p.items || [])
-      .map((i: PayrollItem) => ({
-        employeeName: i.employeeName,
-        grossSalary: Number(i.grossSalary || 0),
-        socialSecurity: Number(i.socialSecurity || 0),
-        taxWithholding: Number(i.taxWithholding || 0),
-        netSalary: Number(i.netSalary || 0),
-      }));
+    const payrolls = await this.periodPayrolls(
+      companyId,
+      period,
+      TAXABLE_INCOME_CONCEPTS,
+    );
+    const rows = new Map<string, PayrollCncRow>();
+    for (const payroll of payrolls) {
+      for (const i of payroll.items || []) {
+        const row = rows.get(i.employeeId) || {
+          employeeName: i.employeeName,
+          grossSalary: 0,
+          socialSecurity: 0,
+          taxWithholding: 0,
+          netSalary: 0,
+        };
+        row.grossSalary += Number(i.grossSalary || 0);
+        row.socialSecurity += Number(i.socialSecurity || 0);
+        row.taxWithholding += Number(i.taxWithholding || 0);
+        row.netSalary += Number(i.netSalary || 0);
+        rows.set(i.employeeId, row);
+      }
+    }
+    return [...rows.values()];
   }
 
   /**
-   * Fichero de acreditación salarial: por trabajador, CI, nombre, banco,
-   * cuenta e importe a acreditar (neto de la nómina de salario procesada).
+   * Fichero de acreditación: por trabajador, CI, nombre, banco, cuenta e
+   * importe a acreditar, agregando el neto de TODAS las nóminas del período
+   * —salario, vacaciones, subsidio, maternidad, liquidación y libre— porque
+   * el banco acredita el total del mes. La maternidad del sector no estatal
+   * la paga la Filial INSS (Art. 37 DL 56/2021): no sale por el banco de la
+   * empresa y se excluye del fichero.
    */
   async accreditationFile(
     companyId: number,
     period: string,
   ): Promise<AccreditationRow[]> {
-    const payrolls = await this.salaryPayrolls(companyId, period);
-    const items = payrolls.flatMap((p) => p.items || []);
+    const payrolls = await this.payrollRepo.find({
+      where: {
+        companyId,
+        period,
+        status: In(['processed', 'paid']),
+      },
+      relations: ['items'],
+    });
+    const items = payrolls.flatMap((p) =>
+      (p.items || []).map((i) => ({ item: i, concept: p.concept || 'salario' })),
+    );
     if (items.length === 0) return [];
 
     // Banco y cuenta viven en la ficha del trabajador, no en la línea de nómina.
     const employees = await this.employeeRepo.find({
-      where: { companyId, id: In([...new Set(items.map((i) => i.employeeId))]) },
+      where: {
+        companyId,
+        id: In([...new Set(items.map(({ item }) => item.employeeId))]),
+      },
     });
     const empById = new Map(employees.map((e) => [e.id, e]));
 
-    return items.map((i: PayrollItem) => {
-      const emp = empById.get(i.employeeId);
-      return {
-        documentId: i.employeeDocument || emp?.documentId || null,
-        employeeName: i.employeeName,
+    const rows = new Map<string, AccreditationRow>();
+    for (const { item, concept } of items) {
+      const emp = empById.get(item.employeeId);
+      // Maternidad del sector no estatal: la paga la Filial INSS.
+      if (
+        concept === 'maternidad' &&
+        (emp?.employmentSector || 'state') === 'non_state'
+      ) {
+        continue;
+      }
+      const row = rows.get(item.employeeId) || {
+        documentId: item.employeeDocument || emp?.documentId || null,
+        employeeName: item.employeeName,
         bankName: emp?.bankName || null,
         bankAccount: emp?.bankAccount || null,
-        amount: Number(i.netSalary || 0),
+        amount: 0,
       };
-    });
+      row.amount += Number(item.netSalary || 0);
+      rows.set(item.employeeId, row);
+    }
+    return [...rows.values()].filter((r) => r.amount > 0);
   }
 
   /**

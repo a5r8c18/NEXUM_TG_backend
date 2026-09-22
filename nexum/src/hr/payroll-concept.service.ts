@@ -14,10 +14,8 @@ import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { HrReportService } from './hr-report.service';
 import {
-  calculateIncomeTaxSalaried,
   calculateMaternityBenefit,
   calculateSocialBenefit,
-  calculateSocialSecurity,
   calculateSubsidy,
   calculateWeeklyAverageSalary,
   evaluateSubsidyLimit,
@@ -26,6 +24,10 @@ import {
   round2,
   vacationDailyRate,
 } from './payroll-calculations';
+import {
+  incrementalTaxes,
+  monthlyTaxableTotals,
+} from './monthly-taxable';
 import {
   LEGAL_VACATION_PERIODS,
   MINIMUM_WAGE,
@@ -301,6 +303,13 @@ export class PayrollConceptService {
       companyId,
       data.period,
     );
+    // Lo ya devengado y retenido en otras nóminas del período (IIP y CESS se
+    // calculan sobre el acumulado mensual, no por nómina).
+    const priorTotals = await monthlyTaxableTotals(
+      this.payrollItemRepo,
+      companyId,
+      data.period,
+    );
 
     for (const leave of leaves) {
       const emp = await this.employeeRepo.findOne({
@@ -346,8 +355,13 @@ export class PayrollConceptService {
       // contractual, dejando constancia en la línea.
       const dailyRate = vacationDailyRate(balance, contractualRate);
       const gross = round2(dailyRate * days);
-      const socialSecurity = calculateSocialSecurity(gross);
-      const taxWithholding = calculateIncomeTaxSalaried(gross);
+      // IIP y CESS sobre el acumulado mensual de todos los conceptos de pago
+      // (Res. 310/2020 y 41/2023): se retiene la diferencia con lo ya
+      // retenido en las demás nóminas del período.
+      const { socialSecurity, taxWithholding } = incrementalTaxes(
+        priorTotals.get(emp.id),
+        gross,
+      );
       const totalDeductions = round2(socialSecurity + taxWithholding);
 
       const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
@@ -460,8 +474,15 @@ export class PayrollConceptService {
     const days = round2(balance.days);
     const gross = round2(balance.amount);
     const rate = round2(balance.amount / balance.days);
-    const socialSecurity = calculateSocialSecurity(gross);
-    const taxWithholding = calculateIncomeTaxSalaried(gross);
+    const priorTotals = await monthlyTaxableTotals(
+      this.payrollItemRepo,
+      companyId,
+      data.period,
+    );
+    const { socialSecurity, taxWithholding } = incrementalTaxes(
+      priorTotals.get(emp.id),
+      gross,
+    );
     const totalDeductions = round2(socialSecurity + taxWithholding);
 
     const item: Partial<PayrollItem> = {
@@ -934,6 +955,12 @@ export class PayrollConceptService {
       id: In(employeeIds),
     });
     const byId = new Map(employees.map((e) => [e.id, e]));
+    // IIP y CESS sobre el acumulado mensual de todos los conceptos de pago.
+    const priorTotals = await monthlyTaxableTotals(
+      this.payrollItemRepo,
+      companyId,
+      data.period,
+    );
 
     const items: Partial<PayrollItem>[] = [];
     for (const line of data.items) {
@@ -946,8 +973,10 @@ export class PayrollConceptService {
       const gross = round2(Number(line.amount) || 0);
       if (gross <= 0) continue;
 
-      const socialSecurity = calculateSocialSecurity(gross);
-      const taxWithholding = calculateIncomeTaxSalaried(gross);
+      const { socialSecurity, taxWithholding } = incrementalTaxes(
+        priorTotals.get(emp.id),
+        gross,
+      );
       const totalDeductions = round2(socialSecurity + taxWithholding);
 
       items.push({

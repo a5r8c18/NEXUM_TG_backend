@@ -20,11 +20,13 @@ import { MappingType } from '../entities/account-mapping.entity';
 import { FinanceService } from '../finance/finance.service';
 import {
   NON_SALARY_LEAVE_TYPES,
-  calculateIncomeTaxSalaried,
-  calculateSocialSecurity,
   nonWorkedWorkingDays,
   round2,
 } from './payroll-calculations';
+import {
+  incrementalTaxes,
+  monthlyTaxableTotals,
+} from './monthly-taxable';
 import {
   EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE,
   LABOR_FORCE_TAX_RATE,
@@ -254,6 +256,16 @@ export class PayrollService {
     let totalDeductions = 0;
     let totalNet = 0;
 
+    // ── Base mensual del IIP y la CESS (Res. 310/2020 y 41/2023) ──
+    // Ambos tributos se calculan sobre el total devengado del mes por todos
+    // los conceptos de pago: esta nómina retiene solo la diferencia respecto
+    // a lo ya retenido en las demás nóminas no canceladas del período.
+    const priorTotals = await monthlyTaxableTotals(
+      this.payrollItemRepo,
+      companyId,
+      data.period,
+    );
+
     const items: any[] = [];
     for (const emp of employees) {
       const baseSalary = Number(emp.salary) || 0;
@@ -303,8 +315,10 @@ export class PayrollService {
         0,
         Math.round((baseSalary + overtimePay - unpaidDeduction) * 100) / 100,
       );
-      const socialSecurity = calculateSocialSecurity(grossSalary);
-      const taxWithholding = calculateIncomeTaxSalaried(grossSalary);
+      const { socialSecurity, taxWithholding } = incrementalTaxes(
+        priorTotals.get(emp.id),
+        grossSalary,
+      );
       // Cuota sindical: 1 % del devengado, solo a los trabajadores afiliados.
       const unionDues = emp.unionMember
         ? round2(grossSalary * UNION_DUES_RATE)
