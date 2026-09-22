@@ -6,7 +6,13 @@ import type {
 } from '../hr/payroll-concept';
 
 export type EmployeeStatus = 'active' | 'inactive' | 'on_leave';
-export type ContractType = 'trial_period' | 'work_execution';
+/**
+ * Modalidad del contrato (Ley 116): 'ordinary' cubre el vínculo ordinario —
+ * incluido el indeterminado del Art. 24.a—, 'trial_period' el contrato a
+ * prueba y 'work_execution' el celebrado para la ejecución de un trabajo u
+ * obra determinada.
+ */
+export type ContractType = 'ordinary' | 'trial_period' | 'work_execution';
 export type EmployeeActivity = 'direct' | 'indirect';
 
 @Entity('employees')
@@ -59,7 +65,7 @@ export class Employee {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   salary: number;
 
-  @Column({ type: 'varchar', default: 'work_execution' })
+  @Column({ type: 'varchar', default: 'ordinary' })
   contractType: ContractType;
 
   @Column({ name: 'activity', type: 'varchar', length: 20, default: 'direct' })

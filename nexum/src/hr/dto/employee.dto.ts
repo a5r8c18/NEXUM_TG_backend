@@ -12,7 +12,7 @@ import {
 import { Type } from 'class-transformer';
 
 const employeeStatuses = ['active', 'inactive', 'on_leave'] as const;
-const contractTypes = ['trial_period', 'work_execution'] as const;
+const contractTypes = ['ordinary', 'trial_period', 'work_execution'] as const;
 const activities = ['direct', 'indirect'] as const;
 const occupationalCategories = ['0010', '0020', '0030', '0040', '0050'] as const;
 const employmentSectors = ['state', 'non_state'] as const;

@@ -118,6 +118,7 @@ export class HrService {
       inactive: employees.filter(e => e.status === 'inactive').length,
       onLeave: employees.filter(e => e.status === 'on_leave').length,
       byContract: {
+        ordinary: employees.filter(e => e.contractType === 'ordinary').length,
         trialPeriod: employees.filter(e => e.contractType === 'trial_period').length,
         workExecution: employees.filter(e => e.contractType === 'work_execution').length,
       },

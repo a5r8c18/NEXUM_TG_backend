@@ -189,6 +189,51 @@ describe('HR DTO validation (ValidationPipe)', () => {
     );
   });
 
+  it('accepts contractType/contractTerm within the Ley 116 taxonomy', async () => {
+    const payload = {
+      employeeId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+      startDate: '2026-07-01',
+      contractType: 'work_execution',
+      contractTerm: 'determinate',
+    };
+
+    const result = await transform(CreateContractDto, payload);
+    expect(result.contractType).toBe('work_execution');
+    expect(result.contractTerm).toBe('determinate');
+  });
+
+  it('rejects the legacy foreign contractType values', async () => {
+    for (const contractType of ['full_time', 'part_time', 'contractor', 'intern']) {
+      await expect(
+        transform(CreateContractDto, {
+          employeeId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+          startDate: '2026-07-01',
+          contractType,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    }
+  });
+
+  it('rejects an invalid contractTerm', async () => {
+    await expect(
+      transform(CreateContractDto, {
+        employeeId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+        startDate: '2026-07-01',
+        contractTerm: 'permanent',
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects legacy contractType on CreateEmployeeDto too', async () => {
+    await expect(
+      transform(CreateEmployeeDto, {
+        firstName: 'Juan',
+        lastName: 'Pérez',
+        contractType: 'full_time',
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
   it('accepts a valid CreateAttendanceDto', async () => {
     const payload = {
       employeeId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
