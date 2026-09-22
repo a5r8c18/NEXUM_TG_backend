@@ -32,7 +32,6 @@ const CONCEPT_LABEL: Record<string, string> = {
   vacaciones: 'VACACIONES',
   subsidio: 'SUBSIDIO',
   maternidad: 'MATERNIDAD',
-  paternidad: 'PATERNIDAD',
   liquidacion: 'LIQUIDACIÓN',
   libre: 'LIBRE',
 };

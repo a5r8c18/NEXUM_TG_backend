@@ -10,6 +10,11 @@ import type {
   SocialBenefitVariant,
 } from '../hr/payroll-concept';
 
+/**
+ * 'paternity' registra la ausencia del padre o abuelo que asume el cuidado del
+ * menor por cesión de la madre (Art. 30.1.c y 32 DL 56/2021, mod. DL 71/2023);
+ * su retribución se genera en la nómina de maternidad con él como beneficiario.
+ */
 export type LeaveType =
   | 'vacation'
   | 'sick'
@@ -85,13 +90,13 @@ export class LeaveRequest {
   @Column({ name: 'medical_certificate', type: 'varchar', length: 100, nullable: true })
   medicalCertificate: string | null;
 
-  // ── Licencia de maternidad (Art. 15-38) ──
+  // ── Licencia de maternidad (DL 56/2021, mod. DL 71/2023) ──
 
-  /** Embarazo múltiple: adelanta el derecho a la semana 32 en vez de la 34 (Art. 20). */
+  /** Embarazo múltiple: adelanta el derecho a la semana 32 en vez de la 34 (Art. 6.2 DL 56/2021). */
   @Column({ name: 'multiple_pregnancy', type: 'boolean', default: false })
   multiplePregnancy: boolean;
 
-  /** Fecha real del parto, para los ajustes por adelanto o atraso (Art. 19). */
+  /** Fecha real del parto, para los ajustes por adelanto o atraso (Art. 19 DL 56/2021). */
   @Column({ name: 'birth_date', type: 'date', nullable: true })
   birthDate: string | null;
 
@@ -101,13 +106,13 @@ export class LeaveRequest {
   @Column({ name: 'postnatal_start', type: 'date', nullable: true })
   postnatalStart: string | null;
 
-  /** Variante de prestación social elegida al vencer la licencia posnatal (Art. 30.1). */
+  /** Variante de prestación social elegida al vencer la licencia posnatal (Art. 30.1 DL 56/2021). */
   @Column({ name: 'social_benefit_variant', type: 'varchar', length: 1, nullable: true })
   socialBenefitVariant: SocialBenefitVariant | null;
 
   /**
    * Trabajador que asume el cuidado del menor y cobra la prestación cuando no es
-   * la madre: padre, abuelo u otro familiar (Art. 23-25 y 30.1.c).
+   * la madre: padre, abuelo u otro familiar (Arts. 23-25 y 30.1.c DL 56/2021).
    */
   @Column({ name: 'beneficiary_employee_id', type: 'uuid', nullable: true })
   beneficiaryEmployeeId: string | null;

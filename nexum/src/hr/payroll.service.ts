@@ -278,8 +278,10 @@ export class PayrollService {
 
       // ── Días del período que no se pagan con salario ordinario ──
       // Además de las licencias sin sueldo, se excluyen las que se liquidan en
-      // su propia nómina (vacaciones, subsidio, maternidad y paternidad): de lo
-      // contrario el trabajador cobraría dos veces el mismo día.
+      // su propia nómina (vacaciones, subsidio y maternidad) y la licencia del
+      // padre por cesión ('paternity'), que se retribuye como beneficiario en
+      // la nómina de maternidad (Art. 30.1.c DL 56/2021): de lo contrario el
+      // trabajador cobraría dos veces el mismo día.
       const nonSalaryLeaves = await this.leaveRepo.find({
         where: {
           companyId,
@@ -654,8 +656,8 @@ export class PayrollService {
         const vacationByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
         // Las retenciones practicadas al trabajador se debitan en el
         // comprobante de impuestos a la misma cuenta que financió el pago
-        // (gasto en salario/libre, 492 en vacaciones, 500 en subsidio y
-        // paternidad, 164-0030 en maternidad estatal), porque la 455 solo
+        // (gasto en salario/libre, 492 en vacaciones, 500 en subsidio,
+        // 164-0030 en maternidad estatal), porque la 455 solo
         // recoge el neto a pagar.
         const deductionsByFunding = new Map<string, { accountCode: string; amount: number; costCenterId?: string; subelement?: string }>();
         // Los tributos a cargo de la entidad (aporte patronal y UFT) no son
@@ -793,7 +795,7 @@ export class PayrollService {
             const fundingAccount =
               VACATION_FUND_CONCEPTS.includes(concept)
                 ? vacationProvisionAccount || '492'
-                : concept === 'subsidio' || concept === 'paternidad'
+                : concept === 'subsidio'
                   ? subsidyProvisionAccount || '500'
                   : concept === 'maternidad'
                     ? maternityReceivableAccount || '164-0030'
@@ -826,7 +828,7 @@ export class PayrollService {
         // ── Débitos del comprobante de nómina ──
         // La 455 solo recoge el líquido a pagar (neto); las retenciones se
         // debitan en el comprobante de impuestos a la cuenta que financió el
-        // pago. Subsidio, paternidad y maternidad quedan fuera de este
+        // pago. Subsidio y maternidad quedan fuera de este
         // comprobante: cada uno genera el suyo más abajo.
         if (VACATION_FUND_CONCEPTS.includes(concept)) {
           // El pago de vacaciones y la liquidación se cargan a la provisión
@@ -908,11 +910,11 @@ export class PayrollService {
           });
         }
 
-        // ── Comprobante independiente de subsidio y licencia de paternidad ──
+        // ── Comprobante independiente de subsidio ──
         // El pago se carga a la provisión 500, financiada con el 1,5 % del
         // aporte patronal, y no a gasto del período. La 455 recoge solo el neto.
         const subsidyLines: any[] = [];
-        if ((concept === 'subsidio' || concept === 'paternidad') && totalNet > 0) {
+        if (concept === 'subsidio' && totalNet > 0) {
           subsidyLines.push({
             accountCode: subsidyProvisionAccount || '500',
             subaccountCode: subsidyProvisionAccount || '500',

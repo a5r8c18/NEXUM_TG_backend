@@ -1,6 +1,12 @@
 import { ValidationPipe, BadRequestException } from '@nestjs/common';
 import { CreateLeaveDto, UpdateLeaveDto } from './dto/leave.dto';
-import { subsidyRate, subsidyWaitingDays } from './payroll-concept';
+import {
+  PAYROLL_CONCEPTS,
+  PAYROLL_CONCEPT_LABELS,
+  subsidyRate,
+  subsidyWaitingDays,
+} from './payroll-concept';
+import { NON_SALARY_LEAVE_TYPES } from './payroll-calculations';
 
 /**
  * Fija el contrato de licencias entre el frontend y el backend.
@@ -90,6 +96,28 @@ describe('Contrato de licencias frontend ↔ backend', () => {
       for (const variant of ['a', 'b', 'c']) {
         expect(variant.length).toBeLessThanOrEqual(1);
       }
+    });
+  });
+
+  describe('paternidad no es concepto de nómina (DL 56/2021)', () => {
+    // El padre accede a la prestación social por cesión (Art. 30.1.c), pagada
+    // en la nómina de maternidad con él como beneficiario; no existe un
+    // derecho autónomo que justifique un concepto propio.
+    it("el dominio de conceptos no incluye 'paternidad'", () => {
+      expect(PAYROLL_CONCEPTS).not.toContain('paternidad');
+      expect(PAYROLL_CONCEPT_LABELS).not.toHaveProperty('paternidad');
+    });
+
+    it("la licencia 'paternity' sigue siendo válida para la ausencia del padre", async () => {
+      const dto = await pipe.transform(
+        { ...base, type: 'paternity' },
+        asCreate,
+      );
+      expect(dto.type).toBe('paternity');
+    });
+
+    it("la ausencia del padre por cesión se descuenta del salario ordinario", () => {
+      expect(NON_SALARY_LEAVE_TYPES).toContain('paternity');
     });
   });
 });

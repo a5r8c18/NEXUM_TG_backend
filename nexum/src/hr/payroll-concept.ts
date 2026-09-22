@@ -5,12 +5,17 @@
  * su propio juego de líneas contables, por lo que una nómina pertenece siempre a
  * un único concepto y a un único período.
  */
+/**
+ * No existe licencia de paternidad retribuida autónoma: el padre accede a la
+ * prestación social por cesión de la madre (Art. 30.1.c DL 56/2021, mod. DL
+ * 71/2023), que se paga en la nómina de maternidad con el padre como
+ * beneficiario. Su ausencia se registra con el tipo de licencia 'paternity'.
+ */
 export type PayrollConcept =
   | 'salario'
   | 'vacaciones'
   | 'subsidio'
   | 'maternidad'
-  | 'paternidad'
   | 'liquidacion'
   | 'libre';
 
@@ -19,7 +24,6 @@ export const PAYROLL_CONCEPTS: PayrollConcept[] = [
   'vacaciones',
   'subsidio',
   'maternidad',
-  'paternidad',
   'liquidacion',
   'libre',
 ];
@@ -29,7 +33,6 @@ export const PAYROLL_CONCEPT_LABELS: Record<PayrollConcept, string> = {
   vacaciones: 'Vacaciones',
   subsidio: 'Subsidio por enfermedad o accidente',
   maternidad: 'Licencia de maternidad',
-  paternidad: 'Licencia de paternidad',
   liquidacion: 'Liquidación por terminación',
   libre: 'Concepto libre',
 };
@@ -70,7 +73,11 @@ export type ContractTerm = 'determinate' | 'indeterminate';
 /** Origen de la enfermedad o lesión que causa el subsidio (Art. 40). */
 export type IncapacityOrigin = 'common' | 'occupational';
 
-/** Variante de prestación social por maternidad (Art. 30.1). */
+/**
+ * Variante de prestación social por maternidad (Art. 30.1 DL 56/2021, mod. DL
+ * 71/2023): a) la madre cuida al menor, b) la madre se reincorpora y simultanea
+ * salario con prestación, c) cedida al padre o abuelo que asume el cuidado.
+ */
 export type SocialBenefitVariant = 'a' | 'b' | 'c';
 
 // ── Parámetros legales (Cuba) ──
@@ -126,10 +133,10 @@ export const EMPLOYER_SOCIAL_SECURITY_RATE =
  */
 export const LABOR_FORCE_TAX_RATE = 0.05;
 
-/** Semanas del año usadas para el salario promedio semanal (Art. 16). */
+/** Semanas del año usadas para el salario promedio semanal (Art. 16 DL 56/2021). */
 export const WEEKS_PER_YEAR = 52;
 
-/** Cuantía de la prestación social por maternidad (Art. 30.1). */
+/** Cuantía de la prestación social por maternidad (Art. 30.1 DL 56/2021). */
 export const SOCIAL_BENEFIT_RATE = 0.6;
 
 /**

@@ -54,9 +54,10 @@ export class Payroll {
   status: 'draft' | 'processed' | 'paid' | 'cancelled';
 
   /**
-   * Plazo de la prestación económica por maternidad (Art. 18): 1 al inicio de la
-   * licencia prenatal, 2 en las seis primeras semanas de la posnatal y 3 en las
-   * seis últimas. Nulo en el resto de los conceptos.
+   * Plazo de la prestación económica por maternidad (Art. 18 DL 56/2021, mod.
+   * DL 71/2023): 1 al inicio de la licencia prenatal, 2 en las seis primeras
+   * semanas de la posnatal y 3 en las seis últimas. Nulo en el resto de los
+   * conceptos.
    */
   @Column({ type: 'smallint', nullable: true })
   installment?: number | null;

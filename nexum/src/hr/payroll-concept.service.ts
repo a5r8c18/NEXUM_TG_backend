@@ -660,7 +660,7 @@ export class PayrollConceptService {
     );
   }
 
-  // ── Maternidad (Art. 15-38) ──
+  // ── Maternidad (DL 56/2021, mod. DL 71/2023) ──
 
   /**
    * Genera la nómina de maternidad para un plazo (installment 1, 2 o 3).
@@ -703,8 +703,8 @@ export class PayrollConceptService {
       });
       if (!emp) continue;
 
-      // Base: salario devengado en los 12 meses anteriores (Art. 16) o entre
-      // las semanas laboradas si fueron menos (Art. 17).
+      // Base: salario devengado en los 12 meses anteriores (Art. 16 DL 56/2021)
+      // o entre las semanas laboradas si fueron menos (Art. 17).
       const { average, monthsWithHistory, warning } =
         await this.averageMonthlySalary(companyId, emp.id, leave.startDate);
       if (warning) warnings.push(`${emp.firstName} ${emp.lastName}: ${warning}`);
@@ -719,8 +719,8 @@ export class PayrollConceptService {
         weeksWorked,
       });
 
-      // Semanas del plazo (Art. 18): 1 = prenatal (6 u 8 si embarazo múltiple),
-      // 2 = primeras 6 semanas posnatales, 3 = últimas 6 semanas posnatales.
+      // Semanas del plazo (Art. 18 DL 56/2021): 1 = prenatal (6 u 8 si embarazo
+      // múltiple, Art. 6.2), 2 = primeras 6 semanas posnatales, 3 = últimas 6.
       const prenatalWeeks = leave.multiplePregnancy ? 8 : 6;
       const weeks =
         data.installment === 1 ? prenatalWeeks : 6;
@@ -744,7 +744,7 @@ export class PayrollConceptService {
           `Maternidad plazo ${data.installment} (${weeks} semanas × ${weeklyAverage})` +
           (isStateSector
             ? ' — cargo a 164-0030'
-            : ' — sector no estatal: paga la Filial INSS (Art. 37), sin asiento'),
+            : ' — sector no estatal: paga la Filial INSS (Art. 37 DL 56/2021), sin asiento'),
       });
     }
 

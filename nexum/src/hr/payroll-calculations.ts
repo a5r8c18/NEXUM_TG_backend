@@ -149,9 +149,12 @@ export function overlapWorkingDays(
 
 /**
  * Licencias que no generan salario ordinario en el período: las no retribuidas
- * y las que se pagan por otro concepto (vacaciones, subsidio, maternidad y
- * paternidad tienen su propia nómina). Registrar ambas evita pagar dos veces
- * el mismo día.
+ * y las que se pagan por otro concepto (vacaciones, subsidio y maternidad
+ * tienen su propia nómina). La licencia 'paternity' registra la ausencia del
+ * padre que asume el cuidado del menor por cesión (Art. 30.1.c DL 56/2021,
+ * mod. DL 71/2023): se descuenta aquí y se retribuye en la nómina de
+ * maternidad con el padre como beneficiario. Registrar ambas evita pagar dos
+ * veces el mismo día.
  */
 export const NON_SALARY_LEAVE_TYPES = [
   'unpaid',
@@ -352,7 +355,8 @@ export interface MaternityBaseInput {
 }
 
 /**
- * Salario promedio semanal, base de la prestación económica por maternidad.
+ * Salario promedio semanal, base de la prestación económica por maternidad
+ * (DL 56/2021, mod. DL 71/2023).
  *
  * Art. 16: el salario de los doce meses anteriores se divide entre 52 semanas.
  * Art. 17: si laboró menos de doce meses, se divide entre las semanas laboradas.
@@ -369,8 +373,8 @@ export function calculateWeeklyAverageSalary(
 }
 
 /**
- * Prestación económica por maternidad correspondiente a un plazo (Art. 18).
- * Cada plazo cubre un número determinado de semanas de licencia.
+ * Prestación económica por maternidad correspondiente a un plazo (Art. 18
+ * DL 56/2021). Cada plazo cubre un número determinado de semanas de licencia.
  */
 export function calculateMaternityBenefit(
   weeklyAverageSalary: number,
@@ -380,10 +384,12 @@ export function calculateMaternityBenefit(
 }
 
 /**
- * Prestación social por maternidad: 60 % de la base de cálculo (Art. 30.1).
+ * Prestación social por maternidad: 60 % de la base de cálculo (Art. 30.1
+ * DL 56/2021, mod. DL 71/2023).
  *
  * En las variantes a y b la base es la de la madre; en la variante c es el
- * salario promedio mensual del familiar que asume el cuidado del menor.
+ * salario promedio mensual del padre o abuelo que asume el cuidado del menor,
+ * calculado sobre los doce meses anteriores al nacimiento.
  */
 export function calculateSocialBenefit(monthlyBase: number): number {
   return round2(monthlyBase * SOCIAL_BENEFIT_RATE);
