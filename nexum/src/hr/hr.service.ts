@@ -57,22 +57,63 @@ export class HrService {
     return emp;
   }
 
+  /**
+   * El código de trabajador es único por empresa (UQ en BD): lo usan la
+   * acreditación bancaria y los reportes para identificar al trabajador.
+   */
+  private async ensureEmployeeCodeUnique(
+    companyId: number,
+    employeeCode: string,
+    excludeId?: string,
+  ) {
+    const existing = await this.employeeRepo.findOneBy({
+      companyId,
+      employeeCode,
+    });
+    if (existing && existing.id !== excludeId) {
+      throw new ConflictException(
+        `Ya existe un trabajador con el código ${employeeCode}`,
+      );
+    }
+  }
+
+  /** Siguiente código EMP-#### libre: el mayor sufijo usado + 1. */
+  private async nextEmployeeCode(companyId: number): Promise<string> {
+    const rows = await this.employeeRepo
+      .createQueryBuilder('e')
+      .select('e."employeeCode"', 'code')
+      .where('e.companyId = :companyId', { companyId })
+      .andWhere('e."employeeCode" ~ :pattern', { pattern: '^EMP-[0-9]+$' })
+      .getRawMany<{ code: string }>();
+    const max = rows.reduce(
+      (m, r) => Math.max(m, parseInt(r.code.slice(4), 10) || 0),
+      0,
+    );
+    return `EMP-${String(max + 1).padStart(4, '0')}`;
+  }
+
   async createEmployee(companyId: number, data: Partial<Employee>) {
     const resolved = await this.resolveDepartmentAndCostCenter(companyId, data);
     Object.assign(resolved, await this.resolvePosition(companyId, data));
 
-    const count = await this.employeeRepo.count({ where: { companyId } });
+    const employeeCode =
+      data.employeeCode || (await this.nextEmployeeCode(companyId));
+    await this.ensureEmployeeCodeUnique(companyId, employeeCode);
+
     const emp = this.employeeRepo.create({
       ...data,
       ...resolved,
       companyId,
-      employeeCode: data.employeeCode || `EMP-${String(count + 1).padStart(4, '0')}`,
+      employeeCode,
     });
     return this.employeeRepo.save(emp);
   }
 
   async updateEmployee(companyId: number, id: string, data: Partial<Employee>) {
     const emp = await this.findOneEmployee(companyId, id);
+    if (data.employeeCode && data.employeeCode !== emp.employeeCode) {
+      await this.ensureEmployeeCodeUnique(companyId, data.employeeCode, id);
+    }
     const previousSalary = Number(emp.salary) || 0;
     const resolved = await this.resolveDepartmentAndCostCenter(companyId, data);
     Object.assign(resolved, await this.resolvePosition(companyId, data));

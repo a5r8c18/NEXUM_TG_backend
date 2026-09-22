@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EmployeeContract } from '../entities/employee-contract.entity';
@@ -125,7 +125,32 @@ export class HrManagementService {
     return qb.getMany();
   }
 
+  /**
+   * Un trabajador solo tiene un parte de asistencia por día (UQ en BD):
+   * un duplicado sumaría dos veces sus horas extra en la nómina.
+   */
+  private async ensureAttendanceUnique(
+    companyId: number,
+    employeeId: string,
+    date: string,
+    excludeId?: string,
+  ) {
+    const existing = await this.attendanceRepo.findOneBy({
+      companyId,
+      employeeId,
+      date,
+    });
+    if (existing && existing.id !== excludeId) {
+      throw new ConflictException(
+        `Ya existe un parte de asistencia del trabajador para el ${date}`,
+      );
+    }
+  }
+
   async createAttendance(companyId: number, data: Partial<Attendance>) {
+    if (data.employeeId && data.date) {
+      await this.ensureAttendanceUnique(companyId, data.employeeId, data.date);
+    }
     const hoursWorked =
       data.hoursWorked != null
         ? Number(data.hoursWorked)
@@ -141,6 +166,11 @@ export class HrManagementService {
   async updateAttendance(companyId: number, id: string, data: Partial<Attendance>) {
     const attendance = await this.attendanceRepo.findOneBy({ id, companyId });
     if (!attendance) throw new NotFoundException(`Asistencia #${id} no encontrada`);
+    const employeeId = data.employeeId ?? attendance.employeeId;
+    const date = data.date ?? attendance.date;
+    if (employeeId !== attendance.employeeId || date !== attendance.date) {
+      await this.ensureAttendanceUnique(companyId, employeeId, date, id);
+    }
     Object.assign(attendance, data);
     if (data.checkIn != null || data.checkOut != null) {
       attendance.hoursWorked = hoursBetween(
