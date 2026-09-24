@@ -117,6 +117,22 @@ export class LeaveRequest {
   @Column({ name: 'beneficiary_employee_id', type: 'uuid', nullable: true })
   beneficiaryEmployeeId: string | null;
 
+  // ── Liquidación de la licencia ──
+
+  /**
+   * Unidades ya retribuidas por nóminas no canceladas (suma de paid_units de
+   * las líneas vinculadas: días en vacaciones, subsidio y prestación social;
+   * semanas en los plazos 1-3 de maternidad). Es un acumulado informativo:
+   * la garantía contra el doble pago la da la reverificación dentro de la
+   * transacción de generación, y al cancelar la nómina se restituyen.
+   */
+  @Column({ name: 'settled_units', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  settledUnits: number;
+
+  /** Importe bruto ya retribuido por la licencia en nóminas no canceladas. */
+  @Column({ name: 'settled_amount', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  settledAmount: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -1429,6 +1429,7 @@ export class PayrollService {
       const payrollRepo = manager.getRepository(Payroll);
       const payroll = await payrollRepo.findOne({
         where: { id, companyId },
+        relations: ['items'],
       });
 
       if (!payroll) {
@@ -1482,6 +1483,23 @@ export class PayrollService {
           `Reverso por cancelación de nómina ${payroll.period}`,
           manager,
           payroll.bankTransactionId || undefined,
+        );
+      }
+
+      // Restituir lo liquidado a cada licencia vinculada: al cancelar, la
+      // licencia vuelve a ser pagable y puede regenerarse en otra nómina.
+      for (const item of payroll.items || []) {
+        if (!item.leaveRequestId) continue;
+        await manager.query(
+          `UPDATE "leave_requests"
+              SET "settled_units" = GREATEST(0, "settled_units" - $1),
+                  "settled_amount" = GREATEST(0, "settled_amount" - $2)
+            WHERE "id" = $3`,
+          [
+            Number(item.paidUnits || 0),
+            Number(item.grossSalary || 0),
+            item.leaveRequestId,
+          ],
         );
       }
 

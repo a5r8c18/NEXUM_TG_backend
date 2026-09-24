@@ -68,10 +68,39 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
     'emp-father': 15000,
   };
 
+  let settledRows: any[];
+
+  /** Cadena de query builder: getRawMany devuelve lo ya liquidado. */
+  function qbStub() {
+    const qb: any = {};
+    for (const m of [
+      'innerJoin',
+      'select',
+      'addSelect',
+      'where',
+      'andWhere',
+      'groupBy',
+      'addGroupBy',
+      'setLock',
+    ]) {
+      qb[m] = jest.fn().mockReturnValue(qb);
+    }
+    qb.getMany = jest.fn().mockResolvedValue([]);
+    qb.getRawMany = jest.fn().mockImplementation(() =>
+      Promise.resolve(settledRows),
+    );
+    return qb;
+  }
+
   beforeEach(async () => {
     savedItems = [];
+    settledRows = [];
 
-    leaveRepo = { find: jest.fn() } as any;
+    leaveRepo = {
+      find: jest.fn(),
+      increment: jest.fn(),
+      createQueryBuilder: jest.fn().mockImplementation(() => qbStub()),
+    } as any;
     employeeRepo = {
       findOne: jest
         .fn()
@@ -86,6 +115,7 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
           savedItems.push(item);
           return Promise.resolve(item);
         }),
+      createQueryBuilder: jest.fn().mockImplementation(() => qbStub()),
     } as any;
 
     let payrollId = 0;
@@ -95,6 +125,23 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
         payrollId += 1;
         return Promise.resolve({ ...p, id: payrollId });
       }),
+      // La generación guarda dentro de una transacción: el mock la ejecuta
+      // directo y devuelve los mismos repositorios por entidad.
+      manager: {
+        transaction: jest.fn().mockImplementation(async (cb: any) => {
+          const em = {
+            getRepository: (e: any) =>
+              e === Payroll
+                ? payrollRepo
+                : e === PayrollItem
+                  ? payrollItemRepo
+                  : e === LeaveRequest
+                    ? leaveRepo
+                    : ({} as any),
+          };
+          return cb(em);
+        }),
+      },
     } as any;
     payrollRepo.findOne.mockImplementation((({ where }: any) => {
       if (where?.id) {
@@ -248,5 +295,55 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
     await expect(
       service.generateMaternity(10, { ...period, installment: 5 }),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  // ── Fix 5: el mismo mes de prestación no se paga dos veces ──
+
+  it('no repite la prestación sobre un rango ya liquidado', async () => {
+    leaveRepo.find.mockResolvedValue([
+      maternityLeave({ socialBenefitVariant: 'a' }),
+    ]);
+    // Una nómina anterior ya pagó mayo para esta licencia.
+    settledRows = [
+      {
+        leaveId: 'leave-1',
+        installment: 4,
+        pStart: '2026-05-01',
+        pEnd: '2026-05-31',
+        days: '31',
+        amount: '6000',
+      },
+    ];
+
+    await expect(service.generateMaternity(10, period)).rejects.toThrow(
+      /ya fue liquidada/i,
+    );
+    expect(savedItems).toHaveLength(0);
+  });
+
+  it('el mes siguiente sí genera: rangos disjuntos no son duplicados', async () => {
+    leaveRepo.find.mockResolvedValue([
+      maternityLeave({ socialBenefitVariant: 'a' }),
+    ]);
+    settledRows = [
+      {
+        leaveId: 'leave-1',
+        installment: 4,
+        pStart: '2026-05-01',
+        pEnd: '2026-05-31',
+        days: '31',
+        amount: '6000',
+      },
+    ];
+
+    await service.generateMaternity(10, {
+      ...period,
+      period: '2026-06',
+      startDate: '2026-06-01',
+      endDate: '2026-06-30',
+    });
+
+    expect(savedItems).toHaveLength(1);
+    expect(savedItems[0].paidUnits).toBe(30);
   });
 });

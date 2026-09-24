@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, In, Repository } from 'typeorm';
+import { Between, EntityManager, In, Repository } from 'typeorm';
 import { Payroll } from '../entities/payroll.entity';
 import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
@@ -51,6 +51,26 @@ interface FreeItemInput {
   employeeId: string;
   amount: number;
   description?: string;
+}
+
+/**
+ * Porción de una licencia que una línea de nómina va a retribuir. Se
+ * reverifica dentro de la transacción de guardado, bajo bloqueo de la fila
+ * de la licencia, para que dos generaciones concurrentes no paguen lo mismo.
+ */
+interface LeaveClaim {
+  leaveId: string;
+  /** Unidades que se pagan (paidUnits de la línea). */
+  units: number;
+  /** Bruto que se paga (grossSalary de la línea). */
+  amount: number;
+  /** Tope acumulado de unidades (duración total de la licencia). */
+  cap?: number;
+  /** Plazo de maternidad: 1-3 se paga una vez; 4 admite meses sucesivos. */
+  installment?: number;
+  /** Rango cubierto por la nómina: dos nóminas no pueden solaparlo. */
+  rangeStart: string;
+  rangeEnd: string;
 }
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -147,6 +167,67 @@ export class PayrollConceptService {
     return rows.length;
   }
 
+  /**
+   * Días ya retribuidos de cada licencia por líneas de nóminas NO canceladas
+   * (borrador, procesada o pagada): es la comprobación que evita el doble
+   * pago cuando rangos de período solapados cubren los mismos días de la
+   * licencia. Para maternidad devuelve además los plazos ya generados y el
+   * rango cubierto, porque cada plazo (Art. 18 DL 56/2021) se paga una sola
+   * vez y la prestación social mensual (plazo 4) no debe repetirse sobre el
+   * mismo rango de fechas.
+   */
+  private async settledLeaveRows(
+    companyId: number,
+    leaveIds: string[],
+    manager?: EntityManager,
+  ): Promise<
+    {
+      leaveId: string;
+      installment: number | null;
+      pStart: string;
+      pEnd: string;
+      days: number;
+      amount: number;
+    }[]
+  > {
+    if (!leaveIds.length) return [];
+    const itemRepo = manager
+      ? manager.getRepository(PayrollItem)
+      : this.payrollItemRepo;
+    const rows = await itemRepo
+      .createQueryBuilder('item')
+      .innerJoin(Payroll, 'p', 'p.id = item."payrollId"')
+      .select('item."leave_request_id"', 'leaveId')
+      .addSelect('p."installment"', 'installment')
+      .addSelect('p."startDate"', 'pStart')
+      .addSelect('p."endDate"', 'pEnd')
+      .addSelect('COALESCE(SUM(item."paid_units"), 0)', 'days')
+      .addSelect('COALESCE(SUM(item."grossSalary"), 0)', 'amount')
+      .where('item."companyId" = :companyId', { companyId })
+      .andWhere('item."leave_request_id" IN (:...leaveIds)', { leaveIds })
+      .andWhere('p."status" <> :cancelled', { cancelled: 'cancelled' })
+      .groupBy('item."leave_request_id"')
+      .addGroupBy('p."installment"')
+      .addGroupBy('p."startDate"')
+      .addGroupBy('p."endDate"')
+      .getRawMany<{
+        leaveId: string;
+        installment: number | null;
+        pStart: string;
+        pEnd: string;
+        days: string;
+        amount: string;
+      }>();
+    return rows.map((r) => ({
+      leaveId: r.leaveId,
+      installment: r.installment != null ? Number(r.installment) : null,
+      pStart: r.pStart,
+      pEnd: r.pEnd,
+      days: Number(r.days),
+      amount: Number(r.amount),
+    }));
+  }
+
   /** Licencias aprobadas de un tipo que solapan el período. */
   private async approvedLeaves(
     companyId: number,
@@ -184,12 +265,67 @@ export class PayrollConceptService {
     }
   }
 
+  /**
+   * Reverifica cada claim contra lo ya pagado de la licencia. Se ejecuta
+   * dentro de la transacción con la fila de la licencia bloqueada, así que
+   * una generación concurrente espera y ve el resultado de la otra: es la
+   * barrera real contra el doble pago, no un chequeo previo optimista.
+   *
+   * Reglas: la misma licencia no admite dos nóminas cuyos rangos de fechas
+   * se solapen salvo que sean plazos distintos de maternidad; cada plazo 1-3
+   * se paga una sola vez; el plazo 4 solo se repite en rangos disjuntos; y
+   * las unidades acumuladas nunca exceden la duración de la licencia.
+   */
+  private assertLeaveClaims(
+    settled: {
+      leaveId: string;
+      installment: number | null;
+      pStart: string;
+      pEnd: string;
+      days: number;
+      amount: number;
+    }[],
+    claims: LeaveClaim[],
+  ): void {
+    for (const claim of claims) {
+      const rows = settled.filter((r) => r.leaveId === claim.leaveId);
+      let duplicated = false;
+      if (claim.installment === 4) {
+        // Prestación social mensual: misma licencia, rangos disjuntos.
+        duplicated = rows.some(
+          (r) =>
+            r.installment === 4 &&
+            overlapDays(r.pStart, r.pEnd, claim.rangeStart, claim.rangeEnd) > 0,
+        );
+      } else if (claim.installment != null) {
+        // Prestación económica: cada plazo (Art. 18 DL 56/2021) una vez.
+        duplicated = rows.some((r) => r.installment === claim.installment);
+      } else {
+        // Vacaciones y subsidio: ni rangos solapados ni más unidades que
+        // la duración total de la licencia.
+        duplicated =
+          rows.some(
+            (r) =>
+              overlapDays(r.pStart, r.pEnd, claim.rangeStart, claim.rangeEnd) >
+              0,
+          ) || rows.reduce((s, r) => s + r.days, 0) + claim.units > (claim.cap ?? Infinity);
+      }
+      if (duplicated) {
+        throw new BadRequestException(
+          'La licencia ya fue liquidada por otra nómina para ese período ' +
+            'o plazo; cancélela primero si debe regenerarse',
+        );
+      }
+    }
+  }
+
   private async savePayrollWithItems(
     companyId: number,
     concept: PayrollConcept,
     data: GenerateInput,
     items: Partial<PayrollItem>[],
     notes?: string,
+    claims: LeaveClaim[] = [],
   ) {
     const totalGross = round2(
       items.reduce((s, i) => s + Number(i.grossSalary || 0), 0),
@@ -201,26 +337,67 @@ export class PayrollConceptService {
       items.reduce((s, i) => s + Number(i.netSalary || 0), 0),
     );
 
-    const payroll = await this.payrollRepo.save({
-      companyId,
-      concept,
-      period: data.period,
-      startDate: data.startDate,
-      endDate: data.endDate,
-      installment: data.installment ?? null,
-      totalGross,
-      totalDeductions,
-      totalNet,
-      status: 'draft',
-      processedBy: data.processedBy || 'Sistema',
-      notes,
-    });
+    // La nómina, sus líneas y el marcado de las licencias se confirman en una
+    // sola transacción: si la reverificación detecta un pago duplicado no
+    // queda ni la nómina ni el avance del contador.
+    const payrollId = await this.payrollRepo.manager.transaction(
+      async (manager) => {
+        if (claims.length) {
+          const leaveIds = [...new Set(claims.map((c) => c.leaveId))].sort();
+          // Bloqueo pesimista: serializa las generaciones que tocan la misma
+          // licencia; la segunda espera y reverifica contra lo ya confirmado.
+          await manager
+            .getRepository(LeaveRequest)
+            .createQueryBuilder('l')
+            .setLock('pessimistic_write')
+            .where('l.id IN (:...leaveIds)', { leaveIds })
+            .getMany();
+          const settled = await this.settledLeaveRows(
+            companyId,
+            leaveIds,
+            manager,
+          );
+          this.assertLeaveClaims(settled, claims);
+          for (const claim of claims) {
+            await manager.getRepository(LeaveRequest).increment(
+              { id: claim.leaveId },
+              'settledUnits',
+              claim.units,
+            );
+            await manager.getRepository(LeaveRequest).increment(
+              { id: claim.leaveId },
+              'settledAmount',
+              claim.amount,
+            );
+          }
+        }
 
-    for (const item of items) {
-      await this.payrollItemRepo.save({ ...item, payrollId: payroll.id });
-    }
+        const payroll = await manager.getRepository(Payroll).save({
+          companyId,
+          concept,
+          period: data.period,
+          startDate: data.startDate,
+          endDate: data.endDate,
+          installment: data.installment ?? null,
+          totalGross,
+          totalDeductions,
+          totalNet,
+          status: 'draft',
+          processedBy: data.processedBy || 'Sistema',
+          notes,
+        });
+
+        for (const item of items) {
+          await manager
+            .getRepository(PayrollItem)
+            .save({ ...item, payrollId: payroll.id });
+        }
+        return payroll.id as number;
+      },
+    );
+
     return this.payrollRepo.findOne({
-      where: { id: payroll.id },
+      where: { id: payrollId },
       relations: ['items'],
     });
   }
@@ -298,6 +475,7 @@ export class PayrollConceptService {
 
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
+    const claims: LeaveClaim[] = [];
     // Saldo acumulado por trabajador: es el fondo del que sale la retribución.
     const balances = await this.hrReportService.vacationBalances(
       companyId,
@@ -310,6 +488,14 @@ export class PayrollConceptService {
       companyId,
       data.period,
     );
+    // Lo ya retribuido de cada licencia por nóminas no canceladas: si el
+    // rango de esta nómina solapa uno ya pagado se pagarían los mismos días
+    // dos veces; si es disjunto solo quedan los días que resten de la
+    // duración total de la licencia.
+    const settledRows = await this.settledLeaveRows(
+      companyId,
+      leaves.map((l) => l.id),
+    );
 
     for (const leave of leaves) {
       const emp = await this.employeeRepo.findOne({
@@ -317,13 +503,47 @@ export class PayrollConceptService {
       });
       if (!emp) continue;
 
-      const days = overlapWorkingDays(
+      const leaveRows = settledRows.filter((r) => r.leaveId === leave.id);
+      if (
+        leaveRows.some(
+          (r) =>
+            overlapDays(r.pStart, r.pEnd, data.startDate, data.endDate) > 0,
+        )
+      ) {
+        warnings.push(
+          `${leave.employeeName}: licencia ya liquidada por una nómina de ` +
+            'rango solapado; cancélela si debe regenerarse',
+        );
+        continue;
+      }
+
+      // El recurso finito son los días laborables de toda la licencia, no los
+      // del período: ya pagados en otra nómina no vuelven a pagarse.
+      const totalWorkingDays = overlapWorkingDays(
+        leave.startDate,
+        leave.endDate,
+        leave.startDate,
+        leave.endDate,
+      );
+      const settledDays = leaveRows.reduce((s, r) => s + r.days, 0);
+      const periodDays = overlapWorkingDays(
         leave.startDate,
         leave.endDate,
         data.startDate,
         data.endDate,
       );
-      if (days <= 0) continue;
+      const days = Math.min(periodDays, Math.max(0, totalWorkingDays - settledDays));
+      if (days <= 0) {
+        warnings.push(
+          `${leave.employeeName}: licencia de vacaciones ya liquidada en otra(s) nómina(s)`,
+        );
+        continue;
+      }
+      if (days < periodDays) {
+        warnings.push(
+          `${leave.employeeName}: ${settledDays} día(s) ya liquidados; se pagan ${days} restantes`,
+        );
+      }
 
       // Art. 105: el descanso se otorga por períodos de 30, 20, 15, 10 o 7
       // días naturales. Es un aviso y no un bloqueo porque el propio artículo
@@ -395,11 +615,20 @@ export class PayrollConceptService {
             ? `(tarifa acumulada: ${round2(balance.amount)} / ${round2(balance.days)} días)`
             : `(salario / ${WORKING_DAYS_PER_MONTH}, sin acumulado)`),
       });
+      claims.push({
+        leaveId: leave.id,
+        units: days,
+        amount: gross,
+        cap: totalWorkingDays,
+        rangeStart: data.startDate,
+        rangeEnd: data.endDate,
+      });
     }
 
     if (items.length === 0) {
       throw new BadRequestException(
-        'Las licencias de vacaciones no tienen trabajadores válidos',
+        'Las licencias de vacaciones no tienen trabajadores válidos. ' +
+          warnings.join(' | '),
       );
     }
 
@@ -409,6 +638,7 @@ export class PayrollConceptService {
       data,
       items,
       warnings.length ? warnings.join(' | ') : undefined,
+      claims,
     );
   }
 
@@ -553,12 +783,33 @@ export class PayrollConceptService {
 
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
+    const claims: LeaveClaim[] = [];
+    // Días ya retribuidos por nóminas no canceladas: una licencia no se paga
+    // dos veces aunque los rangos de dos períodos solapen sus mismos días.
+    const settledRows = await this.settledLeaveRows(
+      companyId,
+      leaves.map((l) => l.id),
+    );
 
     for (const leave of leaves) {
       const emp = await this.employeeRepo.findOne({
         where: { id: leave.employeeId, companyId },
       });
       if (!emp) continue;
+
+      const leaveRows = settledRows.filter((r) => r.leaveId === leave.id);
+      if (
+        leaveRows.some(
+          (r) =>
+            overlapDays(r.pStart, r.pEnd, data.startDate, data.endDate) > 0,
+        )
+      ) {
+        warnings.push(
+          `${emp.firstName} ${emp.lastName}: licencia ya liquidada por una ` +
+            'nómina de rango solapado; cancélela si debe regenerarse',
+        );
+        continue;
+      }
 
       // Art. 46: sin certificado médico el subsidio se suspende.
       if (!leave.medicalCertificate) {
@@ -581,6 +832,28 @@ export class PayrollConceptService {
           ? leave.endDate
           : data.endDate;
       const incapacityDays = daysBetween(rangeStart, rangeEnd);
+
+      // Los días naturales de incapacidad ya retribuidos quedan fuera: el
+      // recurso finito es la duración total de la licencia.
+      const settledDays = leaveRows.reduce((s, r) => s + r.days, 0);
+      const totalLeaveDays =
+        Number(leave.days) || daysBetween(leave.startDate, leave.endDate);
+      const payableDays = Math.min(
+        incapacityDays,
+        Math.max(0, totalLeaveDays - settledDays),
+      );
+      if (payableDays <= 0) {
+        warnings.push(
+          `${emp.firstName} ${emp.lastName}: licencia ya liquidada en otra(s) nómina(s)`,
+        );
+        continue;
+      }
+      if (payableDays < incapacityDays) {
+        warnings.push(
+          `${emp.firstName} ${emp.lastName}: ${settledDays} día(s) ya ` +
+            `liquidados; se subsidia ${payableDays} restantes`,
+        );
+      }
 
       const restDays = await this.restDaysInRange(
         companyId,
@@ -635,7 +908,7 @@ export class PayrollConceptService {
 
       const result = calculateSubsidy({
         averageMonthlySalary: average,
-        incapacityDays,
+        incapacityDays: payableDays,
         restDays,
         origin,
         hospitalized,
@@ -666,6 +939,14 @@ export class PayrollConceptService {
           `${result.dailyRate} × ${(result.rate * 100).toFixed(0)} %` +
           (result.minimumApplied ? ' (mínimo Art. 41)' : ''),
       });
+      claims.push({
+        leaveId: leave.id,
+        units: result.paidDays,
+        amount: result.amount,
+        cap: totalLeaveDays,
+        rangeStart: data.startDate,
+        rangeEnd: data.endDate,
+      });
     }
 
     if (items.length === 0) {
@@ -680,6 +961,7 @@ export class PayrollConceptService {
       data,
       items,
       warnings.length ? warnings.join(' | ') : undefined,
+      claims,
     );
   }
 
@@ -725,8 +1007,27 @@ export class PayrollConceptService {
 
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
+    const claims: LeaveClaim[] = [];
+    // Cada plazo de la prestación económica (Art. 18 DL 56/2021) se paga una
+    // sola vez por licencia: plazos ya liquidados se saltan.
+    const settledRows = await this.settledLeaveRows(
+      companyId,
+      leaves.map((l) => l.id),
+    );
 
     for (const leave of leaves) {
+      if (
+        settledRows.some(
+          (r) => r.leaveId === leave.id && r.installment === data.installment,
+        )
+      ) {
+        warnings.push(
+          `${leave.employeeName}: el plazo ${data.installment} de esta ` +
+            'licencia ya fue liquidado',
+        );
+        continue;
+      }
+
       // El beneficiario puede ser la madre o el familiar que asume el cuidado.
       const beneficiaryId = leave.beneficiaryEmployeeId || leave.employeeId;
       const emp = await this.employeeRepo.findOne({
@@ -777,11 +1078,20 @@ export class PayrollConceptService {
             ? ' — cargo a 164-0030'
             : ' — sector no estatal: paga la Filial INSS (Art. 37 DL 56/2021), sin asiento'),
       });
+      claims.push({
+        leaveId: leave.id,
+        units: weeks,
+        amount: benefit,
+        installment: data.installment,
+        rangeStart: data.startDate,
+        rangeEnd: data.endDate,
+      });
     }
 
     if (items.length === 0) {
       throw new BadRequestException(
-        'Ninguna licencia de maternidad generó prestación en el período',
+        'Ninguna licencia de maternidad generó prestación en el período. ' +
+          warnings.join(' | '),
       );
     }
 
@@ -791,6 +1101,7 @@ export class PayrollConceptService {
       data,
       items,
       warnings.length ? warnings.join(' | ') : undefined,
+      claims,
     );
   }
 
@@ -816,7 +1127,15 @@ export class PayrollConceptService {
 
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
+    const claims: LeaveClaim[] = [];
     const periodDays = daysBetween(data.startDate, data.endDate);
+    // La prestación es mensual y corre hasta el primer año del menor: el mismo
+    // rango de días no puede pagarse dos veces, aunque sea en períodos
+    // distintos (rangos personalizados solapados).
+    const settledRows = await this.settledLeaveRows(
+      companyId,
+      leaves.map((l) => l.id),
+    );
 
     for (const leave of leaves) {
       const variant = leave.socialBenefitVariant;
@@ -845,6 +1164,20 @@ export class PayrollConceptService {
         data.endDate,
       );
       if (coveredDays <= 0) continue;
+
+      if (
+        settledRows.some(
+          (r) =>
+            r.leaveId === leave.id &&
+            r.installment === 4 &&
+            overlapDays(r.pStart, r.pEnd, data.startDate, data.endDate) > 0,
+        )
+      ) {
+        warnings.push(
+          `${leave.employeeName}: la prestación social de ese rango ya fue liquidada`,
+        );
+        continue;
+      }
 
       // Variante c: cobra el padre o abuelo que asume el cuidado del menor.
       const beneficiaryId =
@@ -914,6 +1247,14 @@ export class PayrollConceptService {
             ? ''
             : ' — sector no estatal: paga la Filial INSS (Art. 37 DL 56/2021), sin asiento'),
       });
+      claims.push({
+        leaveId: leave.id,
+        units: coveredDays,
+        amount,
+        installment: 4,
+        rangeStart: data.startDate,
+        rangeEnd: data.endDate,
+      });
     }
 
     if (items.length === 0) {
@@ -929,6 +1270,7 @@ export class PayrollConceptService {
       data,
       items,
       warnings.length ? warnings.join(' | ') : undefined,
+      claims,
     );
   }
 

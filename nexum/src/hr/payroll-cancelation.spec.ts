@@ -44,8 +44,10 @@ describe('PayrollService.cancel() transaccional', () => {
   function createManagerMock(payroll: Payroll = paidPayroll) {
     const save = jest.fn().mockResolvedValue(payroll);
     const findOne = jest.fn().mockResolvedValue({ ...payroll });
+    const query = jest.fn().mockResolvedValue(undefined);
     return {
       getRepository: jest.fn().mockReturnValue({ findOne, save }),
+      query,
     } as any;
   }
 
@@ -165,5 +167,27 @@ describe('PayrollService.cancel() transaccional', () => {
     expect(manager.getRepository(Payroll).save).toHaveBeenCalled();
     const saved = manager.getRepository(Payroll).save.mock.calls[0][0];
     expect(saved.status).toBe('cancelled');
+  });
+
+  it('restituye a la licencia lo liquidado para que pueda regenerarse', async () => {
+    const withLeave = {
+      ...paidPayroll,
+      items: [
+        { leaveRequestId: 'lv-1', paidUnits: 22, grossSalary: 4600 },
+        { leaveRequestId: null, paidUnits: 24, grossSalary: 5000 },
+      ],
+    } as unknown as Payroll;
+    payrollRepo.findOne.mockResolvedValue(withLeave);
+    const manager = createManagerMock(withLeave);
+    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+
+    await service.cancel(10, 1);
+
+    // Solo la línea vinculada a la licencia decrementa sus contadores.
+    expect(manager.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = manager.query.mock.calls[0];
+    expect(sql).toContain('leave_requests');
+    expect(sql).toContain('GREATEST');
+    expect(params).toEqual([22, 4600, 'lv-1']);
   });
 });
