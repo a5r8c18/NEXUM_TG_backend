@@ -277,13 +277,41 @@ export class AccountMappingService {
     });
     const accountMap = new Map(accounts.map((a) => [a.code, a]));
 
+    // Las cuentas agrupadoras (p.ej. 455 Nóminas por Pagar) son mapeos válidos
+    // si tienen subcuentas posteables: el servicio que las usa resuelve la
+    // subcuenta concreta (categoría ocupacional, tipo de retención, etc.).
+    const groupingCodes = Object.values(this.defaultMappings).filter(
+      (code) => {
+        const account = accountMap.get(code);
+        return account && !account.allowsMovements;
+      },
+    );
+    const postableChildren = groupingCodes.length
+      ? await this.accountRepo.find({
+          where: {
+            companyId,
+            parentCode: In(groupingCodes),
+            allowsMovements: true,
+          },
+          select: ['parentCode'],
+        })
+      : [];
+    const codesWithPostableChildren = new Set(
+      postableChildren.map((c) => c.parentCode),
+    );
+
     const errors: string[] = [];
     for (const [type, code] of Object.entries(this.defaultMappings)) {
       const account = accountMap.get(code);
       if (!account) {
         errors.push(`Mapping ${type} -> ${code}: cuenta no existe`);
-      } else if (!account.allowsMovements) {
-        errors.push(`Mapping ${type} -> ${code}: cuenta no permite movimientos`);
+      } else if (
+        !account.allowsMovements &&
+        !codesWithPostableChildren.has(code)
+      ) {
+        errors.push(
+          `Mapping ${type} -> ${code}: cuenta no permite movimientos y no tiene subcuentas posteables`,
+        );
       }
     }
 

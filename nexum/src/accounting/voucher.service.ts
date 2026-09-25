@@ -190,9 +190,14 @@ export class VoucherService {
   async findVouchersBySourceDocumentId(
     companyId: number,
     sourceDocumentId: string,
+    sourceModule?: SourceModule | string,
   ) {
     return this.voucherRepo.find({
-      where: { companyId, sourceDocumentId },
+      where: {
+        companyId,
+        sourceDocumentId,
+        ...(sourceModule ? { sourceModule: sourceModule as SourceModule } : {}),
+      },
       order: { createdAt: 'ASC' },
     });
   }
@@ -896,8 +901,27 @@ export class VoucherService {
     // cuenta y no redirigir silenciosamente a otra subcuenta genérica.
     if (subaccountCode) {
       const exact = await repo.findOneBy({ code: subaccountCode, companyId });
-      if (exact) {
+      if (exact && exact.allowsMovements) {
         return exact;
+      }
+      if (exact) {
+        // La subcuenta explícita es agrupadora (p.ej. '455'): redirigir a una
+        // hija posteable en lugar de asentar en la agrupadora.
+        const children = await repo.find({
+          where: { companyId, parentCode: subaccountCode, allowsMovements: true },
+          order: { code: 'ASC' },
+        });
+        if (children.length > 0) {
+          const preferred =
+            children.find((c) => c.code.endsWith('-0020')) || children[0];
+          this.logger.warn(
+            `Asiento redirigido de subcuenta agrupadora ${subaccountCode} a ${preferred.code} (${preferred.name})`,
+          );
+          return preferred;
+        }
+        throw new BadRequestException(
+          `La cuenta ${subaccountCode} es agrupadora y no tiene subcuentas con movimientos`,
+        );
       }
       throw new BadRequestException(
         `Subcuenta ${subaccountCode} no encontrada para esta empresa`,

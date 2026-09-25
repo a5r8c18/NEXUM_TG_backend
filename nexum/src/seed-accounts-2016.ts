@@ -1571,10 +1571,18 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
       allWithSubs.push(...subs);
     }
 
-    // 4.g Nóminas por Pagar (455-459) y Gastos Acumulados por Pagar (480-489)
-    // se mantienen como cuentas de nivel 3 sin subcuentas obligatorias.
-    // Retenciones por Pagar (460-469) sí generan subcuentas para identificar
-    // cada tipo de retención (0020 = Contribución a la Seguridad Social, etc.)
+    // 4.g Nóminas por Pagar (455-459) generan subcuentas por categoría
+    // ocupacional (0010 Dirigentes … 0050 Otros Trabajadores): la nómina
+    // acredita el neto en 45X-00X0, nunca en la agrupadora.
+    if (!isNaN(codeNum) && codeNum >= 455 && codeNum <= 459) {
+      const subs = generatePayrollSubaccounts(code, parentName, type, nature);
+      allWithSubs.push(...subs);
+    }
+
+    // Gastos Acumulados por Pagar (480-489) se mantienen como cuentas de
+    // nivel 3 sin subcuentas obligatorias. Retenciones por Pagar (460-469)
+    // sí generan subcuentas para identificar cada tipo de retención
+    // (0020 = Contribución a la Seguridad Social, etc.)
     if (!isNaN(codeNum) && codeNum >= 460 && codeNum <= 469) {
       const subs = generateWithholdingSubaccounts(code, parentName, type, nature);
       allWithSubs.push(...subs);
