@@ -14,21 +14,30 @@ export class AlignContractTermAndType1757900000002 implements MigrationInterface
       ALTER TABLE "employees"
         ALTER COLUMN "contract_term" SET DEFAULT 'indeterminate'
     `);
+    // Preserva la modalidad: 'fixed_term' (contratados y becarios que cargó
+    // AddPayrollConcepts) equivale a 'determinate'. Reescribir todo a
+    // 'indeterminate' perdería el término que limita la duración del subsidio.
     await queryRunner.query(`
       UPDATE "employees"
-         SET "contract_term" = 'indeterminate'
-       WHERE "contract_term" NOT IN ('determinate', 'indeterminate')
-          OR "contract_term" IS NULL
+         SET "contract_term" = CASE
+               WHEN "contract_term" = 'fixed_term' THEN 'determinate'
+               WHEN "contract_term" IN ('determinate', 'indeterminate')
+                 THEN "contract_term"
+               ELSE 'indeterminate'
+             END
     `);
 
+    // El vínculo por defecto es el ordinario; solo quien fue 'trial_period' o
+    // 'work_execution' conserva su modalidad. Convertir todo a
+    // 'work_execution' marcaba como ejecución de obra a contratos comunes.
     await queryRunner.query(`
       ALTER TABLE "employees"
-        ALTER COLUMN "contract_type" SET DEFAULT 'work_execution'
+        ALTER COLUMN "contract_type" SET DEFAULT 'ordinary'
     `);
     await queryRunner.query(`
       UPDATE "employees"
-         SET "contract_type" = 'work_execution'
-       WHERE "contract_type" NOT IN ('trial_period', 'work_execution')
+         SET "contract_type" = 'ordinary'
+       WHERE "contract_type" NOT IN ('ordinary', 'trial_period', 'work_execution')
           OR "contract_type" IS NULL
     `);
   }
