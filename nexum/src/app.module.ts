@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -30,7 +30,7 @@ import { WarehouseReturnsModule } from './warehouse-returns/warehouse-returns.mo
 import { LoggerModule } from './logger/logger.module';
 import { CommonModule } from './common/common.module';
 import { DocumentSequenceModule } from './common/sequence/document-sequence.module';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { RedisCacheModule } from './cache';
 import { FinanceModule } from './finance/finance.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
@@ -253,6 +253,10 @@ import { DocumentSequence } from './entities/document-sequence.entity';
   controllers: [AppController],
   providers: [
     AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: AuditInterceptor,
