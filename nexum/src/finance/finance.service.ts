@@ -15,6 +15,73 @@ import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
 import { DocumentSequenceService } from '../common/sequence/document-sequence.service';
 
+/**
+ * Campos que el cliente puede escribir en cada recurso. Todo lo demás
+ * (saldos, estados, numeradores, companyId, vínculos de origen) lo calcula
+ * el backend — jamás se acepta del body.
+ */
+const RECEIVABLE_FIELDS = [
+  'invoiceNumber', 'customerName', 'customerId', 'customerAddress',
+  'customerPhone', 'customerEmail', 'customerNit', 'originalAmount',
+  'dueDate', 'priority', 'creditLimit', 'availableCredit',
+  'collectionNotes', 'disputeReason', 'disputeDate',
+] as const;
+
+const PAYABLE_FIELDS = [
+  'purchaseId', 'purchaseNumber', 'supplierId', 'supplierName', 'supplierNit',
+  'supplierAddress', 'supplierPhone', 'supplierEmail', 'invoiceNumber',
+  'invoiceDate', 'originalAmount', 'dueDate', 'accountCode', 'priority',
+  'paymentTerms', 'earlyPaymentDiscount', 'latePaymentPenalty', 'paymentNotes',
+  'disputeReason', 'disputeDate', 'currency', 'exchangeRate', 'notes',
+  'createdBy',
+] as const;
+
+const PAYABLE_UPDATE_FIELDS = PAYABLE_FIELDS.filter(
+  (f) => f !== 'purchaseId' && f !== 'purchaseNumber' && f !== 'createdBy',
+);
+
+const BANK_ACCOUNT_FIELDS = [
+  'accountNumber', 'accountName', 'bankName', 'bankCode', 'accountType',
+  'currency', 'balance', 'overdraftLimit', 'creditLimit', 'interestRate',
+  'openingDate', 'holderName', 'holderDocument', 'contactPhone',
+  'contactEmail', 'branchName', 'branchAddress', 'isDefault', 'notes',
+] as const;
+
+const BANK_ACCOUNT_UPDATE_FIELDS = [
+  'accountNumber', 'accountName', 'bankName', 'bankCode', 'accountType',
+  'currency', 'overdraftLimit', 'creditLimit', 'interestRate', 'openingDate',
+  'closingDate', 'status', 'isDefault', 'holderName', 'holderDocument',
+  'contactPhone', 'contactEmail', 'branchName', 'branchAddress', 'notes',
+] as const;
+
+const BANK_TRANSACTION_FIELDS = [
+  'transactionNumber', 'transactionDate', 'transactionType', 'amount',
+  'currency', 'exchangeRate', 'description', 'referenceNumber',
+  'counterpartyName', 'category',
+] as const;
+
+const PAYMENT_FIELDS = [
+  'paymentDate', 'paymentType', 'paymentMethod', 'amount', 'currency',
+  'exchangeRate', 'description', 'referenceNumber', 'checkNumber',
+  'checkDate', 'bankName', 'bankAccountId', 'authorizationCode',
+  'cardLastFour', 'paidBy', 'receivedBy', 'notes', 'accountReceivableId',
+  'accountPayableId', 'performedBy',
+] as const;
+
+const CASH_REGISTER_FIELDS = [
+  'registerName', 'responsibleName', 'responsibleId', 'location', 'currency',
+  'maxRetentionLimit', 'isDefault', 'notes',
+] as const;
+
+/** Devuelve solo las propiedades permitidas presentes en `data`. */
+function pick(data: any, fields: readonly string[]): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const field of fields) {
+    if (data?.[field] !== undefined) out[field] = data[field];
+  }
+  return out;
+}
+
 @Injectable()
 export class FinanceService {
   private readonly logger = new Logger(FinanceService.name);
@@ -146,18 +213,28 @@ export class FinanceService {
       'account-receivable-manual',
       'CXC',
     );
+    const fields = pick(data, RECEIVABLE_FIELDS);
     const ar = this.arRepo.create({
-      ...data,
+      ...fields,
       companyId,
       arNumber,
-      balanceAmount: data.originalAmount,
+      balanceAmount: fields.originalAmount,
     });
     return this.arRepo.save(ar);
   }
 
   async updateReceivable(companyId: number, id: string, data: any) {
     const ar = await this.findOneReceivable(companyId, id);
-    Object.assign(ar, data);
+    const fields = pick(data, RECEIVABLE_FIELDS);
+    Object.assign(ar, fields);
+    // Si corrige el monto original, el saldo se recalcula — nunca se acepta
+    // balanceAmount del cliente.
+    if (fields.originalAmount !== undefined) {
+      ar.balanceAmount =
+        Math.round(
+          (Number(fields.originalAmount) - Number(ar.paidAmount)) * 100,
+        ) / 100;
+    }
     return this.arRepo.save(ar);
   }
 
@@ -214,7 +291,8 @@ export class FinanceService {
    * viene asentado en el documento de origen.
    */
   async createPayable(companyId: number, data: any, manager?: EntityManager) {
-    const { transitAccountCode, ...payableData } = data;
+    const { transitAccountCode } = data;
+    const payableData = pick(data, PAYABLE_FIELDS);
     const apNumber = await this.sequenceService.nextFormatted(
       companyId,
       'account-payable',
@@ -289,12 +367,16 @@ export class FinanceService {
       where: { companyId, invoiceNumber },
     });
     let cancelled = 0;
+    const blocked: string[] = [];
     for (const ap of payables) {
-      if (ap.status === 'cancelled' || ap.status === 'paid') continue;
-      if (Number(ap.paidAmount) > 0) {
+      if (ap.status === 'cancelled') continue;
+      if (ap.status === 'paid' || Number(ap.paidAmount) > 0) {
+        // La obligación ya se pagó (total o parcialmente): no se puede anular
+        // automáticamente porque hay dinero movido que requiere reversa manual.
         this.logger.warn(
-          `CxP ${ap.apNumber} tiene pagos aplicados; no se anula automáticamente`,
+          `CxP ${ap.apNumber} está ${ap.status === 'paid' ? 'saldada' : 'parcialmente pagada'}; no se anula automáticamente`,
         );
+        blocked.push(ap.apNumber);
         continue;
       }
       ap.status = 'cancelled';
@@ -318,12 +400,19 @@ export class FinanceService {
         );
       }
     }
-    return { cancelled };
+    return { cancelled, blocked };
   }
 
   async updatePayable(companyId: number, id: string, data: any) {
     const ap = await this.findOnePayable(companyId, id);
-    Object.assign(ap, data);
+    const fields = pick(data, PAYABLE_UPDATE_FIELDS);
+    Object.assign(ap, fields);
+    if (fields.originalAmount !== undefined) {
+      ap.balanceAmount =
+        Math.round(
+          (Number(fields.originalAmount) - Number(ap.paidAmount)) * 100,
+        ) / 100;
+    }
     return this.apRepo.save(ap);
   }
 
@@ -361,13 +450,18 @@ export class FinanceService {
   }
 
   async createBankAccount(companyId: number, data: any) {
-    const ba = this.bankRepo.create({ ...data, companyId });
+    const fields = pick(data, BANK_ACCOUNT_FIELDS);
+    const ba = this.bankRepo.create({
+      ...fields,
+      companyId,
+      availableBalance: Number(fields.balance ?? 0),
+    });
     return this.bankRepo.save(ba);
   }
 
   async updateBankAccount(companyId: number, id: string, data: any) {
     const ba = await this.findOneBankAccount(companyId, id);
-    Object.assign(ba, data);
+    Object.assign(ba, pick(data, BANK_ACCOUNT_UPDATE_FIELDS));
     return this.bankRepo.save(ba);
   }
 
@@ -430,7 +524,11 @@ export class FinanceService {
     const ba = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
 
     const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
-    const tx = txRepo.create({ ...data });
+    const tx = txRepo.create({
+      ...pick(data, BANK_TRANSACTION_FIELDS),
+      companyId,
+      bankAccountId: ba.id,
+    });
     const saved = await txRepo.save(tx);
 
     // Actualizar saldo de la cuenta de forma atómica
@@ -614,11 +712,11 @@ export class FinanceService {
     );
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const paymentData: Partial<Payment> = {
-      ...data,
+      ...pick(data, PAYMENT_FIELDS),
       companyId,
       paymentNumber,
       status: 'completed',
-    };
+    } as Partial<Payment>;
     const paymentRepo = manager.getRepository(Payment);
     const payment = paymentRepo.create(paymentData as Payment);
     const saved = await paymentRepo.save(payment);
@@ -950,7 +1048,7 @@ export class FinanceService {
     const openingBalance = Number(data.openingBalance ?? data.currentBalance ?? 0);
     const isOpen = openingBalance > 0;
     const cr = this.cashRegisterRepo.create({
-      ...data,
+      ...pick(data, CASH_REGISTER_FIELDS),
       companyId,
       registerCode,
       status: isOpen ? 'open' : 'closed',
@@ -986,7 +1084,7 @@ export class FinanceService {
 
   async updateCashRegister(companyId: number, id: string, data: any) {
     const cr = await this.findOneCashRegister(companyId, id);
-    Object.assign(cr, data);
+    Object.assign(cr, pick(data, CASH_REGISTER_FIELDS));
     return this.cashRegisterRepo.save(cr);
   }
 
