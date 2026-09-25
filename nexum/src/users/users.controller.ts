@@ -133,6 +133,23 @@ export class UsersController {
     @Body() body: AssignCompaniesDto,
     @Req() req: any,
   ) {
+    // Un admin solo puede ceder acceso a empresas a las que él mismo tiene
+    // acceso; de lo contrario podría infiltrar usuarios en otros tenants.
+    const caller = req.user;
+    if (caller.role !== UserRole.SUPERADMIN) {
+      const allowed = new Set<number>([
+        Number(caller.companyId),
+        ...(Array.isArray(caller.companyIds) ? caller.companyIds.map(Number) : []),
+      ]);
+      const forbidden = (body.companyIds || []).filter(
+        (id) => !allowed.has(Number(id)),
+      );
+      if (forbidden.length > 0) {
+        throw new ForbiddenException(
+          'Solo puede asignar empresas a las que usted tiene acceso',
+        );
+      }
+    }
     return this.userCompaniesService.assignCompaniesToUser(
       userId,
       body.companyIds,
@@ -142,7 +159,12 @@ export class UsersController {
 
   @Get(':id/companies')
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
-  async getUserCompanies(@Param('id') userId: string) {
+  async getUserCompanies(@Param('id') userId: string, @Req() req: any) {
+    // Un rol USER solo puede consultar sus propias asignaciones.
+    const caller = req.user;
+    if (caller.role === UserRole.USER && caller.id !== userId) {
+      throw new ForbiddenException('Solo puede consultar sus propias empresas');
+    }
     return this.userCompaniesService.getUserCompanies(userId);
   }
 
@@ -151,10 +173,25 @@ export class UsersController {
   async revokeCompanyAccess(
     @Param('id') userId: string,
     @Param('companyId') companyId: string,
+    @Req() req: any,
   ) {
+    // Un admin solo puede revocar acceso sobre empresas a las que él tiene acceso.
+    const caller = req.user;
+    const targetCompanyId = parseInt(companyId);
+    if (caller.role !== UserRole.SUPERADMIN) {
+      const allowed = new Set<number>([
+        Number(caller.companyId),
+        ...(Array.isArray(caller.companyIds) ? caller.companyIds.map(Number) : []),
+      ]);
+      if (!allowed.has(targetCompanyId)) {
+        throw new ForbiddenException(
+          'Solo puede revocar acceso a empresas a las que usted tiene acceso',
+        );
+      }
+    }
     await this.userCompaniesService.revokeCompanyAccess(
       userId,
-      parseInt(companyId),
+      targetCompanyId,
     );
 
     return { message: 'Acceso a empresa revocado exitosamente' };

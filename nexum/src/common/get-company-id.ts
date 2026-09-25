@@ -2,8 +2,9 @@ import { ForbiddenException } from '@nestjs/common';
 
 /**
  * Extrae companyId de forma segura del JWT del usuario.
- * - Superadmin puede pasar ?companyId= para acceder a cualquier empresa
- * - Otros roles SIEMPRE usan su companyId del token JWT
+ * - Superadmin puede elegir empresa vía header X-Company-ID o ?companyId=
+ * - Otros roles SIEMPRE usan su companyId del token JWT; un override
+ *   que apunte a otra empresa se rechaza.
  */
 export function getCompanyId(req: any): number {
   const user = req.user;
@@ -11,26 +12,46 @@ export function getCompanyId(req: any): number {
     throw new ForbiddenException('Usuario no autenticado');
   }
 
-  // Prioridad: header X-Company-ID > query param > JWT companyId
-  const headerCompanyId = req.headers?.['x-company-id'];
-  if (headerCompanyId) {
-    return parseInt(headerCompanyId as string, 10);
-  }
+  const jwtCompanyId = user.companyId
+    ? typeof user.companyId === 'number'
+      ? user.companyId
+      : parseInt(user.companyId as string, 10)
+    : undefined;
 
-  // Superadmin puede elegir empresa via query param
   if (user.role === 'superadmin') {
-    const override = req.query?.companyId;
+    const override =
+      req.headers?.['x-company-id'] ?? req.query?.companyId;
     if (override) {
-      return parseInt(override as string, 10);
+      const parsed = parseInt(override as string, 10);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
     }
-  }
-
-  // Fallback: usar JWT companyId
-  if (!user.companyId) {
+    if (jwtCompanyId !== undefined && !Number.isNaN(jwtCompanyId)) {
+      return jwtCompanyId;
+    }
     throw new ForbiddenException('No tiene una empresa asignada');
   }
 
-  return typeof user.companyId === 'number'
-    ? user.companyId
-    : parseInt(user.companyId as string, 10);
+  if (jwtCompanyId === undefined || Number.isNaN(jwtCompanyId)) {
+    throw new ForbiddenException('No tiene una empresa asignada');
+  }
+
+  const override =
+    req.headers?.['x-company-id'] ?? req.query?.companyId;
+  if (override) {
+    const parsed = parseInt(override as string, 10);
+    if (!Number.isNaN(parsed)) {
+      const allowed = new Set<number>([
+        jwtCompanyId,
+        ...(Array.isArray(user.companyIds) ? user.companyIds : []),
+      ]);
+      if (!allowed.has(parsed)) {
+        throw new ForbiddenException('No tiene acceso a la empresa indicada');
+      }
+      return parsed;
+    }
+  }
+
+  return jwtCompanyId;
 }

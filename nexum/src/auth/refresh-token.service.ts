@@ -56,7 +56,7 @@ export class RefreshTokenService {
     
     const refreshToken = await this.refreshTokenRepo.findOne({
       where: { tokenHash, isRevoked: false },
-      relations: ['user'],
+      relations: ['user', 'user.userCompanies'],
     });
 
     if (!refreshToken) {

@@ -6,12 +6,14 @@ import { Product } from '../entities/product.entity';
 import { MaterialRequestsService } from './material-requests.service';
 import { MaterialRequestsController } from './material-requests.controller';
 import { MovementsModule } from '../movements/movements.module';
+import { WarehousesModule } from '../warehouses/warehouses.module';
 import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([MaterialRequest, MaterialRequestItem, Product]),
     MovementsModule,
+    WarehousesModule,
     CommonModule,
   ],
   providers: [MaterialRequestsService],

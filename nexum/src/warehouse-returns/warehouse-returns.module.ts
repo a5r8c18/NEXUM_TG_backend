@@ -5,12 +5,14 @@ import { WarehouseReturnItem } from '../entities/warehouse-return-item.entity';
 import { WarehouseReturnsService } from './warehouse-returns.service';
 import { WarehouseReturnsController } from './warehouse-returns.controller';
 import { MovementsModule } from '../movements/movements.module';
+import { WarehousesModule } from '../warehouses/warehouses.module';
 import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([WarehouseReturn, WarehouseReturnItem]),
     MovementsModule,
+    WarehousesModule,
     CommonModule,
   ],
   providers: [WarehouseReturnsService],

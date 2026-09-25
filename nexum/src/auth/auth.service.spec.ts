@@ -8,8 +8,13 @@ import { JwtService } from '@nestjs/jwt';
 import { Repository } from 'typeorm';
 import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
+import { UserMFA } from '../entities/user-mfa.entity';
 import { RegistrationRequestsService } from './registration-requests.service';
 import { RefreshTokenService } from './refresh-token.service';
+import { PasswordPolicyService } from './password-policy.service';
+import { LoginAttemptService } from './login-attempt.service';
+import { MfaService } from './mfa.service';
+import { LoggerService } from '../common/logger.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 
@@ -53,6 +58,8 @@ describe('AuthService', () => {
     email: 'company@example.com',
     tenantId: 'tenant-single-company-1234567890',
     tenantType: 'SINGLE_COMPANY',
+    salesTaxRate: null,
+    incomeTaxRate: null,
     logoPath: null,
     isActive: true,
     createdAt: new Date(),
@@ -101,6 +108,15 @@ describe('AuthService', () => {
           useValue: mockCompanyRepo,
         },
         {
+          provide: getRepositoryToken(UserMFA),
+          useValue: {
+            findOne: jest.fn(),
+            findOneBy: jest.fn().mockResolvedValue(null),
+            save: jest.fn(),
+            create: jest.fn(),
+          },
+        },
+        {
           provide: RegistrationRequestsService,
           useValue: mockRegistrationRequestsService,
         },
@@ -111,6 +127,33 @@ describe('AuthService', () => {
         {
           provide: JwtService,
           useValue: mockJwtService,
+        },
+        {
+          provide: PasswordPolicyService,
+          useValue: { validateOrThrow: jest.fn() },
+        },
+        {
+          provide: LoginAttemptService,
+          useValue: {
+            isLockedOut: jest.fn().mockResolvedValue(false),
+            recordAttempt: jest.fn(),
+            getRemainingAttempts: jest.fn().mockResolvedValue(5),
+          },
+        },
+        {
+          provide: MfaService,
+          useValue: { verifyToken: jest.fn() },
+        },
+        {
+          provide: LoggerService,
+          useValue: {
+            setContext: jest.fn(),
+            log: jest.fn(),
+            warn: jest.fn(),
+            error: jest.fn(),
+            logSecurity: jest.fn(),
+            logAudit: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -147,6 +190,7 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: expectedToken,
         refreshToken: expectedRefreshToken,
+        requiresMFA: false,
         user: {
           id: mockUser.id,
           email: mockUser.email,
@@ -159,13 +203,15 @@ describe('AuthService', () => {
       });
       expect(userRepo.findOne).toHaveBeenCalledWith({
         where: { email: 'test@example.com' },
-        relations: ['company'],
+        relations: ['company', 'userCompanies'],
       });
       expect(jwtService.sign).toHaveBeenCalledWith({
         sub: mockUser.id,
         email: mockUser.email,
+        name: 'Test User',
         role: mockUser.role,
         companyId: mockUser.companyId,
+        companyIds: [mockUser.companyId],
         tenantId: mockUser.tenantId,
         tenantType: mockUser.tenantType,
       });

@@ -6,6 +6,7 @@ import {
   Request,
 } from '@nestjs/common';
 import { InventoryAnalyticsService } from './inventory-analytics.service';
+import { getCompanyId } from "../common/get-company-id";
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -20,7 +21,7 @@ export class InventoryAnalyticsController {
     @Query('category') category?: string,
     @Query('period') period?: string,
   ) {
-    const companyId = req.user.companyId;
+    const companyId = getCompanyId(req);
     const filters: any = {};
     
     if (warehouseId) filters.warehouseId = warehouseId;
@@ -35,7 +36,7 @@ export class InventoryAnalyticsController {
     @Request() req,
     @Query('warehouseId') warehouseId?: string,
   ) {
-    const companyId = req.user.companyId;
+    const companyId = getCompanyId(req);
     return await this.inventoryAnalyticsService.getSlowMovingReport(companyId, warehouseId);
   }
 }

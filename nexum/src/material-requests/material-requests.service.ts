@@ -11,6 +11,7 @@ import { MaterialRequestItem } from '../entities/material-request-item.entity';
 import { Product } from '../entities/product.entity';
 import { DocumentSequenceService } from '../common/sequence/document-sequence.service';
 import { MovementsService } from '../movements/movements.service';
+import { WarehousesService } from '../warehouses/warehouses.service';
 
 @Injectable()
 export class MaterialRequestsService {
@@ -25,6 +26,7 @@ export class MaterialRequestsService {
     private readonly productRepo: Repository<Product>,
     private readonly sequenceService: DocumentSequenceService,
     private readonly movementsService: MovementsService,
+    private readonly warehousesService: WarehousesService,
   ) {}
 
   async findAll(companyId: number, filters?: {
@@ -100,6 +102,17 @@ export class MaterialRequestsService {
       }[];
     },
   ) {
+    // El almacén destino debe existir y pertenecer a la empresa del contexto.
+    const destinationWarehouse = await this.warehousesService.findByIdOrCode(
+      companyId,
+      data.destinationWarehouseId,
+    );
+    if (!destinationWarehouse) {
+      throw new NotFoundException(
+        `Almacén destino ${data.destinationWarehouseId} no encontrado`,
+      );
+    }
+
     const requestNumber = await this.sequenceService.nextFormatted(
       companyId,
       'material-request',
@@ -118,8 +131,8 @@ export class MaterialRequestsService {
       requestingDepartmentName: data.requestingDepartmentName || null,
       requesterName: data.requesterName,
       requesterPosition: data.requesterPosition || null,
-      destinationWarehouseId: data.destinationWarehouseId,
-      destinationWarehouseName: data.destinationWarehouseName,
+      destinationWarehouseId: destinationWarehouse.id,
+      destinationWarehouseName: destinationWarehouse.name,
       purpose: data.purpose || null,
       urgencyLevel: data.urgencyLevel || 'normal',
       requiredDate: data.requiredDate || null,

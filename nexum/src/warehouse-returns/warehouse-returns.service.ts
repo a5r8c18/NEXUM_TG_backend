@@ -10,6 +10,7 @@ import { WarehouseReturn } from '../entities/warehouse-return.entity';
 import { WarehouseReturnItem } from '../entities/warehouse-return-item.entity';
 import { DocumentSequenceService } from '../common/sequence/document-sequence.service';
 import { MovementsService } from '../movements/movements.service';
+import { WarehousesService } from '../warehouses/warehouses.service';
 
 @Injectable()
 export class WarehouseReturnsService {
@@ -22,6 +23,7 @@ export class WarehouseReturnsService {
     private readonly itemRepo: Repository<WarehouseReturnItem>,
     private readonly sequenceService: DocumentSequenceService,
     private readonly movementsService: MovementsService,
+    private readonly warehousesService: WarehousesService,
   ) {}
 
   async findAll(companyId: number, filters?: {
@@ -88,6 +90,29 @@ export class WarehouseReturnsService {
       conditionNotes?: string;
     }[];
   }) {
+    // Los almacenes deben existir y pertenecer a la empresa del contexto.
+    const sourceWarehouse = await this.warehousesService.findByIdOrCode(
+      companyId,
+      data.sourceWarehouseId,
+    );
+    if (!sourceWarehouse) {
+      throw new NotFoundException(
+        `Almacén origen ${data.sourceWarehouseId} no encontrado`,
+      );
+    }
+    let destinationWarehouse: { id: string; name: string } | null = null;
+    if (data.destinationWarehouseId) {
+      destinationWarehouse = await this.warehousesService.findByIdOrCode(
+        companyId,
+        data.destinationWarehouseId,
+      );
+      if (!destinationWarehouse) {
+        throw new NotFoundException(
+          `Almacén destino ${data.destinationWarehouseId} no encontrado`,
+        );
+      }
+    }
+
     const returnNumber = await this.sequenceService.nextFormatted(
       companyId,
       'warehouse-return',
@@ -107,10 +132,10 @@ export class WarehouseReturnsService {
       returnReason: data.returnReason,
       supplierName: data.supplierName || null,
       supplierNit: data.supplierNit || null,
-      sourceWarehouseId: data.sourceWarehouseId,
-      sourceWarehouseName: data.sourceWarehouseName,
-      destinationWarehouseId: data.destinationWarehouseId || null,
-      destinationWarehouseName: data.destinationWarehouseName || null,
+      sourceWarehouseId: sourceWarehouse.id,
+      sourceWarehouseName: sourceWarehouse.name,
+      destinationWarehouseId: destinationWarehouse?.id || null,
+      destinationWarehouseName: destinationWarehouse?.name || null,
       returnedBy: data.returnedBy,
       status: 'draft' as any,
       totalItems,

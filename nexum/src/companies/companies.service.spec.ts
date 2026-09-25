@@ -21,6 +21,8 @@ describe('CompaniesService', () => {
     isActive: true,
     tenantId: 'tenant-single_company-1234567890',
     tenantType: 'SINGLE_COMPANY',
+    salesTaxRate: null,
+    incomeTaxRate: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     warehouses: [],

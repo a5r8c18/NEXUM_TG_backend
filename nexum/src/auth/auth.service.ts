@@ -35,12 +35,19 @@ export class AuthService {
   }
 
   private generateToken(user: User): string {
+    const companyIds = [
+      user.companyId,
+      ...(user.userCompanies ?? [])
+        .filter((uc) => uc.isActive)
+        .map((uc) => uc.companyId),
+    ].filter((id): id is number => id !== undefined && id !== null);
     const payload = {
       sub: user.id,
       email: user.email,
       name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
       role: user.role,
       companyId: user.companyId,
+      companyIds: [...new Set(companyIds)],
       tenantId: user.tenantId,
       tenantType: user.tenantType,
     };
@@ -66,7 +73,7 @@ export class AuthService {
 
     const user = await this.userRepo.findOne({
       where: { email },
-      relations: ['company'],
+      relations: ['company', 'userCompanies'],
     });
 
     let isValidPassword = false;
@@ -185,7 +192,7 @@ export class AuthService {
   async completeLoginWithMFA(userId: string, token: string, ipAddress?: string, userAgent?: string): Promise<LoginResponseDto> {
     const user = await this.userRepo.findOne({
       where: { id: userId },
-      relations: ['company'],
+      relations: ['company', 'userCompanies'],
     });
 
     if (!user) {

@@ -8,12 +8,14 @@ import { PhysicalCountItem } from '../entities/physical-count-item.entity';
 import { Product } from '../entities/product.entity';
 import { InventoryWarehouseModule } from '../inventory-warehouse/inventory-warehouse.module';
 import { MovementsModule } from '../movements/movements.module';
+import { WarehousesModule } from '../warehouses/warehouses.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([PhysicalCount, PhysicalCountItem, Product]),
     InventoryWarehouseModule,
     MovementsModule,
+    WarehousesModule,
     JwtModule.register({}),
   ],
   controllers: [PhysicalCountController],

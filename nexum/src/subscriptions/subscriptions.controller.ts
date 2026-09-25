@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   Query,
+  Req,
   Headers,
   UseGuards,
 } from '@nestjs/common';
@@ -36,8 +37,14 @@ export class SubscriptionsController {
   }
 
   // GET /subscriptions/check — Check current tenant's subscription (authenticated)
+  // El tenant se toma del JWT; solo el superadmin puede consultar otro vía header.
   @Get('check')
-  async checkAccess(@Headers('X-Tenant-ID') tenantId: string) {
+  async checkAccess(@Req() req: any, @Headers('X-Tenant-ID') headerTenantId?: string) {
+    const user = req.user;
+    const tenantId =
+      user?.role === UserRole.SUPERADMIN && headerTenantId
+        ? headerTenantId
+        : user?.tenantId;
     if (!tenantId) {
       return {
         hasAccess: false,

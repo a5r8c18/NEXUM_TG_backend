@@ -48,6 +48,24 @@ export class TenantGuard implements CanActivate {
       throw new ForbiddenException('Usuario sin tenant asignado');
     }
 
+    // Rechaza un X-Tenant-ID que no coincida con el tenant del JWT.
+    // Nota: debe aplicarse después de JwtAuthGuard (request.user poblado).
+    const headerTenantId = request.headers?.['x-tenant-id'];
+    if (headerTenantId && String(headerTenantId) !== String(user.tenantId)) {
+      this.logger.logSecurity(
+        LogCategory.SECURITY,
+        'Tenant guard failed - X-Tenant-ID mismatch',
+        {
+          userId: user.sub,
+          action: 'TENANT_GUARD_FAILED',
+          details: { reason: 'tenant_header_mismatch', headerTenantId },
+        },
+      );
+      throw new ForbiddenException(
+        'X-Tenant-ID no coincide con el tenant del usuario',
+      );
+    }
+
     // Add tenant filter to query if applicable
     const tenantId = user.tenantId;
     request.tenantId = tenantId;

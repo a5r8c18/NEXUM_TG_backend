@@ -11,6 +11,7 @@ import { PhysicalCountItem } from '../entities/physical-count-item.entity';
 import { Product } from '../entities/product.entity';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { MovementsService } from '../movements/movements.service';
+import { WarehousesService } from '../warehouses/warehouses.service';
 
 @Injectable()
 export class PhysicalCountService {
@@ -25,6 +26,7 @@ export class PhysicalCountService {
     private readonly productRepo: Repository<Product>,
     private readonly inventoryWarehouseService: InventoryWarehouseService,
     private readonly movementsService: MovementsService,
+    private readonly warehousesService: WarehousesService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -105,6 +107,15 @@ export class PhysicalCountService {
     notes?: string;
     createdBy?: string;
   }) {
+    // El almacén debe existir y pertenecer a la empresa del contexto.
+    const warehouse = await this.warehousesService.findByIdOrCode(
+      companyId,
+      data.warehouseId,
+    );
+    if (!warehouse) {
+      throw new NotFoundException(`Almacén ${data.warehouseId} no encontrado`);
+    }
+
     // Verificar que no haya otro conteo en progreso para el mismo almacén
     const existing = await this.physicalCountRepo.findOne({
       where: {
@@ -129,8 +140,8 @@ export class PhysicalCountService {
     const physicalCount = this.physicalCountRepo.create({
       companyId,
       countNumber,
-      warehouseId: data.warehouseId,
-      warehouseName: data.warehouseName,
+      warehouseId: warehouse.id,
+      warehouseName: warehouse.name,
       date: data.date,
       status: 'draft',
       notes: data.notes || null,

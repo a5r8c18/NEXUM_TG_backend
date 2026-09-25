@@ -7,11 +7,12 @@ import {
   Body,
   Param,
   Query,
-  BadRequestException,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { InventoryWarehouseService } from './inventory-warehouse.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { getCompanyId } from '../common/get-company-id';
 
 @UseGuards(JwtAuthGuard)
 @Controller('inventory-warehouse')
@@ -22,24 +23,18 @@ export class InventoryWarehouseController {
 
   // Obtener inventario por empresa
   @Get()
-  async findByCompany(@Query('companyId') companyId: string) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
-    return this.inventoryWarehouseService.findByCompany(parseInt(companyId));
+  async findByCompany(@Req() req: any) {
+    return this.inventoryWarehouseService.findByCompany(getCompanyId(req));
   }
 
   // Obtener inventario por empresa y almacén
   @Get('warehouse/:warehouseId')
   async findByCompanyAndWarehouse(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Param('warehouseId') warehouseId: string,
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     return this.inventoryWarehouseService.findByCompanyAndWarehouse(
-      parseInt(companyId),
+      getCompanyId(req),
       warehouseId,
     );
   }
@@ -47,33 +42,27 @@ export class InventoryWarehouseController {
   // Obtener producto por código
   @Get('product/:productCode')
   async findByCode(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Param('productCode') productCode: string,
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     return this.inventoryWarehouseService.findByCode(
-      parseInt(companyId),
+      getCompanyId(req),
       productCode,
     );
   }
 
   // Obtener resumen de inventario
   @Get('summary')
-  async getInventorySummary(@Query('companyId') companyId: string) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
+  async getInventorySummary(@Req() req: any) {
     return this.inventoryWarehouseService.getInventorySummary(
-      parseInt(companyId),
+      getCompanyId(req),
     );
   }
 
   // Asegurar producto en inventario
   @Post('ensure')
   async ensureProduct(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Body()
     data: {
       productCode: string;
@@ -86,11 +75,8 @@ export class InventoryWarehouseController {
       location?: string;
     },
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     return this.inventoryWarehouseService.ensureProduct(
-      parseInt(companyId),
+      getCompanyId(req),
       data,
     );
   }
@@ -98,7 +84,7 @@ export class InventoryWarehouseController {
   // Actualizar stock
   @Put('stock')
   async updateStock(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Body()
     data: {
       productCode: string;
@@ -107,11 +93,8 @@ export class InventoryWarehouseController {
       type: 'entry' | 'exit';
     },
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     return this.inventoryWarehouseService.updateStock(
-      parseInt(companyId),
+      getCompanyId(req),
       data.productCode,
       data.warehouseId,
       data.quantity,
@@ -122,7 +105,7 @@ export class InventoryWarehouseController {
   // Transferir stock entre almacenes
   @Post('transfer')
   async transferStock(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Body()
     data: {
       productCode: string;
@@ -132,11 +115,8 @@ export class InventoryWarehouseController {
       reason?: string;
     },
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     return this.inventoryWarehouseService.transferStock(
-      parseInt(companyId),
+      getCompanyId(req),
       data,
     );
   }
@@ -144,7 +124,7 @@ export class InventoryWarehouseController {
   // Actualizar límite de stock
   @Put('stock-limit')
   async updateStockLimit(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Body()
     data: {
       productCode: string;
@@ -152,11 +132,8 @@ export class InventoryWarehouseController {
       stockLimit: number;
     },
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     return this.inventoryWarehouseService.updateStockLimit(
-      parseInt(companyId),
+      getCompanyId(req),
       data.productCode,
       data.warehouseId,
       data.stockLimit,
@@ -166,17 +143,14 @@ export class InventoryWarehouseController {
   // Submayor / Tarjeta de estiba de un producto en un almacén (INV-03)
   @Get('subledger/:warehouseId/:productCode')
   async getSubledger(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Param('warehouseId') warehouseId: string,
     @Param('productCode') productCode: string,
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     return this.inventoryWarehouseService.getSubledger(
-      parseInt(companyId),
+      getCompanyId(req),
       productCode,
       warehouseId,
       { fromDate, toDate },
@@ -186,18 +160,15 @@ export class InventoryWarehouseController {
   // Desactivar producto de inventario
   @Delete('deactivate')
   async deactivate(
-    @Query('companyId') companyId: string,
+    @Req() req: any,
     @Body()
     data: {
       productCode: string;
       warehouseId: string;
     },
   ) {
-    if (!companyId) {
-      throw new BadRequestException('CompanyId es requerido');
-    }
     await this.inventoryWarehouseService.deactivate(
-      parseInt(companyId),
+      getCompanyId(req),
       data.productCode,
       data.warehouseId,
     );

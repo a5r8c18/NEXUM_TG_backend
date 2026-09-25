@@ -818,6 +818,15 @@ export class MovementsService {
       }
     }
 
+    // El almacén debe existir y pertenecer a la empresa del contexto.
+    const warehouse = await this.warehousesService.findByIdOrCode(
+      companyId,
+      data.warehouseId,
+    );
+    if (!warehouse) {
+      throw new NotFoundException(`Almacén ${data.warehouseId} no encontrado`);
+    }
+
     const category = data.category || movType.category;
 
     const result = await this.dataSource.transaction(async (manager) => {
@@ -1007,6 +1016,15 @@ export class MovementsService {
       if (item.quantity <= 0) {
         throw new BadRequestException(`Cantidad inválida para producto ${item.productCode}`);
       }
+    }
+
+    // El almacén debe existir y pertenecer a la empresa del contexto.
+    const exitWarehouse = await this.warehousesService.findByIdOrCode(
+      companyId,
+      data.warehouseId,
+    );
+    if (!exitWarehouse) {
+      throw new NotFoundException(`Almacén ${data.warehouseId} no encontrado`);
     }
 
     const category = data.category || movType.category;

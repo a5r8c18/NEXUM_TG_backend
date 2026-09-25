@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { StockLimitsService } from './stock-limits.service';
@@ -14,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { getCompanyId } from '../common/get-company-id';
 import { CreateStockLimitDto, UpdateStockLimitDto } from './dto/stock-limit.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -26,18 +28,16 @@ export class StockLimitsController {
   ) {}
 
   @Get()
-  findAll(
-    @Query('companyId') companyId?: string,
-    @Query('warehouseId') warehouseId?: string,
-  ) {
-    return this.stockLimitsService.findAll(companyId, warehouseId);
+  findAll(@Req() req: any, @Query('warehouseId') warehouseId?: string) {
+    return this.stockLimitsService.findAll(getCompanyId(req), warehouseId);
   }
 
   @Get('warnings')
   async getWarnings(
-    @Query('companyId') companyId?: string,
+    @Req() req: any,
     @Query('warehouseId') warehouseId?: string,
   ) {
+    const companyId = getCompanyId(req);
     const warnings = await this.stockLimitsService.getWarnings(companyId, warehouseId);
 
     const critical = warnings.filter(
@@ -48,7 +48,7 @@ export class StockLimitsController {
         productName: item.productName,
         currentStock: item.currentStock,
         minStock: item.minStock,
-        companyId: companyId ? parseInt(companyId) : 1,
+        companyId,
         tenantId: '',
       });
     }
@@ -57,37 +57,47 @@ export class StockLimitsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.stockLimitsService.findOne(id);
+  findOne(@Req() req: any, @Param('id') id: string) {
+    return this.stockLimitsService.findOne(id, getCompanyId(req));
   }
 
   @Post()
-  create(@Body() body: CreateStockLimitDto) {
-    return this.stockLimitsService.create(body);
+  create(@Req() req: any, @Body() body: CreateStockLimitDto) {
+    // La empresa la fija el contexto autenticado, nunca el body.
+    return this.stockLimitsService.create({ ...body, companyId: getCompanyId(req) });
   }
 
   @Post('bulk')
-  bulkCreate(@Body() body: CreateStockLimitDto[]) {
-    return this.stockLimitsService.bulkCreate(body);
+  bulkCreate(@Req() req: any, @Body() body: CreateStockLimitDto[]) {
+    const companyId = getCompanyId(req);
+    return this.stockLimitsService.bulkCreate(
+      body.map((l) => ({ ...l, companyId })),
+    );
   }
 
   @Post('sync')
   async syncStock(
-    @Query('companyId') companyId?: string,
+    @Req() req: any,
     @Query('warehouseId') warehouseId?: string,
   ) {
-    const cid = companyId ? Number(companyId) : 1;
-    const updated = await this.stockLimitsService.syncCurrentStock(cid, warehouseId);
+    const updated = await this.stockLimitsService.syncCurrentStock(
+      getCompanyId(req),
+      warehouseId,
+    );
     return { message: `Stock sincronizado: ${updated} registros actualizados`, updated };
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: UpdateStockLimitDto) {
-    return this.stockLimitsService.update(id, body);
+  update(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: UpdateStockLimitDto,
+  ) {
+    return this.stockLimitsService.update(id, getCompanyId(req), body);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.stockLimitsService.remove(id);
+  remove(@Req() req: any, @Param('id') id: string) {
+    return this.stockLimitsService.remove(id, getCompanyId(req));
   }
 }

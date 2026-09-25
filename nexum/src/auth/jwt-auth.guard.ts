@@ -6,9 +6,11 @@ import {
   Injectable,
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { UserRole } from '../entities/user.entity';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -51,9 +53,25 @@ export class JwtAuthGuard implements CanActivate {
         name: payload.name,
         role: payload.role,
         companyId: payload.companyId,
+        companyIds: payload.companyIds,
         tenantId: payload.tenantId,
         tenantType: payload.tenantType,
       };
+
+      // Defensa en profundidad: si la petición trae X-Tenant-ID debe coincidir
+      // con el tenant del JWT. Solo el superadmin puede operar sobre otro
+      // tenant vía header.
+      const headerTenantId = request.headers['x-tenant-id'];
+      if (
+        headerTenantId &&
+        payload.role !== UserRole.SUPERADMIN &&
+        String(headerTenantId) !== String(payload.tenantId)
+      ) {
+        throw new ForbiddenException(
+          'X-Tenant-ID no coincide con el tenant del usuario',
+        );
+      }
+
       return true;
     } catch (error) {
       console.log('❌ JWT GUARD - Error verificando token:', {

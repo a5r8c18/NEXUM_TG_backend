@@ -28,15 +28,14 @@ export class StockLimitsService {
     private readonly inventoryWarehouseService: InventoryWarehouseService,
   ) {}
 
-  async findAll(companyId?: string, warehouseId?: string) {
-    const where: any = {};
-    if (companyId) where.companyId = Number(companyId);
+  async findAll(companyId: number, warehouseId?: string) {
+    const where: any = { companyId };
     if (warehouseId) where.warehouseId = warehouseId;
     return this.slRepo.find({ where });
   }
 
-  async findOne(id: string) {
-    const sl = await this.slRepo.findOneBy({ id });
+  async findOne(id: string, companyId: number) {
+    const sl = await this.slRepo.findOneBy({ id, companyId });
     if (!sl) throw new NotFoundException(`Stock limit #${id} no encontrado`);
     return sl;
   }
@@ -47,9 +46,9 @@ export class StockLimitsService {
     minStock: number;
     maxStock: number;
     reorderPoint: number;
-    companyId?: number;
+    companyId: number;
   }) {
-    const companyId = data.companyId || 1;
+    const companyId = data.companyId;
 
     // Obtener datos reales del inventario para nombre de producto y stock actual
     const inventory = await this.inventoryWarehouseService
@@ -73,6 +72,7 @@ export class StockLimitsService {
 
   async update(
     id: string,
+    companyId: number,
     data: {
       minStock?: number;
       maxStock?: number;
@@ -80,7 +80,7 @@ export class StockLimitsService {
       isActive?: boolean;
     },
   ) {
-    const sl = await this.findOne(id);
+    const sl = await this.findOne(id, companyId);
     if (data.minStock !== undefined) sl.minStock = data.minStock;
     if (data.maxStock !== undefined) sl.maxStock = data.maxStock;
     if (data.reorderPoint !== undefined) sl.reorderPoint = data.reorderPoint;
@@ -88,8 +88,8 @@ export class StockLimitsService {
     return this.slRepo.save(sl);
   }
 
-  async remove(id: string) {
-    const sl = await this.findOne(id);
+  async remove(id: string, companyId: number) {
+    const sl = await this.findOne(id, companyId);
     await this.slRepo.remove(sl);
     return { message: 'Límite de stock eliminado correctamente' };
   }
@@ -192,16 +192,11 @@ export class StockLimitsService {
     };
   }
 
-  async getWarnings(companyId?: string, warehouseId?: string): Promise<StockWarning[]> {
-    const numericCompanyId = companyId ? Number(companyId) : undefined;
-
+  async getWarnings(companyId: number, warehouseId?: string): Promise<StockWarning[]> {
     // Sincronizar stock real antes de evaluar
-    if (numericCompanyId) {
-      await this.syncCurrentStock(numericCompanyId, warehouseId);
-    }
+    await this.syncCurrentStock(companyId, warehouseId);
 
-    const where: any = { isActive: true };
-    if (numericCompanyId) where.companyId = numericCompanyId;
+    const where: any = { isActive: true, companyId };
     if (warehouseId) where.warehouseId = warehouseId;
 
     const limits = await this.slRepo.find({ where });
@@ -215,6 +210,7 @@ export class StockLimitsService {
       minStock: number;
       maxStock: number;
       reorderPoint: number;
+      companyId: number;
     }>,
   ) {
     const results: StockLimit[] = [];
