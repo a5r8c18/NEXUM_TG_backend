@@ -51,17 +51,35 @@ export function calculateSocialSecurity(grossSalary: number): number {
 /**
  * Impuesto sobre los Ingresos Personales para trabajadores asalariados.
  *
- * Escala progresiva según Resolución 310/2020 (Gaceta Oficial Extraordinaria
- * No. 70 de 2020): exento hasta 3 260 CUP, 3 % entre 3 260 y 9 510 CUP,
- * y 5 % por encima de 9 510 CUP.
+ * Escala progresiva de siete tramos según Resolución 41/2023 (Gaceta Oficial
+ * Extraordinaria No. 20 de 2023), que derogó la Res. 310/2020 y rige también
+ * para los contratados por MIPYMES y cooperativas (homogeneización vigente
+ * desde la Ley del Presupuesto 2024): exento hasta 3 260 CUP y 3 %, 5 %,
+ * 7,5 %, 10 %, 15 % y 20 % marginales sobre el exceso de cada tramo.
  */
 export function calculateIncomeTaxSalaried(grossSalary: number): number {
-  if (grossSalary <= 3260) return 0;
-  if (grossSalary <= 9510) {
-    return round2((grossSalary - 3260) * 0.03);
+  const brackets = [
+    { limit: 3260, rate: 0 },
+    { limit: 9510, rate: 0.03 },
+    { limit: 15000, rate: 0.05 },
+    { limit: 20000, rate: 0.075 },
+    { limit: 25000, rate: 0.1 },
+    { limit: 30000, rate: 0.15 },
+    { limit: Infinity, rate: 0.2 },
+  ];
+
+  let tax = 0;
+  let previousLimit = 0;
+  for (const bracket of brackets) {
+    if (grossSalary <= previousLimit) break;
+    const upper = bracket.limit === Infinity ? grossSalary : bracket.limit;
+    const taxableInBracket = Math.min(grossSalary, upper) - previousLimit;
+    if (taxableInBracket > 0) {
+      tax += taxableInBracket * bracket.rate;
+    }
+    previousLimit = upper;
   }
-  const firstBracket = (9510 - 3260) * 0.03;
-  return round2(firstBracket + (grossSalary - 9510) * 0.05);
+  return round2(tax);
 }
 
 /**

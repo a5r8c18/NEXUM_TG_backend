@@ -16,7 +16,7 @@ import { TAXABLE_INCOME_CONCEPTS } from './payroll-concept';
 jest.setTimeout(30000);
 
 /**
- * Fix 9 — el IIP (Res. 310/2020) y la CESS (Res. 41/2023) gravan el acumulado
+ * Fix 9 — el IIP y la CESS (Res. 41/2023) gravan el acumulado
  * mensual "por todos los conceptos de pago; incluyendo el pago por descanso
  * retribuido". Antes cada nómina aplicaba la escala progresiva sobre su propio
  * devengado, infra-reteniendo cuando había varios conceptos en el mes; la

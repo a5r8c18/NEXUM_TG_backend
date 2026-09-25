@@ -32,7 +32,7 @@ describe('Contribución a la Seguridad Social', () => {
   });
 });
 
-describe('Impuesto sobre los Ingresos Personales — asalariados (Res. 310/2020)', () => {
+describe('Impuesto sobre los Ingresos Personales — asalariados (Res. 41/2023)', () => {
   it('exime hasta 3 260 CUP', () => {
     expect(calculateIncomeTaxSalaried(0)).toBe(0);
     expect(calculateIncomeTaxSalaried(3260)).toBe(0);
@@ -45,13 +45,22 @@ describe('Impuesto sobre los Ingresos Personales — asalariados (Res. 310/2020)
     expect(calculateIncomeTaxSalaried(9510)).toBe(187.5);
   });
 
-  it('aplica 5 % por encima de 9 510 CUP', () => {
+  it('aplica 5 % entre 9 510 y 15 000 CUP', () => {
     // 187.50 + (9 511 − 9 510) × 5 % = 187.55
     expect(calculateIncomeTaxSalaried(9511)).toBe(187.55);
     // 187.50 + (15 000 − 9 510) × 5 % = 462
     expect(calculateIncomeTaxSalaried(15000)).toBe(462);
-    // 187.50 + (50 000 − 9 510) × 5 % = 2 212
-    expect(calculateIncomeTaxSalaried(50000)).toBe(2212);
+  });
+
+  it('aplica los tramos progresivos por encima de 15 000 CUP', () => {
+    // 462 + (20 000 − 15 000) × 7,5 % = 837
+    expect(calculateIncomeTaxSalaried(20000)).toBe(837);
+    // 837 + (25 000 − 20 000) × 10 % = 1 337
+    expect(calculateIncomeTaxSalaried(25000)).toBe(1337);
+    // 1 337 + (30 000 − 25 000) × 15 % = 2 087
+    expect(calculateIncomeTaxSalaried(30000)).toBe(2087);
+    // 2 087 + (50 000 − 30 000) × 20 % = 6 087
+    expect(calculateIncomeTaxSalaried(50000)).toBe(6087);
   });
 });
 

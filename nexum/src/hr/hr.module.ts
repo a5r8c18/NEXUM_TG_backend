@@ -8,6 +8,7 @@ import { PayrollConceptService } from './payroll-concept.service';
 import { PayrollReportService } from './payroll-report.service';
 import {
   AttendanceController,
+  ContractsController,
   LeavesController,
 } from './hr-management.controller';
 import { HrManagementService } from './hr-management.service';
@@ -53,6 +54,7 @@ import { FinanceModule } from '../finance/finance.module';
     HrController,
     PayrollController,
     AttendanceController,
+    ContractsController,
     LeavesController,
     HrReportController,
   ],

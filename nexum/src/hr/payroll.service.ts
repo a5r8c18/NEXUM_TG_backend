@@ -26,13 +26,16 @@ import {
 import {
   incrementalTaxes,
   monthlyTaxableTotals,
+  MonthlyTaxableTotals,
 } from './monthly-taxable';
 import {
   EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE,
+  EmploymentSector,
   LABOR_FORCE_TAX_RATE,
   PAYROLL_CONCEPT_LABELS,
   PayrollConcept,
   SUBSIDY_RETENTION_RATE,
+  TAXABLE_INCOME_CONCEPTS,
   UNION_DUES_RATE,
   VACATION_ACCRUAL_RATE,
   VACATION_FUND_CONCEPTS,
@@ -256,7 +259,7 @@ export class PayrollService {
     let totalDeductions = 0;
     let totalNet = 0;
 
-    // ── Base mensual del IIP y la CESS (Res. 310/2020 y 41/2023) ──
+    // ── Base mensual del IIP y la CESS (Res. 41/2023) ──
     // Ambos tributos se calculan sobre el total devengado del mes por todos
     // los conceptos de pago: esta nómina retiene solo la diferencia respecto
     // a lo ya retenido en las demás nóminas no canceladas del período.
@@ -428,6 +431,9 @@ export class PayrollService {
       taxWithholding?: number;
       otherDeductions?: number;
       notes?: string;
+      leaveRequestId?: string;
+      averageSalary?: number;
+      appliedRate?: number;
     }>,
   ) {
     const payroll = await this.payrollRepo.findOne({
@@ -443,8 +449,27 @@ export class PayrollService {
       );
     }
 
-    // Reemplazar las líneas existentes por las nuevas.
-    await this.payrollItemRepo.delete({ payrollId: payroll.id });
+    // Snapshot de las líneas actuales para no perder la trazabilidad del
+    // cálculo (licencia origen, salario promedio, tasa aplicada) al reconstruir:
+    // el frontend no devuelve estos campos, pero cancel() los necesita para
+    // restituir lo liquidado a la licencia.
+    const previousByEmployee = new Map<string, PayrollItem[]>();
+    for (const prev of payroll.items || []) {
+      const list = previousByEmployee.get(prev.employeeId) || [];
+      list.push(prev);
+      previousByEmployee.set(prev.employeeId, list);
+    }
+    const consumed = new Set<number>();
+    const previousFor = (item: { employeeId: string; leaveRequestId?: string }) => {
+      const candidates = (previousByEmployee.get(item.employeeId) || []).filter(
+        (p) => !consumed.has(p.id),
+      );
+      const found = item.leaveRequestId
+        ? candidates.find((p) => p.leaveRequestId === item.leaveRequestId)
+        : candidates[0];
+      if (found) consumed.add(found.id);
+      return found;
+    };
 
     // La cuenta de gasto y la categoría ocupacional no las edita el usuario en la
     // nómina: se releen de la ficha del trabajador para no perderlas al
@@ -460,12 +485,36 @@ export class PayrollService {
     let totalNet = 0;
 
     const isSalary = payroll.concept === 'salario';
-    for (const item of items) {
+    // CESS e IIP solo gravan las remuneraciones (salario, vacaciones,
+    // liquidación y libre); subsidio y maternidad son prestaciones exentas.
+    const isTaxable = TAXABLE_INCOME_CONCEPTS.includes(payroll.concept);
+
+    await this.dataSource.transaction(async (manager) => {
+      const itemRepo = manager.getRepository(PayrollItem);
+      const payrollTxRepo = manager.getRepository(Payroll);
+
+      // Reemplazar las líneas existentes por las nuevas.
+      await itemRepo.delete({ payrollId: payroll.id });
+
+      // Acumulado mensual del trabajador excluyendo esta nómina: al borrar
+      // sus líneas, monthlyTaxableTotals recoge solo las demás nóminas del
+      // período — el punto de partida correcto del cálculo incremental.
+      const accumulated: Map<string, MonthlyTaxableTotals> = isTaxable
+        ? await monthlyTaxableTotals(itemRepo, companyId, payroll.period)
+        : new Map<string, MonthlyTaxableTotals>();
+
+      for (const item of items) {
       const employee = employeeById.get(item.employeeId);
+      const previous = previousFor(item);
+      // Un paidUnits explícito de 0 es válido (ausencia total): solo se asume
+      // el mes completo cuando el campo viene ausente.
+      const paidUnits =
+        item.paidUnits === undefined || item.paidUnits === null
+          ? WORKING_DAYS_PER_MONTH
+          : Number(item.paidUnits);
 
       let grossSalary: number;
       if (isSalary) {
-        const paidUnits = Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH;
         const baseEarnings = round2(
           (Number(item.baseSalary || 0) / WORKING_DAYS_PER_MONTH) * paidUnits,
         );
@@ -479,15 +528,39 @@ export class PayrollService {
         grossSalary = Number(item.grossSalary || 0);
       }
 
+      // CESS e IIP se recalculan en servidor sobre el acumulado mensual
+      // (Res. 41/2023): lo que envíe el cliente se ignora. En los conceptos
+      // exentos (subsidio, maternidad) las retenciones quedan en 0.
+      let socialSecurity = 0;
+      let taxWithholding = 0;
+      if (isTaxable) {
+        const taxes = incrementalTaxes(
+          accumulated.get(item.employeeId),
+          grossSalary,
+        );
+        socialSecurity = taxes.socialSecurity;
+        taxWithholding = taxes.taxWithholding;
+        const acc = accumulated.get(item.employeeId) || {
+          gross: 0,
+          socialSecurity: 0,
+          taxWithheld: 0,
+        };
+        accumulated.set(item.employeeId, {
+          gross: acc.gross + grossSalary,
+          socialSecurity: acc.socialSecurity + socialSecurity,
+          taxWithheld: acc.taxWithheld + taxWithholding,
+        });
+      }
+
       const unionDues =
         isSalary && employee?.unionMember
           ? round2(grossSalary * UNION_DUES_RATE)
           : Number((item as Partial<PayrollItem>).unionDues || 0);
       const totalDeductionsItem =
-        Number(item.socialSecurity || 0) +
+        socialSecurity +
+        taxWithholding +
         Number(item.healthInsurance || 0) +
         Number(item.pension || 0) +
-        Number(item.taxWithholding || 0) +
         unionDues +
         Number(item.otherDeductions || 0);
       const netSalary = grossSalary - totalDeductionsItem;
@@ -496,7 +569,7 @@ export class PayrollService {
       totalDeductions += totalDeductionsItem;
       totalNet += netSalary;
 
-      await this.payrollItemRepo.save({
+      await itemRepo.save({
         payrollId: payroll.id,
         companyId,
         employeeId: item.employeeId,
@@ -507,17 +580,17 @@ export class PayrollService {
         expenseAccountCode: employee?.expenseAccountCode || null,
         occupationalCategory: employee?.occupationalCategory || '0020',
         baseSalary: Number(item.baseSalary || 0),
-        paidUnits: isSalary ? Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH : Number(item.paidUnits || 0),
+        paidUnits: isSalary ? paidUnits : Number(item.paidUnits || 0),
         overtimeHours: Number(item.overtimeHours || 0),
         overtimePay: Number(item.overtimePay || 0),
         bonuses: Number(item.bonuses || 0),
         commissions: Number(item.commissions || 0),
         allowances: Number(item.allowances || 0),
         grossSalary,
-        socialSecurity: Number(item.socialSecurity || 0),
+        socialSecurity,
         healthInsurance: Number(item.healthInsurance || 0),
         pension: Number(item.pension || 0),
-        taxWithholding: Number(item.taxWithholding || 0),
+        taxWithholding,
         // Cuota sindical: 1 % del devengado retenido al trabajador afiliado;
         // se enteró a la organización sindical como obligación.
         unionDues,
@@ -531,12 +604,17 @@ export class PayrollService {
           ? round2(grossSalary * VACATION_ACCRUAL_RATE)
           : Number((item as Partial<PayrollItem>).vacationProvision || 0),
         vacationDays: isSalary
-          ? round2(
-              (Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH) *
-                VACATION_ACCRUAL_RATE,
-            )
+          ? round2(paidUnits * VACATION_ACCRUAL_RATE)
           : Number((item as Partial<PayrollItem>).vacationDays || 0),
         subsidyRetention: round2(grossSalary * SUBSIDY_RETENTION_RATE),
+        // Trazabilidad del cálculo: se conserva de la línea previa cuando el
+        // cliente no la reenvía — sin ella, cancel() no puede restituir la
+        // licencia y una licencia ya liquidada podría pagarse dos veces.
+        leaveRequestId:
+          item.leaveRequestId ?? previous?.leaveRequestId ?? null,
+        averageSalary:
+          item.averageSalary ?? Number(previous?.averageSalary || 0),
+        appliedRate: item.appliedRate ?? Number(previous?.appliedRate || 0),
         notes: item.notes,
       });
     }
@@ -544,7 +622,8 @@ export class PayrollService {
     payroll.totalGross = totalGross;
     payroll.totalDeductions = totalDeductions;
     payroll.totalNet = totalNet;
-    await this.payrollRepo.save(payroll);
+    await payrollTxRepo.save(payroll);
+    });
 
     return this.findOne(companyId, payroll.id);
   }
@@ -680,6 +759,12 @@ export class PayrollService {
         // centro de costo.
         const employerSSByCostCenter = new Map<string, number>();
         const laborForceTaxByCostCenter = new Map<string, number>();
+        // Neto a pagar por subcuenta de Nóminas por Pagar: cuando el mapeo
+        // apunta a una agrupadora 455-459 se acredita en 45X-00X0 según la
+        // categoría ocupacional de cada línea (Nomenclador 2016).
+        const payableBase = payableAccount || '455';
+        const payableIsGrouping = /^45[5-9]$/.test(payableBase);
+        const netByPayableSub = new Map<string, number>();
         let totalVacationProvision = 0;
         // Impuestos empresariales
         let employerSSBudgetTotal = 0;
@@ -747,6 +832,14 @@ export class PayrollService {
             }
             maternityStateAmount += net;
           }
+
+          const payableSub = payableIsGrouping
+            ? `${payableBase}-${item.occupationalCategory || '0020'}`
+            : payableBase;
+          netByPayableSub.set(
+            payableSub,
+            (netByPayableSub.get(payableSub) || 0) + net,
+          );
 
           // ── Provisión de vacaciones (Art. 102) ──
           // Se acumula en todo concepto que genere derecho: además del
@@ -914,14 +1007,25 @@ export class PayrollService {
 
         // La nómina se acredita en la 455 por el neto a pagar, como un solo
         // monto, sin separar por categorías ocupacionales ni centros de costo.
-        if (lines.length > 0 && totalNet > 0) {
-          lines.push({
-            accountCode: payableAccount || '455',
-            subaccountCode: payableAccount || '455',
-            debit: 0,
-            credit: round2(totalNet),
-            description: `Nómina por pagar ${payroll.period}`,
-          });
+        // Solo cuando este comprobante lleva el débito del neto: salario/libre
+        // (gasto) y vacaciones/liquidación (492). En subsidio y maternidad el
+        // neto se acredita en sus comprobantes propios (SUB-/MAT-); acreditarlo
+        // también aquí descuadraría el asiento y duplicaría el pasivo.
+        if (
+          totalNet > 0 &&
+          (chargesExpense || VACATION_FUND_CONCEPTS.includes(concept))
+        ) {
+          for (const [sub, amount] of netByPayableSub.entries()) {
+            const credit = round2(amount);
+            if (credit <= 0) continue;
+            lines.push({
+              accountCode: payableBase,
+              subaccountCode: sub,
+              debit: 0,
+              credit,
+              description: `Nómina por pagar ${payroll.period}`,
+            });
+          }
         }
 
         // ── Comprobante independiente de subsidio ──
@@ -936,13 +1040,17 @@ export class PayrollService {
             credit: 0,
             description: `${conceptLabel} ${payroll.period} (cargo a provisión 500)`,
           });
-          subsidyLines.push({
-            accountCode: payableAccount || '455',
-            subaccountCode: payableAccount || '455',
-            debit: 0,
-            credit: round2(totalNet),
-            description: `${conceptLabel} por pagar ${payroll.period}`,
-          });
+          for (const [sub, amount] of netByPayableSub.entries()) {
+            const credit = round2(amount);
+            if (credit <= 0) continue;
+            subsidyLines.push({
+              accountCode: payableBase,
+              subaccountCode: sub,
+              debit: 0,
+              credit,
+              description: `${conceptLabel} por pagar ${payroll.period}`,
+            });
+          }
         }
 
         // ── Comprobante independiente de licencia de maternidad ──
@@ -959,13 +1067,17 @@ export class PayrollService {
               credit: 0,
               description: `Licencia de maternidad ${payroll.period} — recuperable del presupuesto`,
             });
-            maternityLines.push({
-              accountCode: payableAccount || '455',
-              subaccountCode: payableAccount || '455',
-              debit: 0,
-              credit: maternityDebit,
-              description: `Licencia de maternidad por pagar ${payroll.period}`,
-            });
+            for (const [sub, amount] of netByPayableSub.entries()) {
+              const credit = round2(amount);
+              if (credit <= 0) continue;
+              maternityLines.push({
+                accountCode: payableBase,
+                subaccountCode: sub,
+                debit: 0,
+                credit,
+                description: `Licencia de maternidad por pagar ${payroll.period}`,
+              });
+            }
           }
           if (maternityNonStateAmount > 0) {
             this.logger.warn(
@@ -1289,6 +1401,7 @@ export class PayrollService {
 
     // ── Contabilización de pago de nómina ──
     let netAmount = Number(payroll.totalNet);
+    let sectorById = new Map<string, EmploymentSector>();
     if (payroll.concept === 'maternidad') {
       // El sector no estatal lo paga la Filial INSS: nunca se acreditó a la
       // 455 ni debe salir de caja de la empresa.
@@ -1296,7 +1409,7 @@ export class PayrollService {
       const emps = employeeIds.length
         ? await this.employeeRepo.findBy({ companyId, id: In(employeeIds) })
         : [];
-      const sectorById = new Map(
+      sectorById = new Map(
         emps.map((e) => [e.id, e.employmentSector || 'state']),
       );
       netAmount = round2(
@@ -1317,6 +1430,47 @@ export class PayrollService {
             MappingType.PAYROLL_CASH,
           ),
         ]);
+        // El débito replica el desglose de los créditos: si la cuenta de
+        // Nóminas por Pagar es una agrupadora 455-459, cada categoría
+        // ocupacional va a su subcuenta 45X-00X0.
+        const payableBase = payableAccount || '455';
+        const payableIsGrouping = /^45[5-9]$/.test(payableBase);
+        const netByPayableSub = new Map<string, number>();
+        for (const item of payroll.items) {
+          if (
+            payroll.concept === 'maternidad' &&
+            (sectorById.get(item.employeeId) || 'state') === 'non_state'
+          ) {
+            continue;
+          }
+          const sub = payableIsGrouping
+            ? `${payableBase}-${item.occupationalCategory || '0020'}`
+            : payableBase;
+          netByPayableSub.set(
+            sub,
+            (netByPayableSub.get(sub) || 0) + Number(item.netSalary || 0),
+          );
+        }
+        const payableLines = [...netByPayableSub.entries()]
+          .map(([sub, amount]) => ({
+            accountCode: payableBase,
+            subaccountCode: sub,
+            debit: round2(amount),
+            credit: 0,
+            description: `Liquidación nómina ${payroll.period}`,
+          }))
+          .filter((l) => l.debit > 0);
+        // Si no hay desglose por líneas (nómina sin items cargados), debitar
+        // la cuenta agrupadora completa para no descuadrar el comprobante.
+        if (payableLines.length === 0) {
+          payableLines.push({
+            accountCode: payableBase,
+            subaccountCode: payableBase,
+            debit: netAmount,
+            credit: 0,
+            description: `Liquidación nómina ${payroll.period}`,
+          });
+        }
         await this.voucherService.createVoucherFromModule(
           companyId,
           'payroll',
@@ -1328,13 +1482,7 @@ export class PayrollService {
             reference: `PAGO-NOM-${payroll.period}-${payroll.id}`,
             createdBy: 'Sistema',
             lines: [
-              {
-                accountCode: payableAccount || '455',
-                subaccountCode: payableAccount || '455',
-                debit: netAmount,
-                credit: 0,
-                description: `Liquidación nómina ${payroll.period}`,
-              },
+              ...payableLines,
               {
                 accountCode: cashAccount || '110', // Efectivo en Banco
                 debit: 0,
@@ -1396,7 +1544,11 @@ export class PayrollService {
 
           this.logger.log(`Movimiento bancario y Payment registrados para pago nómina ${payroll.period}`);
         } catch (error) {
+          // Fail-fast: si el movimiento bancario o el Payment fallan, la
+          // transacción revierte también el comprobante de pago — la nómina
+          // jamás puede quedar 'paid' sin su salida de efectivo registrada.
           this.logger.error(`Error registrando movimiento bancario de nómina: ${error instanceof Error ? error.message : String(error)}`);
+          throw error;
         }
       }
     }
@@ -1441,6 +1593,8 @@ export class PayrollService {
       }
 
       // Anular los comprobantes de procesamiento y de pago asociados.
+      // El filtro por sourceModule evita que el id desnudo (p. ej. "5") anule
+      // comprobantes de otros módulos que usan el mismo identificador.
       const sourceIds = [
         String(payroll.id),
         `SUB-${payroll.id}`,
@@ -1454,6 +1608,7 @@ export class PayrollService {
           await this.voucherService.findVouchersBySourceDocumentId(
             companyId,
             sourceId,
+            'payroll',
           );
         for (const voucher of vouchers) {
           if (voucher.status === 'cancelled') continue;
@@ -1467,23 +1622,47 @@ export class PayrollService {
       }
 
       // ── Anular la obligación con el presupuesto del estado en Finanzas ──
-      await this.financeService.cancelPayablesByInvoiceNumber(
-        companyId,
-        `IMP-${payroll.period}-${payroll.id}`,
-        `Anulada por cancelación de nómina ${payroll.period}`,
-        manager,
-      );
+      const payablesResult =
+        await this.financeService.cancelPayablesByInvoiceNumber(
+          companyId,
+          `IMP-${payroll.period}-${payroll.id}`,
+          `Anulada por cancelación de nómina ${payroll.period}`,
+          manager,
+        );
+      if ((payablesResult?.blocked ?? []).length > 0) {
+        throw new BadRequestException(
+          `No se puede cancelar la nómina ${payroll.period}: las obligaciones ` +
+            `${(payablesResult.blocked as string[]).join(', ')} ya tienen ` +
+            'pagos aplicados. Resuélvalas manualmente en Finanzas antes de ' +
+            'anular la nómina.',
+        );
+      }
 
-      // ── Reversar el movimiento bancario si la nómina fue pagada (RH-07) ──
-      if (payroll.status === 'paid') {
+      // ── Reversar el movimiento bancario si la nómina se pagó por banco ──
+      // Solo existe movimiento cuando markAsPaid recibió bankAccountId y el
+      // registro tuvo éxito; un pago en efectivo no tiene nada que reversar.
+      if (payroll.status === 'paid' && payroll.bankTransactionId) {
         const referenceNumber = `PAGO-NOM-${payroll.period}-${payroll.id}`;
         await this.financeService.reverseBankTransaction(
           companyId,
           referenceNumber,
           `Reverso por cancelación de nómina ${payroll.period}`,
           manager,
-          payroll.bankTransactionId || undefined,
+          payroll.bankTransactionId,
         );
+      }
+
+      // ── Anular el Payment asociado al pago por banco, si existe ──
+      const paymentRepo = manager.getRepository(Payment);
+      const payment = await paymentRepo.findOne({
+        where: {
+          companyId,
+          paymentNumber: `PAG-NOM-${payroll.id}`,
+        },
+      });
+      if (payment && payment.status !== 'cancelled') {
+        payment.status = 'cancelled';
+        await paymentRepo.save(payment);
       }
 
       // Restituir lo liquidado a cada licencia vinculada: al cancelar, la

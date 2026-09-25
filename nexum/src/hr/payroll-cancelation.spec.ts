@@ -43,7 +43,11 @@ describe('PayrollService.cancel() transaccional', () => {
 
   function createManagerMock(payroll: Payroll = paidPayroll) {
     const save = jest.fn().mockResolvedValue(payroll);
-    const findOne = jest.fn().mockResolvedValue({ ...payroll });
+    const findOne = jest.fn().mockImplementation((args: any) => {
+      // El Payment asociado se busca por paymentNumber, no por id.
+      if (args?.where?.paymentNumber) return Promise.resolve(null);
+      return Promise.resolve({ ...payroll });
+    });
     const query = jest.fn().mockResolvedValue(undefined);
     return {
       getRepository: jest.fn().mockReturnValue({ findOne, save }),
@@ -62,7 +66,9 @@ describe('PayrollService.cancel() transaccional', () => {
     } as any;
 
     financeService = {
-      cancelPayablesByInvoiceNumber: jest.fn().mockResolvedValue({ cancelled: 0 }),
+      cancelPayablesByInvoiceNumber: jest
+        .fn()
+        .mockResolvedValue({ cancelled: 0, blocked: [] }),
       reverseBankTransaction: jest.fn().mockResolvedValue({ id: 'rev-tx-uuid' } as any),
     } as any;
 
@@ -99,7 +105,11 @@ describe('PayrollService.cancel() transaccional', () => {
     const result = await service.cancel(10, 1, 'error en pago');
 
     expect(payrollRepo.findOne).toHaveBeenCalledWith({ where: { id: 1, companyId: 10 } });
-    expect(voucherService.findVouchersBySourceDocumentId).toHaveBeenCalledWith(10, String(1));
+    expect(voucherService.findVouchersBySourceDocumentId).toHaveBeenCalledWith(
+      10,
+      String(1),
+      'payroll',
+    );
     expect(voucherService.updateVoucherStatus).toHaveBeenCalledWith(
       10,
       'v-1',
@@ -189,5 +199,63 @@ describe('PayrollService.cancel() transaccional', () => {
     expect(sql).toContain('leave_requests');
     expect(sql).toContain('GREATEST');
     expect(params).toEqual([22, 4600, 'lv-1']);
+  });
+
+  it('no intenta reversa bancaria si la nómina pagada no tuvo movimiento', async () => {
+    const paidCash = {
+      ...paidPayroll,
+      bankTransactionId: null,
+    } as unknown as Payroll;
+    payrollRepo.findOne.mockResolvedValue(paidCash);
+    const manager = createManagerMock(paidCash);
+    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+
+    const result = await service.cancel(10, 1);
+
+    expect(financeService.reverseBankTransaction).not.toHaveBeenCalled();
+    expect(result.payroll.status).toBe('cancelled');
+  });
+
+  it('rechaza la cancelación si una obligación ya tiene pagos aplicados', async () => {
+    const manager = createManagerMock();
+    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+    financeService.cancelPayablesByInvoiceNumber.mockResolvedValue({
+      cancelled: 1,
+      blocked: ['CXP-2026-0007'],
+    });
+
+    await expect(service.cancel(10, 1)).rejects.toThrow(
+      /CXP-2026-0007/,
+    );
+
+    // La nómina no queda cancelada.
+    const save = manager.getRepository(Payroll).save;
+    const savedStatuses = save.mock.calls.map((c) => c[0].status);
+    expect(savedStatuses).not.toContain('cancelled');
+  });
+
+  it('anula el Payment asociado al pago por banco', async () => {
+    const manager = createManagerMock();
+    const paymentFindOne = jest.fn().mockResolvedValue({
+      id: 'pay-1',
+      paymentNumber: 'PAG-NOM-1',
+      status: 'completed',
+    });
+    const paymentSave = jest.fn().mockResolvedValue(undefined);
+    manager.getRepository.mockImplementation((entity: any) =>
+      entity === Payment
+        ? { findOne: paymentFindOne, save: paymentSave }
+        : { findOne: jest.fn().mockResolvedValue({ ...paidPayroll }), save: jest.fn() },
+    );
+    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+
+    await service.cancel(10, 1);
+
+    expect(paymentFindOne).toHaveBeenCalledWith({
+      where: { companyId: 10, paymentNumber: 'PAG-NOM-1' },
+    });
+    expect(paymentSave).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'cancelled' }),
+    );
   });
 });

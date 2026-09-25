@@ -19,7 +19,7 @@ export interface MonthlyTaxableTotals {
  * Remuneraciones gravables y retenciones ya registradas en el período,
  * agrupadas por trabajador.
  *
- * El IIP (Res. 310/2020) y la CESS (Res. 41/2023) se calculan sobre el total
+ * El IIP (Res. 41/2023) y la CESS (Res. 41/2023) se calculan sobre el total
  * devengado del mes "por todos los conceptos de pago", no por cada nómina:
  * al generar una nómina se retiene solo la diferencia entre el impuesto del
  * acumulado mensual y lo ya retenido en las demás nóminas del período. Las

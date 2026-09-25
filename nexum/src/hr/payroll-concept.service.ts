@@ -576,7 +576,7 @@ export class PayrollConceptService {
       const dailyRate = vacationDailyRate(balance, contractualRate);
       const gross = round2(dailyRate * days);
       // IIP y CESS sobre el acumulado mensual de todos los conceptos de pago
-      // (Res. 310/2020 y 41/2023): se retiene la diferencia con lo ya
+      // (Res. 41/2023): se retiene la diferencia con lo ya
       // retenido en las demás nóminas del período.
       const { socialSecurity, taxWithholding } = incrementalTaxes(
         priorTotals.get(emp.id),

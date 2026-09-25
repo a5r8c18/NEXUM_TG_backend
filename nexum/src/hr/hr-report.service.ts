@@ -188,7 +188,7 @@ export class HrReportService {
    * Salario devengado (CNC): por trabajador, el devengado, la contribución
    * especial a la seguridad social, el impuesto sobre ingresos y el neto,
    * agregados sobre TODOS los conceptos de pago gravables del período —la
-   * Res. 310/2020 grava "todos los conceptos de pago; incluyendo el pago por
+   * Res. 41/2023 grava "todos los conceptos de pago; incluyendo el pago por
    * descanso retribuido"—. El subsidio y la maternidad son prestaciones
    * sociales exentas y no forman parte de esta declaración.
    */

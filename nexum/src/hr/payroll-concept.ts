@@ -48,7 +48,7 @@ export const VACATION_FUND_CONCEPTS: PayrollConcept[] = [
 
 /**
  * Conceptos cuya retribución integra la base imponible mensual del Impuesto
- * sobre Ingresos Personales (Res. 310/2020: "el total de las remuneraciones…
+ * sobre Ingresos Personales (Res. 41/2023: "el total de las remuneraciones…
  * por todos los conceptos de pago; incluyendo el pago por descanso
  * retribuido") y de la Contribución Especial a la Seguridad Social
  * (Res. 41/2023). El subsidio y la maternidad son prestaciones sociales, no
