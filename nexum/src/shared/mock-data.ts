@@ -829,7 +829,7 @@ export const mockUsers: any[] = [
     email: 'admin@nexum.com',
     password: 'admin123',
     firstName: 'Admin',
-    lastName: 'NEXUM',
+    lastName: 'MIDAS',
     role: 'admin',
     tenantId: 'tenant-multi-1',
     tenantName: 'Grupo Empresarial Demo',

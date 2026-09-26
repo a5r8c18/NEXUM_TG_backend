@@ -100,7 +100,7 @@ export class EmailService {
           ${html}
         </div>
         <p style="color: #666; font-size: 12px; margin-top: 20px;">
-          Este email fue enviado automáticamente por NEXUM ERP.
+          Este email fue enviado automáticamente por MIDAS ERP.
         </p>
       </div>
     `;
@@ -129,7 +129,7 @@ export class EmailService {
 
     return this.sendEmail({
       to: email,
-      subject: '✅ Tu solicitud NEXUM ha sido aprobada',
+      subject: '✅ Tu solicitud MIDAS ha sido aprobada',
       template,
       data: {
         signupUrl,

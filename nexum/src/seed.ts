@@ -189,7 +189,7 @@ async function seed() {
     adminUser.email = 'admin@nexum.com';
     adminUser.password = await hashPassword('1234');
     adminUser.firstName = 'Admin';
-    adminUser.lastName = 'NEXUM';
+    adminUser.lastName = 'MIDAS';
     adminUser.role = UserRole.ADMIN;
     adminUser.tenantId = 'tenant-demo';
     adminUser.tenantName = 'Empresa Demo S.A.';

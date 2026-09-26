@@ -68,7 +68,7 @@ async function bootstrap() {
 
   // Setup Swagger documentation
   const config = new DocumentBuilder()
-    .setTitle('NEXUM ERP API')
+    .setTitle('MIDAS ERP API')
     .setDescription('Sistema ERP Multi-Tenant para Teneduria Garcia')
     .setVersion('1.0.0')
     .addTag('auth', 'Autenticación y gestión de usuarios')
@@ -90,10 +90,10 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document, {
-    customSiteTitle: 'NEXUM ERP API Documentation',
+    customSiteTitle: 'MIDAS ERP API Documentation',
     customfavIcon: '/favicon.ico',
     customCss: `
-      .topbar-wrapper img { content: url('https://via.placeholder.com/40x40/4F46E5/FFFFFF?text=NEXUM'); }
+      .topbar-wrapper img { content: url('https://via.placeholder.com/40x40/4F46E5/FFFFFF?text=MIDAS'); }
       .swagger-ui .topbar { background-color: #4F46E5; }
       .swagger-ui .topbar-wrapper .link { color: white; }
     `,
@@ -112,7 +112,7 @@ async function bootstrap() {
   const port = configService.get<number>('PORT') || 3001;
   await app.listen(port);
   const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
-  console.log(`NEXUM API running on ${protocol}://localhost:${port}`);
+  console.log(`MIDAS API running on ${protocol}://localhost:${port}`);
   console.log(`Swagger docs available at ${protocol}://localhost:${port}/api/docs`);
 }
 bootstrap();

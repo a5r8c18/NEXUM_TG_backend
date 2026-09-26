@@ -44,8 +44,8 @@ export class MfaService {
 
     // Generate secret
     const secret = speakeasy.generateSecret({
-      name: `NEXUM TG (${user.email})`,
-      issuer: 'NEXUM TG',
+      name: `MIDAS (${user.email})`,
+      issuer: 'MIDAS',
       length: 32,
     });
 
