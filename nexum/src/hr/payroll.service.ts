@@ -651,6 +651,10 @@ export class PayrollService {
     payroll.processedAt = new Date().toISOString().split('T')[0];
     await manager.getRepository(Payroll).save(payroll);
 
+    // Avisos no bloqueantes de la contabilización: se devuelven al cliente
+    // para que el usuario los vea, no quedan solo en el log.
+    const processWarnings: string[] = [];
+
     // ── Contabilización de nómina procesada ──
     const totalGross = Number(payroll.totalGross);
     const totalDeductions = Number(payroll.totalDeductions);
@@ -970,12 +974,16 @@ export class PayrollService {
               provisionAccount,
             );
             if (provisionBalance < vacationCharge) {
+              const msg =
+                `El cargo a la provisión ${provisionAccount} (${vacationCharge}) ` +
+                `excede su saldo acreedor contabilizado (${round2(provisionBalance)}): ` +
+                'se pagaron vacaciones por encima de lo acumulado (adelanto). ' +
+                'La cuenta quedará en saldo deudor hasta contabilizar las ' +
+                'provisiones pendientes.';
               this.logger.warn(
-                `Nómina ${payroll.id} (${concept} ${payroll.period}): el cargo a la ` +
-                  `${provisionAccount} (${vacationCharge}) excede su saldo acreedor ` +
-                  `contabilizado (${round2(provisionBalance)}). Quedará en saldo ` +
-                  `deudor hasta contabilizar las provisiones pendientes.`,
+                `Nómina ${payroll.id} (${concept} ${payroll.period}): ${msg}`,
               );
+              processWarnings.push(msg);
             }
           }
         } else if (chargesExpense) {
@@ -1087,10 +1095,11 @@ export class PayrollService {
             }
           }
           if (maternityNonStateAmount > 0) {
-            this.logger.warn(
-              `Nómina ${payroll.id}: ${maternityNonStateAmount} CUP de maternidad ` +
-                'del sector no estatal los paga la Filial INSS; no se contabilizan.',
-            );
+            const msg =
+              `${round2(maternityNonStateAmount)} CUP de maternidad del sector ` +
+              'no estatal los paga la Filial INSS; no se contabilizan.';
+            this.logger.warn(`Nómina ${payroll.id}: ${msg}`);
+            processWarnings.push(msg);
           }
         }
 
@@ -1214,7 +1223,7 @@ export class PayrollService {
           this.logger.log(
             `Nómina ${payroll.id} (${conceptLabel}): sin movimientos contables`,
           );
-          return { payroll };
+          return { payroll, warnings: processWarnings };
         }
 
         if (lines.length > 0) {
@@ -1307,7 +1316,7 @@ export class PayrollService {
       }
     }
 
-    return { payroll };
+    return { payroll, warnings: processWarnings };
     });
 
     return result;

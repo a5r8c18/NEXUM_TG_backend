@@ -23,8 +23,18 @@ export interface VacationBalance {
 export interface VacationSubmayorRow {
   employeeName: string;
   documentId: string | null;
-  accumulatedDays: number;
-  accumulatedAmount: number;
+  /** Saldo al inicio del período (días e importe). */
+  openingDays: number;
+  openingAmount: number;
+  /** Devengado en el período: provisión del Art. 102 (salario, subsidio, maternidad). */
+  accruedDays: number;
+  accruedAmount: number;
+  /** Liquidado en el período: disfrute y liquidación por terminación (Art. 52). */
+  settledDays: number;
+  settledAmount: number;
+  /** Saldo al cierre del período: inicial + devengado − liquidado. */
+  closingDays: number;
+  closingAmount: number;
 }
 
 export interface PayrollCncRow {
@@ -139,31 +149,133 @@ export class HrReportService {
     return balances;
   }
 
-  /** Submayor de vacaciones: el saldo acumulado, con los datos del trabajador. */
+  /**
+   * Submayor de vacaciones del período: por trabajador, el saldo al inicio,
+   * lo devengado y lo liquidado en el mes, y el saldo al cierre. Es el libro
+   * auxiliar de la 492: la desagrega por persona y permite cruzarla con el
+   * mayor (el saldo final consolidado es su saldo acreedor).
+   *
+   * Un saldo final negativo es un adelanto de vacaciones: el trabajador
+   * disfrutó más de lo que tenía acumulado y la 492 quedó en débito.
+   */
   async vacationSubmayor(
     companyId: number,
     period: string,
   ): Promise<VacationSubmayorRow[]> {
-    const balances = await this.vacationBalances(companyId, period);
-    if (balances.size === 0) return [];
-
-    const employees = await this.employeeRepo.find({
-      where: { companyId, id: In([...balances.keys()]) },
+    const payrolls = await this.payrollRepo.find({
+      where: {
+        companyId,
+        period: LessThanOrEqual(period),
+        concept: In([
+          'salario',
+          'subsidio',
+          'maternidad',
+          'vacaciones',
+          'liquidacion',
+        ]),
+        status: In(['processed', 'paid']),
+      },
+      relations: ['items'],
     });
-    const empById = new Map(employees.map((e) => [e.id, e]));
 
-    return [...balances.entries()]
-      .map(([employeeId, acc]) => {
+    interface Buckets {
+      opening: VacationBalance;
+      accrued: VacationBalance;
+      settled: VacationBalance;
+    }
+    const rows = new Map<string, Buckets>();
+    const bucket = (id: string): Buckets => {
+      const b = rows.get(id) || {
+        opening: { days: 0, amount: 0 },
+        accrued: { days: 0, amount: 0 },
+        settled: { days: 0, amount: 0 },
+      };
+      rows.set(id, b);
+      return b;
+    };
+
+    // El saldo de apertura del sistema integra el saldo inicial del período.
+    const employees = await this.employeeRepo.find({ where: { companyId } });
+    for (const emp of employees) {
+      const days = Number(emp.initialVacationDays || 0);
+      const amount = Number(emp.initialVacationAmount || 0);
+      if (days !== 0 || amount !== 0) {
+        const b = bucket(emp.id);
+        b.opening.days += days;
+        b.opening.amount += amount;
+      }
+    }
+
+    for (const payroll of payrolls) {
+      const inPeriod = payroll.period === period;
+      for (const item of payroll.items || []) {
+        const b = bucket(item.employeeId);
+        if (VACATION_FUND_CONCEPTS.includes(payroll.concept)) {
+          // Disfrute y liquidación: consumen días e importe del fondo.
+          const days = Number(item.paidUnits || 0);
+          const amount = Number(item.grossSalary || 0);
+          if (inPeriod) {
+            b.settled.days += days;
+            b.settled.amount += amount;
+          } else {
+            b.opening.days -= days;
+            b.opening.amount -= amount;
+          }
+          continue;
+        }
+        // Acumulado de la línea; las nóminas anteriores a vacation_days lo
+        // derivan de los días pagados.
+        const days =
+          Number(item.vacationDays || 0) ||
+          (Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH) *
+            VACATION_ACCRUAL_RATE;
+        const amount = Number(item.vacationProvision || 0);
+        if (inPeriod) {
+          b.accrued.days += days;
+          b.accrued.amount += amount;
+        } else {
+          b.opening.days += days;
+          b.opening.amount += amount;
+        }
+      }
+    }
+
+    const empById = new Map(employees.map((e) => [e.id, e]));
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+
+    return [...rows.entries()]
+      .map(([employeeId, b]) => {
         const emp = empById.get(employeeId);
         return {
           employeeName: emp
             ? `${emp.firstName} ${emp.lastName}`.trim()
             : 'Trabajador no encontrado',
           documentId: emp?.documentId || null,
-          accumulatedDays: Math.round(acc.days * 100) / 100,
-          accumulatedAmount: Math.round(acc.amount * 100) / 100,
+          openingDays: r2(b.opening.days),
+          openingAmount: r2(b.opening.amount),
+          accruedDays: r2(b.accrued.days),
+          accruedAmount: r2(b.accrued.amount),
+          settledDays: r2(b.settled.days),
+          settledAmount: r2(b.settled.amount),
+          closingDays: r2(b.opening.days + b.accrued.days - b.settled.days),
+          closingAmount: r2(
+            b.opening.amount + b.accrued.amount - b.settled.amount,
+          ),
         };
       })
+      // Solo cuentas con saldo o movimiento: un trabajador con todo en cero
+      // no aporta al submayor.
+      .filter(
+        (r) =>
+          r.openingDays !== 0 ||
+          r.openingAmount !== 0 ||
+          r.accruedDays !== 0 ||
+          r.accruedAmount !== 0 ||
+          r.settledDays !== 0 ||
+          r.settledAmount !== 0 ||
+          r.closingDays !== 0 ||
+          r.closingAmount !== 0,
+      )
       .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
   }
 

@@ -931,8 +931,13 @@ export class PayrollConceptService {
         averageSalary: average,
         paidUnits: result.paidDays,
         appliedRate: result.rate,
-        // Los días de reposo médico acumulan vacaciones (Art. 102).
-        ...this.vacationAccrual(emp, result.paidDays),
+        // Los días de reposo médico acumulan vacaciones (Art. 102), incluidos
+        // los de carencia: aunque el subsidio no los paga, son parte de la
+        // licencia y cuentan como tiempo de servicio.
+        ...this.vacationAccrual(
+          emp,
+          result.paidDays + result.waitingDaysApplied,
+        ),
         notes:
           `Subsidio ${origin === 'occupational' ? 'profesional' : 'común'}` +
           `${hospitalized ? ' hospitalizado' : ''}: ${result.paidDays} días × ` +
@@ -988,7 +993,7 @@ export class PayrollConceptService {
     );
 
     // Plazo 4: prestación social mensual, que corre desde el vencimiento de la
-    // licencia posnatal hasta que el menor arribe a su primer año de vida.
+    // licencia posnatal hasta que el menor arribe a los quince meses de vida.
     if (data.installment === 4) {
       return this.generateMaternitySocialBenefit(companyId, data);
     }
@@ -1112,8 +1117,9 @@ export class PayrollConceptService {
    * c—, calculado sobre los doce meses anteriores al nacimiento del menor.
    *
    * Corre desde el vencimiento de la licencia posnatal hasta que el menor
-   * arribe a su primer año de vida (Art. 8) y su cuantía mensual nunca es
-   * inferior al salario mínimo vigente (Art. 9).
+   * arribe a los quince meses de vida (Art. 8, mod. DL 84/2024, GOE 36
+   * extraordinaria de 28/05/2024) y su cuantía mensual nunca es inferior al
+   * salario mínimo vigente (Art. 9).
    */
   private async generateMaternitySocialBenefit(
     companyId: number,
@@ -1129,8 +1135,8 @@ export class PayrollConceptService {
     const warnings: string[] = [];
     const claims: LeaveClaim[] = [];
     const periodDays = daysBetween(data.startDate, data.endDate);
-    // La prestación es mensual y corre hasta el primer año del menor: el mismo
-    // rango de días no puede pagarse dos veces, aunque sea en períodos
+    // La prestación es mensual y corre hasta los quince meses del menor: el
+    // mismo rango de días no puede pagarse dos veces, aunque sea en períodos
     // distintos (rangos personalizados solapados).
     const settledRows = await this.settledLeaveRows(
       companyId,
@@ -1141,7 +1147,7 @@ export class PayrollConceptService {
       const variant = leave.socialBenefitVariant;
       if (!variant) continue;
 
-      // Sin la fecha del parto no se puede fijar el primer año del menor.
+      // Sin la fecha del parto no se puede fijar el fin de la prestación.
       if (!leave.birthDate) {
         warnings.push(
           `${leave.employeeName}: sin fecha de parto no se fija el fin de la prestación social`,
@@ -1149,11 +1155,14 @@ export class PayrollConceptService {
         continue;
       }
 
-      const socialStart = new Date(leave.endDate);
-      socialStart.setDate(socialStart.getDate() + 1);
-      const socialEnd = new Date(leave.birthDate);
-      socialEnd.setFullYear(socialEnd.getFullYear() + 1);
-      socialEnd.setDate(socialEnd.getDate() - 1);
+      // Aritmética en UTC explícito: las columnas guardan fecha sin hora y
+      // operar en hora local desplazaría la ventana un día en zonas UTC±N.
+      const socialStart = new Date(`${leave.endDate}T00:00:00Z`);
+      socialStart.setUTCDate(socialStart.getUTCDate() + 1);
+      // DL 84/2024 (Art. 8): hasta que el menor arribe a los quince meses.
+      const socialEnd = new Date(`${leave.birthDate}T00:00:00Z`);
+      socialEnd.setUTCMonth(socialEnd.getUTCMonth() + 15);
+      socialEnd.setUTCDate(socialEnd.getUTCDate() - 1);
       const windowStart = socialStart.toISOString().split('T')[0];
       const windowEnd = socialEnd.toISOString().split('T')[0];
 

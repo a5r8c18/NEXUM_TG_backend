@@ -15,8 +15,8 @@ jest.setTimeout(30000);
 
 /**
  * Prestación social por maternidad (Art. 30.1 DL 56/2021, mod. DL 71/2023):
- * 60 % mensual desde el vencimiento de la posnatal hasta el primer año del
- * menor. Antes de este fix el cálculo existía pero nunca se invocaba.
+ * 60 % mensual desde el vencimiento de la posnatal hasta que el menor arribe
+ * a los quince meses de vida (DL 84/2024, GOE 36 de 28/05/2024).
  */
 describe('PayrollConceptService — prestación social (installment 4)', () => {
   let service: PayrollConceptService;
@@ -95,6 +95,10 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
   beforeEach(async () => {
     savedItems = [];
     settledRows = [];
+    // El caso del salario mínimo muta este mapa; cada test parte de los
+    // promedios base para no heredar el promedio de otro.
+    averages['emp-mother'] = 10000;
+    averages['emp-father'] = 15000;
 
     leaveRepo = {
       find: jest.fn(),
@@ -256,11 +260,11 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
   it('ignora licencias sin variante o fuera de la ventana de prestación', async () => {
     leaveRepo.find.mockResolvedValue([
       maternityLeave({ id: 'sin-variante', socialBenefitVariant: null }),
-      // El menor ya cumplió un año antes del período.
+      // El menor ya cumplió quince meses antes del período (DL 84/2024).
       maternityLeave({
         id: 'vencida',
         socialBenefitVariant: 'a',
-        birthDate: '2025-02-16',
+        birthDate: '2025-01-16',
         endDate: '2025-04-12',
       }),
     ]);
@@ -271,7 +275,7 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
     expect(savedItems).toHaveLength(0);
   });
 
-  it('exige fecha de parto para fijar el primer año del menor', async () => {
+  it('exige fecha de parto para fijar los quince meses del menor', async () => {
     leaveRepo.find.mockResolvedValue([
       maternityLeave({ socialBenefitVariant: 'a', birthDate: null }),
     ]);
@@ -345,5 +349,62 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
 
     expect(savedItems).toHaveLength(1);
     expect(savedItems[0].paidUnits).toBe(30);
+  });
+
+  // ── DL 84/2024: la ventana se extiende hasta los quince meses del menor ──
+
+  it('paga un mes del tramo 13-15: el menor nació 2026-02-16', async () => {
+    leaveRepo.find.mockResolvedValue([
+      maternityLeave({ socialBenefitVariant: 'a' }),
+    ]);
+
+    // Abril de 2027: el menor tiene ~14 meses, dentro de la ventana.
+    await service.generateMaternity(10, {
+      ...period,
+      period: '2027-04',
+      startDate: '2027-04-01',
+      endDate: '2027-04-30',
+    });
+
+    expect(savedItems).toHaveLength(1);
+    expect(savedItems[0].paidUnits).toBe(30);
+    expect(savedItems[0].netSalary).toBe(10000 * SOCIAL_BENEFIT_RATE);
+  });
+
+  it('el último mes se prorratea hasta el día que arriba a quince meses', async () => {
+    leaveRepo.find.mockResolvedValue([
+      maternityLeave({ socialBenefitVariant: 'a' }),
+    ]);
+
+    // Nació 2026-02-16: arriba a quince meses el 2027-05-16, así que la
+    // prestación cubre del 1 al 15 de mayo (15 días de 31).
+    await service.generateMaternity(10, {
+      ...period,
+      period: '2027-05',
+      startDate: '2027-05-01',
+      endDate: '2027-05-31',
+    });
+
+    expect(savedItems).toHaveLength(1);
+    expect(savedItems[0].paidUnits).toBe(15);
+    expect(savedItems[0].netSalary).toBe(
+      Math.round(((10000 * SOCIAL_BENEFIT_RATE * 15) / 31) * 100) / 100,
+    );
+  });
+
+  it('rechaza un período posterior a los quince meses del menor', async () => {
+    leaveRepo.find.mockResolvedValue([
+      maternityLeave({ socialBenefitVariant: 'a' }),
+    ]);
+
+    await expect(
+      service.generateMaternity(10, {
+        ...period,
+        period: '2027-06',
+        startDate: '2027-06-01',
+        endDate: '2027-06-30',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(savedItems).toHaveLength(0);
   });
 });

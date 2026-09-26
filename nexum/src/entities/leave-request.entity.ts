@@ -14,6 +14,11 @@ import type {
  * 'paternity' registra la ausencia del padre o abuelo que asume el cuidado del
  * menor por cesión de la madre (Art. 30.1.c y 32 DL 56/2021, mod. DL 71/2023);
  * su retribución se genera en la nómina de maternidad con él como beneficiario.
+ *
+ * 'marriage', 'funeral', 'blood_donation', 'study' y 'other' son licencias
+ * retribuidas por la entidad: el día no se descuenta del salario —la empresa
+ * lo paga como jornada normal, con todos los tributos y el devengo de
+ * vacaciones—; se distinguen por tipo solo para trazabilidad de RRHH.
  */
 export type LeaveType =
   | 'vacation'
@@ -21,6 +26,10 @@ export type LeaveType =
   | 'unpaid'
   | 'maternity'
   | 'paternity'
+  | 'marriage'
+  | 'funeral'
+  | 'blood_donation'
+  | 'study'
   | 'other';
 
 export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';

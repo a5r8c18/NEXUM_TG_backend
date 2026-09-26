@@ -173,6 +173,11 @@ export function overlapWorkingDays(
  * mod. DL 71/2023): se descuenta aquí y se retribuye en la nómina de
  * maternidad con el padre como beneficiario. Registrar ambas evita pagar dos
  * veces el mismo día.
+ *
+ * Las licencias retribuidas por la entidad —'marriage', 'funeral',
+ * 'blood_donation', 'study' y 'other'— quedan fuera a propósito: la empresa
+ * las paga como jornada normal, con todos los tributos y el devengo de
+ * vacaciones, así que no reducen el salario.
  */
 export const NON_SALARY_LEAVE_TYPES = [
   'unpaid',

@@ -18,8 +18,13 @@ const leaveTypes = [
   'unpaid',
   'maternity',
   'paternity',
+  'marriage',
+  'funeral',
+  'blood_donation',
+  'study',
   'other',
 ] as const;
+type LeaveTypeValue = (typeof leaveTypes)[number];
 const leaveStatuses = ['pending', 'approved', 'rejected', 'cancelled'] as const;
 const origins = ['common', 'occupational'] as const;
 const benefitVariants = ['a', 'b', 'c'] as const;
@@ -37,7 +42,7 @@ export class CreateLeaveDto {
   @IsOptional()
   @IsString()
   @IsIn(leaveTypes)
-  type?: 'vacation' | 'sick' | 'unpaid' | 'maternity' | 'paternity' | 'other';
+  type?: LeaveTypeValue;
 
   @IsDateString()
   startDate: string;
@@ -116,7 +121,7 @@ export class UpdateLeaveDto {
   @IsOptional()
   @IsString()
   @IsIn(leaveTypes)
-  type?: 'vacation' | 'sick' | 'unpaid' | 'maternity' | 'paternity' | 'other';
+  type?: LeaveTypeValue;
 
   @IsOptional()
   @IsDateString()

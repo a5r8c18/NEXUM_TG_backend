@@ -120,4 +120,32 @@ describe('Contrato de licencias frontend ↔ backend', () => {
       expect(NON_SALARY_LEAVE_TYPES).toContain('paternity');
     });
   });
+
+  describe('licencias retribuidas por la entidad', () => {
+    // Matrimonio, duelo familiar, donación de sangre y estudios las paga la
+    // empresa como jornada normal: no descuentan del salario, tributan y
+    // devengan vacaciones.
+    const paidByEntity = ['marriage', 'funeral', 'blood_donation', 'study'];
+
+    it('el DTO acepta los tipos explícitos', async () => {
+      for (const type of paidByEntity) {
+        const dto = await pipe.transform({ ...base, type }, asCreate);
+        expect(dto.type).toBe(type);
+      }
+    });
+
+    it('también al actualizar', async () => {
+      for (const type of paidByEntity) {
+        await expect(
+          pipe.transform({ type }, asUpdate),
+        ).resolves.toMatchObject({ type });
+      }
+    });
+
+    it('no descuentan del salario ordinario: las paga la entidad', () => {
+      for (const type of paidByEntity) {
+        expect(NON_SALARY_LEAVE_TYPES).not.toContain(type);
+      }
+    });
+  });
 });
