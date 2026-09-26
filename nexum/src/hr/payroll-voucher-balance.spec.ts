@@ -221,4 +221,62 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     expectAllBalanced();
     expect(creditsTo455()).toBe(1000);
   });
+
+  it('los tributos patronales usan solo el devengado, sin la provisión de vacaciones', async () => {
+    // Bruto 10 000 + provisión 909: la base del 14 % y del 5 % es 10 000,
+    // no 10 909. La provisión es cargo a la reserva 492, no remuneración.
+    await processPayroll(
+      payrollFixture('salario', [
+        item({
+          grossSalary: 10000,
+          netSalary: 10000,
+          vacationProvision: 909,
+          subsidyRetention: 150,
+        }),
+      ]),
+    );
+
+    const imp = voucherCalls.find((v) => v.sourceDocId === 'IMP-1');
+    expect(imp).toBeDefined();
+    const expense855 = imp!.lines.filter(
+      (l) => l.accountCode === '855' && Number(l.debit) > 0,
+    );
+    const ssExpense = expense855.find((l) =>
+      l.description.includes('Seguridad Social'),
+    );
+    const lfExpense = expense855.find((l) =>
+      l.description.includes('Fuerza de Trabajo'),
+    );
+    // 12,5 % presupuesto + 1,5 % provisión = 1 400 sobre 10 000.
+    expect(Number(ssExpense!.debit)).toBeCloseTo(1400, 2);
+    expect(Number(lfExpense!.debit)).toBeCloseTo(500, 2);
+    expectAllBalanced();
+  });
+
+  it('vacaciones y liquidación también tributan el aporte patronal y la fuerza de trabajo', async () => {
+    // La paga de vacaciones es remuneración: el 14 % y el 5 % patronales no
+    // se evaden por pagarse desde el fondo 492.
+    await processPayroll(
+      payrollFixture('vacaciones', [
+        item({ grossSalary: 3750, netSalary: 3750 }),
+      ]),
+    );
+
+    const imp = voucherCalls.find((v) => v.sourceDocId === 'IMP-1');
+    expect(imp).toBeDefined();
+    const ssExpense = imp!.lines.find(
+      (l) =>
+        l.accountCode === '855' &&
+        l.description.includes('Seguridad Social'),
+    );
+    const lfExpense = imp!.lines.find(
+      (l) =>
+        l.accountCode === '855' &&
+        l.description.includes('Fuerza de Trabajo'),
+    );
+    // 14 % = 525 (468.75 presupuesto + 56.25 provisión) y 5 % = 187.50.
+    expect(Number(ssExpense!.debit)).toBeCloseTo(525, 2);
+    expect(Number(lfExpense!.debit)).toBeCloseTo(187.5, 2);
+    expectAllBalanced();
+  });
 });

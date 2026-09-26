@@ -744,6 +744,10 @@ export class PayrollService {
         const concept = payroll.concept || 'salario';
         // Solo los conceptos pagados por la empresa cargan a cuentas de gasto.
         const chargesExpense = concept === 'salario' || concept === 'libre';
+        // Los tributos patronales gravan toda remuneración devengada, incluido
+        // el pago de vacaciones y la liquidación; subsidio y maternidad son
+        // prestaciones sociales exentas.
+        const chargesEmployerTaxes = TAXABLE_INCOME_CONCEPTS.includes(concept);
 
         const expenseByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
         const vacationByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
@@ -856,8 +860,11 @@ export class PayrollService {
           }
 
           // ── Tributos a cargo de la entidad (comprobante de impuestos) ──
-          if (chargesExpense) {
-            const retentionBase = round2(gross + vacation);
+          if (chargesEmployerTaxes) {
+            // La base son las remuneraciones devengadas. La provisión de
+            // vacaciones es un cargo a la reserva 492, no salario pagado:
+            // no integra la base del aporte patronal ni de la fuerza de trabajo.
+            const retentionBase = gross;
             // Aporte patronal 14 %: 12,5 % al presupuesto + 1,5 % a la provisión 500.
             const ssBudget = round2(retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE);
             const ssProvision = Number(item.subsidyRetention || 0) ||
@@ -1143,7 +1150,7 @@ export class PayrollService {
           {
             amount: totalSocialSecurity,
             accountCode: socialSecurityAccount || '440-0008',
-            description: 'Contribución Especial a la Seguridad Social retenida 5 %',
+            description: 'Contribución Especial a la Seguridad Social retenida',
           },
           {
             amount: totalIncomeTax,
