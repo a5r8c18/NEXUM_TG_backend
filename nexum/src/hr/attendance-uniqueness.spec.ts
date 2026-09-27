@@ -13,6 +13,7 @@ import { Employee } from '../entities/employee.entity';
 import { Department } from '../entities/department.entity';
 import { CostCenter } from '../entities/cost-center.entity';
 import { EmployeeSalaryHistory } from '../entities/employee-salary-history.entity';
+import { PayrollItem } from '../entities/payroll-item.entity';
 import { CreateAttendanceDto } from './dto/attendance.dto';
 
 jest.setTimeout(30000);
@@ -40,6 +41,7 @@ describe('HrManagementService — unicidad de asistencia', () => {
         { provide: getRepositoryToken(Attendance), useValue: attendanceRepo },
         { provide: getRepositoryToken(LeaveRequest), useValue: {} },
         { provide: getRepositoryToken(JobPosition), useValue: {} },
+        { provide: getRepositoryToken(PayrollItem), useValue: {} },
         {
           provide: HrReportService,
           useValue: { vacationBalances: jest.fn().mockResolvedValue(new Map()) },
@@ -117,6 +119,7 @@ describe('HrService — unicidad del código de trabajador', () => {
       providers: [
         HrService,
         { provide: getRepositoryToken(Employee), useValue: employeeRepo },
+        { provide: getRepositoryToken(PayrollItem), useValue: {} },
         { provide: getRepositoryToken(Department), useValue: {} },
         { provide: getRepositoryToken(CostCenter), useValue: {} },
         { provide: getRepositoryToken(JobPosition), useValue: {} },

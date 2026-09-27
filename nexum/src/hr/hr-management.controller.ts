@@ -24,6 +24,13 @@ import {
   SetLeaveStatusDto,
 } from './dto/leave.dto';
 
+/**
+ * Contratar, aprobar licencias y dar de baja registros son actos de
+ * administración. Registrar la asistencia diaria y solicitar una licencia, en
+ * cambio, son operaciones corrientes abiertas a cualquier usuario autenticado.
+ */
+const HR_ADMIN_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN] as const;
+
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('hr/contracts')
@@ -40,11 +47,13 @@ export class ContractsController {
     return this.service.findAllContracts(getCompanyId(req), { employeeId, status, positionId });
   }
 
+  @Roles(...HR_ADMIN_ROLES)
   @Post()
   create(@Req() req: Request, @Body() body: CreateContractDto) {
     return this.service.createContract(getCompanyId(req), body);
   }
 
+  @Roles(...HR_ADMIN_ROLES)
   @Put(':id')
   update(
     @Req() req: Request,
@@ -54,6 +63,7 @@ export class ContractsController {
     return this.service.updateContract(getCompanyId(req), id, body);
   }
 
+  @Roles(...HR_ADMIN_ROLES)
   @Delete(':id')
   remove(@Req() req: Request, @Param('id') id: string) {
     return this.service.deleteContract(getCompanyId(req), id);
@@ -138,6 +148,7 @@ export class LeavesController {
     return this.service.updateLeave(getCompanyId(req), id, body);
   }
 
+  @Roles(...HR_ADMIN_ROLES)
   @Put(':id/status')
   setStatus(
     @Req() req: Request,
@@ -153,6 +164,7 @@ export class LeavesController {
     );
   }
 
+  @Roles(...HR_ADMIN_ROLES)
   @Delete(':id')
   remove(@Req() req: Request, @Param('id') id: string) {
     return this.service.deleteLeave(getCompanyId(req), id);

@@ -14,8 +14,10 @@ import { JobPosition } from '../entities/job-position.entity';
  */
 describe('HrReportService.vacationSubmayor()', () => {
   let service: HrReportService;
-  let payrollRepo: { find: jest.Mock };
+  let payrollRepo: { createQueryBuilder: jest.Mock };
   let employeeRepo: { find: jest.Mock };
+  /** Condiciones y parámetros que el servicio aplicó al último query builder. */
+  let lastQbCalls: { clause: string; params: any }[];
 
   const ana = {
     id: 'e1',
@@ -49,25 +51,56 @@ describe('HrReportService.vacationSubmayor()', () => {
     return { id: 1, companyId: 10, concept, period, status, items } as Payroll;
   }
 
-  /** El mock respeta los filtros del where como lo haría la base de datos. */
+  /**
+   * El mock reproduce el createQueryBuilder del servicio: registra las
+   * condiciones, aplana las nóminas en filas crudas y les aplica los mismos
+   * filtros que la base de datos.
+   */
   function withPayrolls(list: Payroll[]) {
-    payrollRepo.find.mockImplementation(({ where }: any) => {
-      const maxPeriod = where.period.value as string;
-      const statuses = where.status.value as string[];
-      const concepts = where.concept.value as string[];
-      return Promise.resolve(
-        list.filter(
-          (p) =>
-            p.period <= maxPeriod &&
-            statuses.includes(p.status) &&
-            concepts.includes(p.concept),
-        ),
-      );
+    payrollRepo.createQueryBuilder.mockImplementation(() => {
+      const calls: { clause: string; params: any }[] = [];
+      const qb: any = {
+        innerJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn((clause: string, params: any) => {
+          calls.push({ clause, params });
+          return qb;
+        }),
+        andWhere: jest.fn((clause: string, params: any) => {
+          calls.push({ clause, params });
+          return qb;
+        }),
+        getRawMany: jest.fn(() => {
+          lastQbCalls = calls;
+          const params = Object.assign({}, ...calls.map((c) => c.params));
+          const rows: any[] = [];
+          for (const p of list) {
+            if (p.period > params.period) continue;
+            if (!params.statuses.includes(p.status)) continue;
+            if (!params.concepts.includes(p.concept)) continue;
+            for (const i of p.items) {
+              rows.push({
+                concept: p.concept,
+                period: p.period,
+                employeeId: i.employeeId,
+                paidUnits: i.paidUnits,
+                grossSalary: i.grossSalary,
+                vacationDays: i.vacationDays,
+                vacationProvision: i.vacationProvision,
+              });
+            }
+          }
+          return Promise.resolve(rows);
+        }),
+      };
+      return qb;
     });
   }
 
   beforeEach(async () => {
-    payrollRepo = { find: jest.fn().mockResolvedValue([]) };
+    payrollRepo = { createQueryBuilder: jest.fn() };
+    withPayrolls([]);
     employeeRepo = { find: jest.fn().mockResolvedValue([ana, luis]) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -188,9 +221,12 @@ describe('HrReportService.vacationSubmayor()', () => {
   it('la consulta solo toma nóminas contabilizadas (procesadas o pagadas)', async () => {
     await service.vacationSubmayor(10, '2026-07');
 
-    const where = payrollRepo.find.mock.calls[0][0].where;
-    expect(where.status.value).toEqual(['processed', 'paid']);
-    expect(where.concept.value).toEqual(
+    const statuses = lastQbCalls.find((c) => c.params?.statuses)?.params
+      .statuses;
+    const concepts = lastQbCalls.find((c) => c.params?.concepts)?.params
+      .concepts;
+    expect(statuses).toEqual(['processed', 'paid']);
+    expect(concepts).toEqual(
       expect.arrayContaining(['salario', 'vacaciones', 'liquidacion']),
     );
   });

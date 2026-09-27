@@ -6,8 +6,14 @@ import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
 
+/**
+ * Todos estos reportes exponen remuneraciones nominales —submayor, salario
+ * devengado, fichero de acreditación con cuentas bancarias y plantilla con
+ * tarifas—, así que quedan reservados a administración en pleno, no al rol de
+ * usuario corriente.
+ */
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
+@Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
 @Controller('hr/reports')
 export class HrReportController {
   constructor(private readonly service: HrReportService) {}

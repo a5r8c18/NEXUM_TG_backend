@@ -20,6 +20,14 @@ import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 import { CreateDepartmentDto, UpdateDepartmentDto } from './dto/department.dto';
 import { CreatePositionDto, UpdatePositionDto } from './dto/position.dto';
 
+/**
+ * El rol de clase habilita la consulta del expediente laboral a cualquier
+ * usuario autenticado, pero las altas, bajas y modificaciones —y el historial
+ * salarial, que es información sensible— quedan reservadas a administración
+ * mediante `@Roles` a nivel de método, que sobreescribe el de la clase.
+ */
+const HR_WRITE_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN] as const;
+
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('hr')
@@ -59,18 +67,21 @@ export class HrController {
     return this.hrService.findOneEmployee(companyId, id);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Get('employees/:id/salary-history')
   getSalaryHistory(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
     return this.hrService.getSalaryHistory(companyId, id);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Post('employees')
   createEmployee(@Req() req: Request, @Body() body: CreateEmployeeDto) {
     const companyId = getCompanyId(req);
     return this.hrService.createEmployee(companyId, body);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Put('employees/:id')
   updateEmployee(
     @Req() req: Request,
@@ -81,6 +92,7 @@ export class HrController {
     return this.hrService.updateEmployee(companyId, id, body);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Delete('employees/:id')
   deleteEmployee(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
@@ -95,12 +107,14 @@ export class HrController {
     return this.hrService.findAllDepartments(companyId);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Post('departments')
   createDepartment(@Req() req: Request, @Body() body: CreateDepartmentDto) {
     const companyId = getCompanyId(req);
     return this.hrService.createDepartment(companyId, body);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Put('departments/:id')
   updateDepartment(
     @Req() req: Request,
@@ -111,6 +125,7 @@ export class HrController {
     return this.hrService.updateDepartment(companyId, id, body);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Delete('departments/:id')
   deleteDepartment(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
@@ -127,12 +142,14 @@ export class HrController {
     });
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Post('positions')
   createPosition(@Req() req: Request, @Body() body: CreatePositionDto) {
     const companyId = getCompanyId(req);
     return this.hrService.createPosition(companyId, body);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Put('positions/:id')
   updatePosition(
     @Req() req: Request,
@@ -143,6 +160,7 @@ export class HrController {
     return this.hrService.updatePosition(companyId, id, body);
   }
 
+  @Roles(...HR_WRITE_ROLES)
   @Delete('positions/:id')
   deletePosition(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);

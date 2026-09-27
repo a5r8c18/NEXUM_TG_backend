@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, LessThanOrEqual, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Payroll } from '../entities/payroll.entity';
 import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
@@ -62,6 +62,26 @@ export interface StaffingRow {
   baseSalary: number;
 }
 
+/** Movimiento del fondo de vacaciones: solo las columnas que el cálculo usa. */
+interface VacationMovement {
+  concept: PayrollConcept;
+  period: string;
+  employeeId: string;
+  paidUnits: number;
+  grossSalary: number;
+  vacationDays: number;
+  vacationProvision: number;
+}
+
+/** Conceptos que acumulan o consumen el fondo de vacaciones (cuenta 492). */
+const VACATION_MOVEMENT_CONCEPTS: PayrollConcept[] = [
+  'salario',
+  'subsidio',
+  'maternidad',
+  'vacaciones',
+  'liquidacion',
+];
+
 @Injectable()
 export class HrReportService {
   constructor(
@@ -86,28 +106,59 @@ export class HrReportService {
    * Se deriva de las nóminas en lugar de guardarse: si una se anula o se
    * edita, el saldo se corrige solo.
    */
+  /**
+   * Movimientos del fondo de vacaciones hasta el período, por proyección de
+   * columnas en vez de `relations: ['items']`.
+   *
+   * El saldo depende de todo el histórico de nóminas, así que hidratar cada
+   * nómina con todas sus líneas completas crecía sin techo: una empresa con
+   * cinco años de operación cargaba en memoria decenas de miles de entidades
+   * para calcular un saldo que solo necesita cuatro columnas por línea.
+   *
+   * Acumulan el salario y los conceptos que la ley cuenta como días laborados
+   * (reposo médico y maternidad); las vacaciones y la liquidación del Art. 52
+   * consumen.
+   */
+  private async vacationMovements(
+    companyId: number,
+    period: string,
+  ): Promise<VacationMovement[]> {
+    const rows = await this.payrollRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.items', 'i')
+      .select('p.concept', 'concept')
+      .addSelect('p.period', 'period')
+      .addSelect('i.employeeId', 'employeeId')
+      .addSelect('i.paidUnits', 'paidUnits')
+      .addSelect('i.grossSalary', 'grossSalary')
+      .addSelect('i.vacationDays', 'vacationDays')
+      .addSelect('i.vacationProvision', 'vacationProvision')
+      .where('p.companyId = :companyId', { companyId })
+      .andWhere('p.period <= :period', { period })
+      .andWhere('p.concept IN (:...concepts)', {
+        concepts: VACATION_MOVEMENT_CONCEPTS,
+      })
+      .andWhere('p.status IN (:...statuses)', {
+        statuses: ['processed', 'paid'],
+      })
+      .getRawMany<Record<string, string | null>>();
+
+    return rows.map((r) => ({
+      concept: r.concept as PayrollConcept,
+      period: String(r.period),
+      employeeId: String(r.employeeId),
+      paidUnits: Number(r.paidUnits || 0),
+      grossSalary: Number(r.grossSalary || 0),
+      vacationDays: Number(r.vacationDays || 0),
+      vacationProvision: Number(r.vacationProvision || 0),
+    }));
+  }
+
   async vacationBalances(
     companyId: number,
     period: string,
   ): Promise<Map<string, VacationBalance>> {
-    const payrolls = await this.payrollRepo.find({
-      where: {
-        companyId,
-        period: LessThanOrEqual(period),
-        // Acumulan el salario y los conceptos que la ley cuenta como días
-        // laborados (reposo médico y maternidad); las vacaciones y la
-        // liquidación del Art. 52 consumen.
-        concept: In([
-          'salario',
-          'subsidio',
-          'maternidad',
-          'vacaciones',
-          'liquidacion',
-        ]),
-        status: In(['processed', 'paid']),
-      },
-      relations: ['items'],
-    });
+    const movements = await this.vacationMovements(companyId, period);
 
     const balances = new Map<string, VacationBalance>();
     const add = (id: string, days: number, amount: number) => {
@@ -126,25 +177,18 @@ export class HrReportService {
       if (days > 0 || amount > 0) add(emp.id, days, amount);
     }
 
-    for (const payroll of payrolls) {
-      for (const item of payroll.items || []) {
-        if (VACATION_FUND_CONCEPTS.includes(payroll.concept)) {
-          // Vacaciones disfrutadas y liquidación: consumen días e importe.
-          add(
-            item.employeeId,
-            -Number(item.paidUnits || 0),
-            -Number(item.grossSalary || 0),
-          );
-          continue;
-        }
-        // Días e importe acumulados por la línea. Las nóminas anteriores a la
-        // columna vacation_days no la traen: se deriva de los días pagados.
-        const days =
-          Number(item.vacationDays || 0) ||
-          (Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH) *
-            VACATION_ACCRUAL_RATE;
-        add(item.employeeId, days, Number(item.vacationProvision || 0));
+    for (const mov of movements) {
+      if (VACATION_FUND_CONCEPTS.includes(mov.concept)) {
+        // Vacaciones disfrutadas y liquidación: consumen días e importe.
+        add(mov.employeeId, -mov.paidUnits, -mov.grossSalary);
+        continue;
       }
+      // Días e importe acumulados por la línea. Las nóminas anteriores a la
+      // columna vacation_days no la traen: se deriva de los días pagados.
+      const days =
+        mov.vacationDays ||
+        (mov.paidUnits || WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
+      add(mov.employeeId, days, mov.vacationProvision);
     }
     return balances;
   }
@@ -162,21 +206,7 @@ export class HrReportService {
     companyId: number,
     period: string,
   ): Promise<VacationSubmayorRow[]> {
-    const payrolls = await this.payrollRepo.find({
-      where: {
-        companyId,
-        period: LessThanOrEqual(period),
-        concept: In([
-          'salario',
-          'subsidio',
-          'maternidad',
-          'vacaciones',
-          'liquidacion',
-        ]),
-        status: In(['processed', 'paid']),
-      },
-      relations: ['items'],
-    });
+    const movements = await this.vacationMovements(companyId, period);
 
     interface Buckets {
       opening: VacationBalance;
@@ -206,37 +236,31 @@ export class HrReportService {
       }
     }
 
-    for (const payroll of payrolls) {
-      const inPeriod = payroll.period === period;
-      for (const item of payroll.items || []) {
-        const b = bucket(item.employeeId);
-        if (VACATION_FUND_CONCEPTS.includes(payroll.concept)) {
-          // Disfrute y liquidación: consumen días e importe del fondo.
-          const days = Number(item.paidUnits || 0);
-          const amount = Number(item.grossSalary || 0);
-          if (inPeriod) {
-            b.settled.days += days;
-            b.settled.amount += amount;
-          } else {
-            b.opening.days -= days;
-            b.opening.amount -= amount;
-          }
-          continue;
-        }
-        // Acumulado de la línea; las nóminas anteriores a vacation_days lo
-        // derivan de los días pagados.
-        const days =
-          Number(item.vacationDays || 0) ||
-          (Number(item.paidUnits || 0) || WORKING_DAYS_PER_MONTH) *
-            VACATION_ACCRUAL_RATE;
-        const amount = Number(item.vacationProvision || 0);
+    for (const mov of movements) {
+      const inPeriod = mov.period === period;
+      const b = bucket(mov.employeeId);
+      if (VACATION_FUND_CONCEPTS.includes(mov.concept)) {
+        // Disfrute y liquidación: consumen días e importe del fondo.
         if (inPeriod) {
-          b.accrued.days += days;
-          b.accrued.amount += amount;
+          b.settled.days += mov.paidUnits;
+          b.settled.amount += mov.grossSalary;
         } else {
-          b.opening.days += days;
-          b.opening.amount += amount;
+          b.opening.days -= mov.paidUnits;
+          b.opening.amount -= mov.grossSalary;
         }
+        continue;
+      }
+      // Acumulado de la línea; las nóminas anteriores a vacation_days lo
+      // derivan de los días pagados.
+      const days =
+        mov.vacationDays ||
+        (mov.paidUnits || WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
+      if (inPeriod) {
+        b.accrued.days += days;
+        b.accrued.amount += mov.vacationProvision;
+      } else {
+        b.opening.days += days;
+        b.opening.amount += mov.vacationProvision;
       }
     }
 

@@ -8,7 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { Payroll, PayrollItem } from '../entities';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
@@ -269,22 +269,50 @@ export class PayrollService {
       data.period,
     );
 
+    const employeeIds = employees.map((e) => e.id);
+
+    // ── Asistencia y licencias de toda la plantilla en dos consultas ──
+    // Consultarlas por trabajador dentro del bucle costaba dos accesos a la
+    // base por persona: con 300 trabajadores eran 600 consultas para una sola
+    // nómina. Las horas extra se agregan en el motor y las licencias se
+    // agrupan en memoria por trabajador.
+    const overtimeRows = await this.attendanceRepo
+      .createQueryBuilder('a')
+      .select('a.employeeId', 'employeeId')
+      .addSelect('COALESCE(SUM(a.overtimeHours), 0)', 'hours')
+      .where('a.companyId = :companyId', { companyId })
+      .andWhere('a.employeeId IN (:...employeeIds)', { employeeIds })
+      .andWhere('a.date BETWEEN :startDate AND :endDate', {
+        startDate: data.startDate,
+        endDate: data.endDate,
+      })
+      .groupBy('a.employeeId')
+      .getRawMany<{ employeeId: string; hours: string }>();
+    const overtimeByEmployee = new Map<string, number>(
+      overtimeRows.map((r) => [r.employeeId, Number(r.hours) || 0]),
+    );
+
+    const nonSalaryLeaves = await this.leaveRepo.find({
+      where: {
+        companyId,
+        employeeId: In(employeeIds),
+        type: In([...NON_SALARY_LEAVE_TYPES]),
+        status: 'approved',
+      },
+    });
+    const leavesByEmployee = new Map<string, LeaveRequest[]>();
+    for (const leave of nonSalaryLeaves) {
+      const list = leavesByEmployee.get(leave.employeeId) || [];
+      list.push(leave);
+      leavesByEmployee.set(leave.employeeId, list);
+    }
+
     const items: any[] = [];
     for (const emp of employees) {
       const baseSalary = Number(emp.salary) || 0;
 
       // ── Horas extra reales del período (desde Asistencia) ──
-      const attendances = await this.attendanceRepo.find({
-        where: {
-          companyId,
-          employeeId: emp.id,
-          date: Between(data.startDate, data.endDate),
-        },
-      });
-      const overtimeHours = attendances.reduce(
-        (sum, a) => sum + Number(a.overtimeHours || 0),
-        0,
-      );
+      const overtimeHours = overtimeByEmployee.get(emp.id) || 0;
       const hourlyRate = baseSalary / MONTHLY_LEGAL_HOURS;
       // El recargo por hora extra se pacta en convenio colectivo y se guarda
       // en la ficha del trabajador (1 = tarifa base sin recargo).
@@ -297,16 +325,8 @@ export class PayrollService {
       // padre por cesión ('paternity'), que se retribuye como beneficiario en
       // la nómina de maternidad (Art. 30.1.c DL 56/2021): de lo contrario el
       // trabajador cobraría dos veces el mismo día.
-      const nonSalaryLeaves = await this.leaveRepo.find({
-        where: {
-          companyId,
-          employeeId: emp.id,
-          type: In([...NON_SALARY_LEAVE_TYPES]),
-          status: 'approved',
-        },
-      });
       const unpaidDays = nonWorkedWorkingDays(
-        nonSalaryLeaves,
+        leavesByEmployee.get(emp.id) || [],
         data.startDate,
         data.endDate,
       );
@@ -396,9 +416,10 @@ export class PayrollService {
       processedBy: data.processedBy || 'Sistema',
     });
 
-    for (const itemData of items) {
-      await this.payrollItemRepo.save({ ...itemData, payrollId: payroll.id });
-    }
+    // Una sola inserción por lote en vez de una por trabajador.
+    await this.payrollItemRepo.save(
+      items.map((itemData) => ({ ...itemData, payrollId: payroll.id })),
+    );
 
     return this.findOne(companyId, payroll.id);
   }

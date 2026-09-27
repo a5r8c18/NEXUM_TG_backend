@@ -31,6 +31,14 @@ import {
   UpdatePayrollItemsDto,
 } from './dto/create-payroll.dto';
 
+/**
+ * Consultar nóminas y emitir el SC-4-06 está abierto a cualquier usuario
+ * autenticado, pero generarlas, editarlas, contabilizarlas, pagarlas o
+ * anularlas son actos de administración: mueven el mayor y el banco. El
+ * `@Roles` de método sobreescribe el de la clase.
+ */
+const PAYROLL_ADMIN_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN] as const;
+
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('payroll')
@@ -96,30 +104,35 @@ export class PayrollController {
     return this.payrollService.findOne(companyId, parseInt(id));
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Post()
   create(@Req() req: Request, @Body() body: CreatePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollService.create(companyId, body);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Post('generate')
   generate(@Req() req: Request, @Body() body: GeneratePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollService.generateFromEmployees(companyId, body);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Post('generate/vacaciones')
   generateVacations(@Req() req: Request, @Body() body: GeneratePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateVacations(companyId, body);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Post('generate/subsidio')
   generateSubsidy(@Req() req: Request, @Body() body: GeneratePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateSubsidy(companyId, body);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Post('generate/liquidacion')
   generateVacationSettlement(
     @Req() req: Request,
@@ -129,18 +142,21 @@ export class PayrollController {
     return this.payrollConceptService.generateVacationSettlement(companyId, body);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Post('generate/maternidad')
   generateMaternity(@Req() req: Request, @Body() body: GenerateMaternityDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateMaternity(companyId, body);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Post('generate/libre')
   generateFree(@Req() req: Request, @Body() body: GenerateFreeDto) {
     const companyId = getCompanyId(req);
     return this.payrollConceptService.generateFree(companyId, body);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Put(':id/items')
   updateItems(
     @Req() req: Request,
@@ -151,6 +167,7 @@ export class PayrollController {
     return this.payrollService.updateItems(companyId, parseInt(id), body.items);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Put(':id/process')
   process(
     @Req() req: Request,
@@ -161,6 +178,7 @@ export class PayrollController {
     return this.payrollService.process(companyId, parseInt(id), body.processedBy);
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Put(':id/pay')
   markAsPaid(
     @Req() req: Request,
@@ -175,6 +193,7 @@ export class PayrollController {
     );
   }
 
+  @Roles(...PAYROLL_ADMIN_ROLES)
   @Put(':id/cancel')
   cancel(
     @Req() req: Request,

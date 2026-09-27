@@ -5,6 +5,7 @@ import { EmployeeContract } from '../entities/employee-contract.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { JobPosition } from '../entities/job-position.entity';
+import { PayrollItem } from '../entities/payroll-item.entity';
 import { HrReportService } from './hr-report.service';
 import { overlapWorkingDays, round2 } from './payroll-calculations';
 
@@ -36,6 +37,8 @@ export class HrManagementService {
     private readonly leaveRepo: Repository<LeaveRequest>,
     @InjectRepository(JobPosition)
     private readonly positionRepo: Repository<JobPosition>,
+    @InjectRepository(PayrollItem)
+    private readonly payrollItemRepo: Repository<PayrollItem>,
     private readonly hrReportService: HrReportService,
   ) {}
 
@@ -297,9 +300,26 @@ export class HrManagementService {
     return this.leaveRepo.save(leave);
   }
 
+  /**
+   * Una licencia ya retribuida no puede borrarse: las líneas de nómina que la
+   * liquidaron la referencian por `leave_request_id` y son la única fuente que
+   * reconstruye los sub-rangos ya pagados. Sin ella, la misma licencia podría
+   * volver a liquidarse en otro período. Para rehacerla hay que anular primero
+   * la nómina, que restituye las unidades liquidadas.
+   */
   async deleteLeave(companyId: number, id: string) {
     const leave = await this.leaveRepo.findOneBy({ id, companyId });
     if (!leave) throw new NotFoundException(`Solicitud #${id} no encontrada`);
+    const settledLines = await this.payrollItemRepo.count({
+      where: { companyId, leaveRequestId: id },
+    });
+    if (settledLines > 0 || Number(leave.settledUnits || 0) > 0) {
+      throw new ConflictException(
+        `La licencia de ${leave.employeeName} ya fue retribuida en nómina y no ` +
+          'puede eliminarse: se perdería el control de doble pago. Anule la ' +
+          'nómina que la liquidó si necesita rehacerla.',
+      );
+    }
     await this.leaveRepo.remove(leave);
     return { message: 'Solicitud eliminada' };
   }

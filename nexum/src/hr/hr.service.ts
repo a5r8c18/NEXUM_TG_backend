@@ -11,12 +11,15 @@ import { Department } from '../entities/department.entity';
 import { CostCenter } from '../entities/cost-center.entity';
 import { JobPosition } from '../entities/job-position.entity';
 import { EmployeeSalaryHistory } from '../entities/employee-salary-history.entity';
+import { PayrollItem } from '../entities/payroll-item.entity';
 
 @Injectable()
 export class HrService {
   constructor(
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
+    @InjectRepository(PayrollItem)
+    private readonly payrollItemRepo: Repository<PayrollItem>,
     @InjectRepository(Department)
     private readonly departmentRepo: Repository<Department>,
     @InjectRepository(CostCenter)
@@ -145,8 +148,26 @@ export class HrService {
     });
   }
 
+  /**
+   * Borrar al trabajador es físico y sin retorno, así que solo se admite
+   * mientras no tenga historial de nómina. Con nóminas emitidas, eliminarlo
+   * haría desaparecer su saldo de apertura del submayor de vacaciones —que se
+   * deriva de la ficha— mientras sus líneas siguen existiendo, descuadrando el
+   * auxiliar contra la cuenta 492. La baja correcta es marcarlo inactivo, que
+   * lo excluye de las nóminas futuras y preserva el histórico.
+   */
   async deleteEmployee(companyId: number, id: string) {
     const emp = await this.findOneEmployee(companyId, id);
+    const payrollLines = await this.payrollItemRepo.count({
+      where: { companyId, employeeId: id },
+    });
+    if (payrollLines > 0) {
+      throw new ConflictException(
+        `${emp.firstName} ${emp.lastName} tiene ${payrollLines} línea(s) de ` +
+          'nómina registradas y no puede eliminarse sin descuadrar el ' +
+          'submayor de vacaciones. Márquelo como inactivo para darlo de baja.',
+      );
+    }
     await this.employeeRepo.remove(emp);
     return { message: 'Empleado eliminado correctamente' };
   }

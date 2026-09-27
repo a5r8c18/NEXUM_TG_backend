@@ -7,6 +7,7 @@ import { EmployeeContract } from '../entities/employee-contract.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { JobPosition } from '../entities/job-position.entity';
+import { PayrollItem } from '../entities/payroll-item.entity';
 
 /**
  * Una licencia de vacaciones solo puede aprobarse si el trabajador tiene
@@ -53,6 +54,7 @@ describe('HrManagementService.setLeaveStatus() — saldo de vacaciones', () => {
         { provide: getRepositoryToken(Attendance), useValue: {} },
         { provide: getRepositoryToken(LeaveRequest), useValue: leaveRepo },
         { provide: getRepositoryToken(JobPosition), useValue: {} },
+        { provide: getRepositoryToken(PayrollItem), useValue: {} },
         { provide: HrReportService, useValue: { vacationBalances } },
       ],
     }).compile();
