@@ -149,6 +149,7 @@ export class LeavesController {
       id,
       body.status,
       body.approvedBy,
+      body.advanceAuthorized,
     );
   }
 

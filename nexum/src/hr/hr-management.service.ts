@@ -5,6 +5,8 @@ import { EmployeeContract } from '../entities/employee-contract.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { JobPosition } from '../entities/job-position.entity';
+import { HrReportService } from './hr-report.service';
+import { overlapWorkingDays, round2 } from './payroll-calculations';
 
 function diffDaysInclusive(start: string, end: string): number {
   const s = new Date(start);
@@ -34,6 +36,7 @@ export class HrManagementService {
     private readonly leaveRepo: Repository<LeaveRequest>,
     @InjectRepository(JobPosition)
     private readonly positionRepo: Repository<JobPosition>,
+    private readonly hrReportService: HrReportService,
   ) {}
 
   // ── Contratos ──
@@ -230,14 +233,62 @@ export class HrManagementService {
     return this.leaveRepo.save(leave);
   }
 
+  /**
+   * Comprueba que el trabajador tenga acumulado en el submayor lo que va a
+   * disfrutar (Art. 102 Ley 116). No exige el año completo: puede salir por
+   * cualquiera de los períodos del Art. 105 —30, 20, 15, 10 o 7 días— siempre
+   * que los tenga devengados.
+   *
+   * La comparación es en días laborables porque es la unidad en que se devenga
+   * la provisión y en que la nómina de vacaciones la consume.
+   */
+  private async assertVacationBalance(
+    companyId: number,
+    leave: LeaveRequest,
+    advanceAuthorized: boolean,
+  ): Promise<void> {
+    const requestedDays = overlapWorkingDays(
+      leave.startDate,
+      leave.endDate,
+      leave.startDate,
+      leave.endDate,
+    );
+    if (requestedDays <= 0) return;
+
+    // Saldo al mes en que comienza el disfrute: incluye lo devengado por las
+    // nóminas contabilizadas hasta ese período.
+    const balances = await this.hrReportService.vacationBalances(
+      companyId,
+      leave.startDate.slice(0, 7),
+    );
+    const accruedDays = round2(balances.get(leave.employeeId)?.days || 0);
+    if (requestedDays <= accruedDays) return;
+
+    if (advanceAuthorized) return;
+    throw new ConflictException(
+      `${leave.employeeName} no tiene vacaciones suficientes acumuladas: ` +
+        `solicita ${requestedDays} día(s) laborable(s) y tiene ${accruedDays} ` +
+        'devengado(s). Puede aprobarla como adelanto de vacaciones si procede.',
+    );
+  }
+
   async setLeaveStatus(
     companyId: number,
     id: string,
     status: 'approved' | 'rejected' | 'cancelled',
     approvedBy?: string,
+    advanceAuthorized?: boolean,
   ) {
     const leave = await this.leaveRepo.findOneBy({ id, companyId });
     if (!leave) throw new NotFoundException(`Solicitud #${id} no encontrada`);
+    if (status === 'approved' && leave.type === 'vacation') {
+      await this.assertVacationBalance(
+        companyId,
+        leave,
+        !!advanceAuthorized,
+      );
+      leave.advanceAuthorized = !!advanceAuthorized;
+    }
     leave.status = status;
     if (status === 'approved') {
       leave.approvedBy = approvedBy || 'Sistema';

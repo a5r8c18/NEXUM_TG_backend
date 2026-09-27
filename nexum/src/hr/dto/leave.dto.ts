@@ -197,4 +197,13 @@ export class SetLeaveStatusDto {
   @IsString()
   @MaxLength(150)
   approvedBy?: string;
+
+  /**
+   * Autoriza el adelanto de vacaciones: permite aprobar aunque los días
+   * solicitados excedan el saldo acumulado en el submayor.
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  advanceAuthorized?: boolean;
 }

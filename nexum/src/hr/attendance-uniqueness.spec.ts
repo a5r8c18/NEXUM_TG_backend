@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException, ValidationPipe } from '@nestjs/
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HrManagementService } from './hr-management.service';
+import { HrReportService } from './hr-report.service';
 import { HrService } from './hr.service';
 import { EmployeeContract } from '../entities/employee-contract.entity';
 import { Attendance } from '../entities/attendance.entity';
@@ -39,6 +40,10 @@ describe('HrManagementService — unicidad de asistencia', () => {
         { provide: getRepositoryToken(Attendance), useValue: attendanceRepo },
         { provide: getRepositoryToken(LeaveRequest), useValue: {} },
         { provide: getRepositoryToken(JobPosition), useValue: {} },
+        {
+          provide: HrReportService,
+          useValue: { vacationBalances: jest.fn().mockResolvedValue(new Map()) },
+        },
       ],
     }).compile();
 

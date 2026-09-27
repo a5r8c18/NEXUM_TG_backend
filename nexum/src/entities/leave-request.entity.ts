@@ -142,6 +142,15 @@ export class LeaveRequest {
   @Column({ name: 'settled_amount', type: 'decimal', precision: 15, scale: 2, default: 0 })
   settledAmount: number;
 
+  /**
+   * Adelanto de vacaciones autorizado expresamente al aprobar: el trabajador
+   * disfruta más días de los que tiene acumulados en el submayor (Art. 102).
+   * Sin esta marca la aprobación se rechaza, porque el disfrute consumiría una
+   * provisión que aún no se devengó y dejaría la 492 en débito.
+   */
+  @Column({ name: 'advance_authorized', type: 'boolean', default: false })
+  advanceAuthorized: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 
