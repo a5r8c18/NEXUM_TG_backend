@@ -192,6 +192,34 @@ export class GenerateSettlementDto extends GeneratePayrollDto {
   employeeId: string;
 }
 
+export class ManualPayrollItemDto {
+  @IsString()
+  @IsUUID()
+  employeeId: string;
+
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  days: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  grossSalary?: number;
+}
+
+export class GenerateManualDto extends GeneratePayrollDto {
+  @IsString()
+  @MaxLength(20)
+  concept: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ManualPayrollItemDto)
+  items: ManualPayrollItemDto[];
+}
+
 export class UpdatePayrollItemsDto {
   @IsArray()
   @ValidateNested({ each: true })

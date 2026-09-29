@@ -51,13 +51,36 @@ export class HrService {
     }
 
     qb.orderBy('e.lastName', 'ASC');
-    return qb.getMany();
+    const employees = await qb.getMany();
+    const positions = await this.positionRepo.find({ where: { companyId } });
+    const posMap = new Map(positions.map((p) => [p.id, p]));
+    return employees.map((e) => this.enrichSalaryRate(e, posMap));
   }
 
   async findOneEmployee(companyId: number, id: string) {
     const emp = await this.employeeRepo.findOneBy({ id, companyId });
     if (!emp) throw new NotFoundException(`Empleado #${id} no encontrado`);
-    return emp;
+    const positions = await this.positionRepo.find({ where: { companyId } });
+    return this.enrichSalaryRate(emp, new Map(positions.map((p) => [p.id, p])));
+  }
+
+  private enrichSalaryRate(
+    emp: Employee,
+    posMap: Map<string, JobPosition>,
+  ): Employee & { salaryRate: number; salaryUnit: string } {
+    const result = emp as Employee & { salaryRate: number; salaryUnit: string };
+    const position = emp.positionId ? posMap.get(emp.positionId) : undefined;
+    if (position && Number(position.timeBank) > 0) {
+      result.salaryRate = Number(
+        (Number(position.baseSalary || 0) / Number(position.timeBank)).toFixed(4),
+      );
+      result.salaryUnit = position.timeUnit === 'hours' ? 'hora' : 'día';
+    } else {
+      // Fallback tarifa diaria contractual.
+      result.salaryRate = Number((Number(emp.salary || 0) / 24).toFixed(4));
+      result.salaryUnit = 'día';
+    }
+    return result;
   }
 
   /**

@@ -24,6 +24,7 @@ import {
   CreatePayrollDto,
   GenerateFreeDto,
   GenerateMaternityDto,
+  GenerateManualDto,
   GeneratePayrollDto,
   GenerateSettlementDto,
   PayPayrollDto,
@@ -109,6 +110,16 @@ export class PayrollController {
   create(@Req() req: Request, @Body() body: CreatePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollService.create(companyId, body);
+  }
+
+  @Roles(...PAYROLL_ADMIN_ROLES)
+  @Post('generate/manual')
+  generateManual(@Req() req: Request, @Body() body: GenerateManualDto) {
+    const companyId = getCompanyId(req);
+    return this.payrollConceptService.generateManual(companyId, {
+      ...body,
+      concept: body.concept as any,
+    });
   }
 
   @Roles(...PAYROLL_ADMIN_ROLES)

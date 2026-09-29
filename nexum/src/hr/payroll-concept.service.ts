@@ -33,7 +33,11 @@ import {
   MINIMUM_WAGE,
   PayrollConcept,
   PAYROLL_CONCEPT_LABELS,
+  PAYROLL_CONCEPTS,
   SOCIAL_BENEFIT_RATE,
+  SUBSIDY_RETENTION_RATE,
+  TAXABLE_INCOME_CONCEPTS,
+  UNION_DUES_RATE,
   VACATION_ACCRUAL_RATE,
   WEEKS_PER_YEAR,
   WORKING_DAYS_PER_MONTH,
@@ -1349,5 +1353,217 @@ export class PayrollConceptService {
     }
 
     return this.savePayrollWithItems(companyId, 'libre', data, items);
+  }
+
+  /**
+   * Generación manual de nómina: el usuario selecciona los trabajadores, los
+   * días trabajados y, opcionalmente, el salario. El sistema calcula el
+   * devengado y las retenciones por concepto, sin depender de licencias
+   * aprobadas.
+   *
+   * - Salario: días × tarifa diaria contractual (salario / 24). Si el
+   *   trabajador no tiene salario declarado, el usuario debe enviar el importe.
+   * - Vacaciones: días × tarifa acumulada del submayor; si no hay acumulado,
+   *   se usa la tarifa contractual.
+   * - Otros conceptos: de momento se requiere el importe bruto; se añaden las
+   *   retenciones si el concepto es gravable.
+   */
+  async generateManual(
+    companyId: number,
+    data: GenerateInput & {
+      concept: PayrollConcept;
+      items: { employeeId: string; days: number; grossSalary?: number }[];
+    },
+  ) {
+    if (!PAYROLL_CONCEPTS.includes(data.concept)) {
+      throw new BadRequestException(`Concepto de nómina no válido: ${data.concept}`);
+    }
+
+    // No se admiten múltiples trabajadores en conceptos que históricamente se
+    // liquidan uno a uno (vacaciones, subsidio, maternidad, liquidación).
+    const singleWorkerConcepts: PayrollConcept[] = [
+      'vacaciones',
+      'subsidio',
+      'maternidad',
+      'liquidacion',
+    ];
+    if (singleWorkerConcepts.includes(data.concept) && data.items.length > 1) {
+      throw new BadRequestException(
+        `${PAYROLL_CONCEPT_LABELS[data.concept]} se genera para un solo trabajador`,
+      );
+    }
+
+    await this.ensureUnique(
+      companyId,
+      data.concept,
+      data.period,
+      data.installment ?? undefined,
+    );
+
+    const priorTotals = await monthlyTaxableTotals(
+      this.payrollItemRepo,
+      companyId,
+      data.period,
+    );
+    const vacationBalances =
+      data.concept === 'vacaciones'
+        ? await this.hrReportService.vacationBalances(companyId, data.period)
+        : new Map();
+
+    const items: Partial<PayrollItem>[] = [];
+    const warnings: string[] = [];
+
+    for (const line of data.items) {
+      const emp = await this.employeeRepo.findOne({
+        where: { id: line.employeeId, companyId },
+      });
+      if (!emp) {
+        throw new NotFoundException(
+          `Empleado ${line.employeeId} no encontrado`,
+        );
+      }
+
+      const baseSalary = Number(emp.salary || 0);
+      const contractualRate = round2(baseSalary / WORKING_DAYS_PER_MONTH);
+      const days = Number(line.days || 0);
+
+      let gross =
+        line.grossSalary != null ? round2(Number(line.grossSalary)) : 0;
+
+      if (data.concept === 'salario') {
+        // El usuario puede fijar el salario manualmente (trabajador sin
+        // salario base) o dejar que el sistema lo calcule de los días.
+        if (gross <= 0 && days > 0) {
+          gross = round2(days * contractualRate);
+        }
+        if (gross <= 0) {
+          throw new BadRequestException(
+            `${emp.firstName} ${emp.lastName}: indique días trabajados o salario`,
+          );
+        }
+
+        const { socialSecurity, taxWithholding } = incrementalTaxes(
+          priorTotals.get(emp.id),
+          gross,
+        );
+        const unionDues = emp.unionMember
+          ? round2(gross * UNION_DUES_RATE)
+          : 0;
+        const totalDeductions = round2(socialSecurity + taxWithholding + unionDues);
+        const accrual = this.vacationAccrual(emp, days || WORKING_DAYS_PER_MONTH);
+
+        items.push({
+          ...this.baseItem(emp, companyId),
+          baseSalary,
+          grossSalary: gross,
+          socialSecurity,
+          taxWithholding,
+          unionDues,
+          totalDeductions,
+          netSalary: round2(gross - totalDeductions),
+          paidUnits: days || WORKING_DAYS_PER_MONTH,
+          vacationProvision: accrual.vacationProvision,
+          vacationDays: accrual.vacationDays,
+          subsidyRetention: round2(gross * SUBSIDY_RETENTION_RATE),
+          averageSalary: baseSalary,
+          appliedRate: 1,
+          notes: `Salario manual: ${days} días × ${contractualRate}`,
+        });
+        continue;
+      }
+
+      if (data.concept === 'vacaciones') {
+        const balance = vacationBalances.get(emp.id);
+        const dailyRate = vacationDailyRate(balance, contractualRate);
+        if (gross <= 0 && days > 0) {
+          gross = round2(days * dailyRate);
+        }
+        if (gross <= 0) {
+          throw new BadRequestException(
+            `${emp.firstName} ${emp.lastName}: indique días de vacaciones o importe`,
+          );
+        }
+
+        const { socialSecurity, taxWithholding } = incrementalTaxes(
+          priorTotals.get(emp.id),
+          gross,
+        );
+        const totalDeductions = round2(socialSecurity + taxWithholding);
+
+        if (!balance || balance.days <= 0) {
+          warnings.push(
+            `${emp.firstName} ${emp.lastName}: sin acumulado de vacaciones, se paga a la tarifa contractual`,
+          );
+        } else if (days > balance.days) {
+          warnings.push(
+            `${emp.firstName} ${emp.lastName}: disfruta ${days} día(s) y solo tiene ${round2(balance.days)} acumulado(s)`,
+          );
+        }
+
+        items.push({
+          ...this.baseItem(emp, companyId),
+          baseSalary,
+          grossSalary: gross,
+          socialSecurity,
+          taxWithholding,
+          totalDeductions,
+          netSalary: round2(gross - totalDeductions),
+          paidUnits: days,
+          averageSalary: baseSalary,
+          appliedRate: 1,
+          notes:
+            `Vacaciones manuales: ${days} días × ${dailyRate} ` +
+            (balance && balance.days > 0
+              ? `(acumulado: ${round2(balance.amount)} / ${round2(balance.days)} días)`
+              : `(salario / ${WORKING_DAYS_PER_MONTH}, sin acumulado)`),
+        });
+        continue;
+      }
+
+      // Conceptos restantes (subsidio, maternidad, liquidación, libre): el
+      // usuario envía el importe bruto; el sistema aplica retenciones solo si
+      // el concepto es gravable.
+      if (gross <= 0) {
+        throw new BadRequestException(
+          `${emp.firstName} ${emp.lastName}: indique el importe bruto para ${PAYROLL_CONCEPT_LABELS[data.concept]}`,
+        );
+      }
+
+      let socialSecurity = 0;
+      let taxWithholding = 0;
+      if (TAXABLE_INCOME_CONCEPTS.includes(data.concept)) {
+        ({ socialSecurity, taxWithholding } = incrementalTaxes(
+          priorTotals.get(emp.id),
+          gross,
+        ));
+      }
+      const totalDeductions = round2(socialSecurity + taxWithholding);
+
+      items.push({
+        ...this.baseItem(emp, companyId),
+        baseSalary,
+        grossSalary: gross,
+        socialSecurity,
+        taxWithholding,
+        totalDeductions,
+        netSalary: round2(gross - totalDeductions),
+        paidUnits: days,
+        averageSalary: baseSalary,
+        appliedRate: 1,
+        notes: PAYROLL_CONCEPT_LABELS[data.concept],
+      });
+    }
+
+    if (items.length === 0) {
+      throw new BadRequestException('No se generó ninguna línea de nómina');
+    }
+
+    return this.savePayrollWithItems(
+      companyId,
+      data.concept,
+      data,
+      items,
+      warnings.length ? warnings.join(' | ') : undefined,
+    );
   }
 }
