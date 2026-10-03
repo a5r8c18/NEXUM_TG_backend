@@ -11,10 +11,13 @@ import {
   overlapDays,
   overlapWorkingDays,
   round2,
+  salaryForWorkedHours,
   vacationDailyRate,
 } from './payroll-calculations';
 import {
+  HOURS_PER_WORKDAY,
   MINIMUM_SUBSIDY,
+  MONTHLY_LEGAL_HOURS,
   VACATION_ACCRUAL_RATE,
   WORKING_DAYS_PER_MONTH,
   subsidyRate,
@@ -377,6 +380,61 @@ describe('Acumulación de vacaciones (Art. 102)', () => {
     const gross = round2((baseSalary / WORKING_DAYS_PER_MONTH) * 14);
     expect(round2(gross * VACATION_ACCRUAL_RATE)).toBeCloseTo(265.13, 2);
     expect(round2(baseSalary * VACATION_ACCRUAL_RATE)).toBeCloseTo(454.5, 2);
+  });
+});
+
+describe('Devengo del salario fijo por tiempo trabajado', () => {
+  // Salario 30 000 → tarifa horaria 157,3977; día laborable = 7,9416 h.
+  const SALARY = 30000;
+  const hourly = SALARY / MONTHLY_LEGAL_HOURS; // 157,3977
+
+  it('el mes completo (190,6 h) paga el salario íntegro', () => {
+    expect(salaryForWorkedHours(SALARY, MONTHLY_LEGAL_HOURS)).toBe(30000);
+    expect(salaryForWorkedHours(SALARY, 24 * HOURS_PER_WORKDAY)).toBe(30000);
+  });
+
+  it('descuenta solo el tiempo faltado a tarifa horaria', () => {
+    // 22 de 24 días → faltan 2 días = 15,8833 h × 157,3977 = 2 500 exactos.
+    expect(salaryForWorkedHours(SALARY, 22 * HOURS_PER_WORKDAY)).toBe(27500);
+  });
+
+  it('una ausencia de 8 horas descuenta 8 × tarifa horaria', () => {
+    // 190,6 − 8 = 182,6 h trabajadas → 8 × 157,3977 = 1 259,18 de descuento.
+    expect(salaryForWorkedHours(SALARY, MONTHLY_LEGAL_HOURS - 8)).toBeCloseTo(
+      28740.82,
+      2,
+    );
+  });
+
+  it('medio día de ausencia descuenta medio día de salario', () => {
+    // 23,5 días trabajados → falta 0,5 × 7,9416 h → descuento = 625.
+    expect(salaryForWorkedHours(SALARY, 23.5 * HOURS_PER_WORKDAY)).toBeCloseTo(
+      29375,
+      2,
+    );
+  });
+
+  it('trabajar más del fondo de tiempo no paga más que el salario', () => {
+    expect(salaryForWorkedHours(SALARY, 25 * HOURS_PER_WORKDAY)).toBe(30000);
+    expect(salaryForWorkedHours(SALARY, 250)).toBe(30000);
+  });
+
+  it('sin tiempo trabajado el devengo es cero', () => {
+    expect(salaryForWorkedHours(SALARY, 0)).toBe(0);
+  });
+
+  it('equivale a días/24 × salario en ausencias de días completos', () => {
+    // El factor 7,9416 h/día hace que ambas lecturas coincidan.
+    for (const days of [10, 20, 23]) {
+      expect(salaryForWorkedHours(SALARY, days * HOURS_PER_WORKDAY)).toBeCloseTo(
+        round2((SALARY / WORKING_DAYS_PER_MONTH) * days),
+        2,
+      );
+    }
+  });
+
+  it('la tarifa diaria equivale a 7,9416 × la horaria = salario/24', () => {
+    expect(round2(hourly * HOURS_PER_WORKDAY)).toBe(1250);
   });
 });
 

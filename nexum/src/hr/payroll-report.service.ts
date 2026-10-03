@@ -11,12 +11,10 @@ import { Employee } from '../entities/employee.entity';
 import { Company } from '../entities/company.entity';
 import { CostCenter } from '../entities/cost-center.entity';
 import {
+  MONTHLY_LEGAL_HOURS,
   VACATION_ACCRUAL_RATE,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
-
-/** Horas legales mensuales usadas para la tarifa horaria del modelo. */
-const MONTHLY_LEGAL_HOURS = 190.6;
 
 /** Letra de categoría ocupacional usada en el modelo SC-4-06. */
 const OCCUPATIONAL_LETTER: Record<string, string> = {

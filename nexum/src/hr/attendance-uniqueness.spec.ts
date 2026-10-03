@@ -40,7 +40,7 @@ describe('HrManagementService — unicidad de asistencia', () => {
         { provide: getRepositoryToken(EmployeeContract), useValue: {} },
         { provide: getRepositoryToken(Attendance), useValue: attendanceRepo },
         { provide: getRepositoryToken(LeaveRequest), useValue: {} },
-        { provide: getRepositoryToken(JobPosition), useValue: {} },
+        { provide: getRepositoryToken(JobPosition), useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getRepositoryToken(PayrollItem), useValue: {} },
         {
           provide: HrReportService,
@@ -122,7 +122,7 @@ describe('HrService — unicidad del código de trabajador', () => {
         { provide: getRepositoryToken(PayrollItem), useValue: {} },
         { provide: getRepositoryToken(Department), useValue: {} },
         { provide: getRepositoryToken(CostCenter), useValue: {} },
-        { provide: getRepositoryToken(JobPosition), useValue: {} },
+        { provide: getRepositoryToken(JobPosition), useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getRepositoryToken(EmployeeSalaryHistory), useValue: {} },
       ],
     }).compile();

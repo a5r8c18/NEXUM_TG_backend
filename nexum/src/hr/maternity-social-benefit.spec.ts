@@ -8,6 +8,7 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
+import { JobPosition } from '../entities/job-position.entity';
 import { HrReportService } from './hr-report.service';
 import { MINIMUM_WAGE, SOCIAL_BENEFIT_RATE } from './payroll-concept';
 
@@ -162,6 +163,7 @@ describe('PayrollConceptService — prestación social (installment 4)', () => {
         { provide: getRepositoryToken(Employee), useValue: employeeRepo },
         { provide: getRepositoryToken(Attendance), useValue: {} },
         { provide: getRepositoryToken(LeaveRequest), useValue: leaveRepo },
+        { provide: getRepositoryToken(JobPosition), useValue: {} },
         { provide: HrReportService, useValue: {} },
       ],
     }).compile();

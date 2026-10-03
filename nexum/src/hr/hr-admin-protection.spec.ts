@@ -101,7 +101,7 @@ describe('Protección del histórico de nómina', () => {
       payrollItemRepo,
       {} as any,
       {} as any,
-      {} as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
       {} as any,
     );
   }

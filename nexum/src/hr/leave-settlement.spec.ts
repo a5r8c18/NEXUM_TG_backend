@@ -8,6 +8,7 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
+import { JobPosition } from '../entities/job-position.entity';
 import { HrReportService } from './hr-report.service';
 import { overlapWorkingDays } from './payroll-calculations';
 
@@ -152,6 +153,7 @@ describe('PayrollConceptService — doble pago de licencias', () => {
         { provide: getRepositoryToken(Employee), useValue: employeeRepo },
         { provide: getRepositoryToken(Attendance), useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getRepositoryToken(LeaveRequest), useValue: leaveRepo },
+        { provide: getRepositoryToken(JobPosition), useValue: {} },
         {
           provide: HrReportService,
           useValue: {

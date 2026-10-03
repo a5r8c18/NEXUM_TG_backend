@@ -202,6 +202,13 @@ export class ManualPayrollItemDto {
   @Type(() => Number)
   days: number;
 
+  /** Horas sueltas trabajadas además de los días; en trabajadores por horas es la unidad principal. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  hours?: number;
+
   @IsOptional()
   @IsNumber()
   @Min(0)

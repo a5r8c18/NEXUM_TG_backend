@@ -31,7 +31,9 @@ import {
 import {
   EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE,
   EmploymentSector,
+  HOURS_PER_WORKDAY,
   LABOR_FORCE_TAX_RATE,
+  MONTHLY_LEGAL_HOURS,
   PAYROLL_CONCEPT_LABELS,
   PayrollConcept,
   SUBSIDY_RETENTION_RATE,
@@ -41,9 +43,6 @@ import {
   VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
-
-// Jornada legal mensual promedio en Cuba (horas) para el cálculo del salario/hora.
-const MONTHLY_LEGAL_HOURS = 190.6;
 
 @Injectable()
 export class PayrollService {
@@ -536,15 +535,24 @@ export class PayrollService {
 
       let grossSalary: number;
       if (isSalary) {
-        const baseEarnings = round2(
-          (Number(item.baseSalary || 0) / WORKING_DAYS_PER_MONTH) * paidUnits,
-        );
-        grossSalary =
-          baseEarnings +
+        const extras =
           Number(item.overtimePay || 0) +
           Number(item.bonuses || 0) +
           Number(item.commissions || 0) +
           Number(item.allowances || 0);
+        // Un día laborable vale salario/24 (7,9416 h × salario/190,6) y el
+        // devengo se topa en el salario completo: trabajar más allá del fondo
+        // de tiempo del mes no paga más. Las líneas sin salario fijo (pago
+        // por tiempo del cargo o importe manual) conservan su devengado.
+        const monthly = Number(item.baseSalary || 0);
+        const baseEarnings =
+          monthly > 0
+            ? round2(
+                (monthly / WORKING_DAYS_PER_MONTH) *
+                  Math.min(paidUnits, WORKING_DAYS_PER_MONTH),
+              )
+            : round2(Number(item.grossSalary || 0) - extras);
+        grossSalary = baseEarnings + extras;
       } else {
         grossSalary = Number(item.grossSalary || 0);
       }
@@ -625,7 +633,17 @@ export class PayrollService {
           ? round2(grossSalary * VACATION_ACCRUAL_RATE)
           : Number((item as Partial<PayrollItem>).vacationProvision || 0),
         vacationDays: isSalary
-          ? round2(paidUnits * VACATION_ACCRUAL_RATE)
+          ? round2(
+              // En líneas por horas (sin salario fijo) las unidades son horas:
+              // se convierten a días antes de aplicar el 9,09 %, con el tope
+              // de 24 días del mes en ambos casos.
+              Math.min(
+                Number(item.baseSalary || 0) > 0
+                  ? paidUnits
+                  : paidUnits / HOURS_PER_WORKDAY,
+                WORKING_DAYS_PER_MONTH,
+              ) * VACATION_ACCRUAL_RATE,
+            )
           : Number((item as Partial<PayrollItem>).vacationDays || 0),
         subsidyRetention: round2(grossSalary * SUBSIDY_RETENTION_RATE),
         // Trazabilidad del cálculo: se conserva de la línea previa cuando el

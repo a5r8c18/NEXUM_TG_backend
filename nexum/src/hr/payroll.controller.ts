@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  ParseIntPipe,
   Query,
   Req,
   Res,
@@ -75,10 +76,16 @@ export class PayrollController {
     return this.payrollService.getStatistics(companyId);
   }
 
+  /** Catálogo de conceptos soportados y rangos legales para la UI. */
+  @Get('concepts')
+  getConceptCatalog() {
+    return this.payrollConceptService.conceptCatalog();
+  }
+
   @Get(':id/export/pdf')
   async exportPdf(
     @Req() req: Request,
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Query('unit') unit: 'dias' | 'horas',
     @Query('groupBy') groupBy: 'area' | 'costCenterAccount' | 'none',
     @Res() res: Response,
@@ -86,7 +93,7 @@ export class PayrollController {
     const companyId = getCompanyId(req);
     const buffer = await this.payrollReportService.generateNominaPdf(
       companyId,
-      parseInt(id),
+      id,
       unit,
       groupBy,
     );
@@ -100,9 +107,9 @@ export class PayrollController {
   }
 
   @Get(':id')
-  findOne(@Req() req: Request, @Param('id') id: string) {
+  findOne(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
     const companyId = getCompanyId(req);
-    return this.payrollService.findOne(companyId, parseInt(id));
+    return this.payrollService.findOne(companyId, id);
   }
 
   @Roles(...PAYROLL_ADMIN_ROLES)
@@ -110,6 +117,16 @@ export class PayrollController {
   create(@Req() req: Request, @Body() body: CreatePayrollDto) {
     const companyId = getCompanyId(req);
     return this.payrollService.create(companyId, body);
+  }
+
+  @Roles(...PAYROLL_ADMIN_ROLES)
+  @Post('generate/manual/preview')
+  previewManual(@Req() req: Request, @Body() body: GenerateManualDto) {
+    const companyId = getCompanyId(req);
+    return this.payrollConceptService.previewManual(companyId, {
+      ...body,
+      concept: body.concept as any,
+    });
   }
 
   @Roles(...PAYROLL_ADMIN_ROLES)
@@ -171,47 +188,43 @@ export class PayrollController {
   @Put(':id/items')
   updateItems(
     @Req() req: Request,
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdatePayrollItemsDto,
   ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.updateItems(companyId, parseInt(id), body.items);
+    return this.payrollService.updateItems(companyId, id, body.items);
   }
 
   @Roles(...PAYROLL_ADMIN_ROLES)
   @Put(':id/process')
   process(
     @Req() req: Request,
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: ProcessPayrollDto,
   ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.process(companyId, parseInt(id), body.processedBy);
+    return this.payrollService.process(companyId, id, body.processedBy);
   }
 
   @Roles(...PAYROLL_ADMIN_ROLES)
   @Put(':id/pay')
   markAsPaid(
     @Req() req: Request,
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: PayPayrollDto,
   ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.markAsPaid(
-      companyId,
-      parseInt(id),
-      body.bankAccountId,
-    );
+    return this.payrollService.markAsPaid(companyId, id, body.bankAccountId);
   }
 
   @Roles(...PAYROLL_ADMIN_ROLES)
   @Put(':id/cancel')
   cancel(
     @Req() req: Request,
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: CancelPayrollDto,
   ) {
     const companyId = getCompanyId(req);
-    return this.payrollService.cancel(companyId, parseInt(id), body.reason);
+    return this.payrollService.cancel(companyId, id, body.reason);
   }
 }

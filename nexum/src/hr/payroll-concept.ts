@@ -101,6 +101,18 @@ export type SocialBenefitVariant = 'a' | 'b' | 'c';
 export const WORKING_DAYS_PER_MONTH = 24;
 
 /**
+ * Jornada legal mensual promedio (44 h semanales): base de la tarifa horaria
+ * (salario / 190,6) y tope del tiempo remunerable del mes.
+ */
+export const MONTHLY_LEGAL_HOURS = 190.6;
+
+/**
+ * Horas que cubre un día laborable: 190,6 / 24 = 7,9416. Con esta
+ * equivalencia la tarifa diaria (horaria × 7,9416) coincide con salario / 24.
+ */
+export const HOURS_PER_WORKDAY = MONTHLY_LEGAL_HOURS / WORKING_DAYS_PER_MONTH;
+
+/**
  * Tasa de acumulación de vacaciones anuales pagadas (Art. 102 Ley 116): se
  * multiplican por 9,09 % los días efectivamente laborados y los salarios
  * percibidos. Equivale a 2,18 días por cada 24 laborables, o sea un mes de

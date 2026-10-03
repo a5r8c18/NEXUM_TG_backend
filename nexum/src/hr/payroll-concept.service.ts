@@ -12,6 +12,7 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
+import { JobPosition } from '../entities/job-position.entity';
 import { HrReportService } from './hr-report.service';
 import {
   calculateMaternityBenefit,
@@ -22,6 +23,7 @@ import {
   overlapDays,
   overlapWorkingDays,
   round2,
+  salaryForWorkedHours,
   vacationDailyRate,
 } from './payroll-calculations';
 import {
@@ -29,8 +31,10 @@ import {
   monthlyTaxableTotals,
 } from './monthly-taxable';
 import {
+  HOURS_PER_WORKDAY,
   LEGAL_VACATION_PERIODS,
   MINIMUM_WAGE,
+  MONTHLY_LEGAL_HOURS,
   PayrollConcept,
   PAYROLL_CONCEPT_LABELS,
   PAYROLL_CONCEPTS,
@@ -100,6 +104,8 @@ export class PayrollConceptService {
     private readonly attendanceRepo: Repository<Attendance>,
     @InjectRepository(LeaveRequest)
     private readonly leaveRepo: Repository<LeaveRequest>,
+    @InjectRepository(JobPosition)
+    private readonly positionRepo: Repository<JobPosition>,
     private readonly hrReportService: HrReportService,
   ) {}
 
@@ -1372,7 +1378,12 @@ export class PayrollConceptService {
     companyId: number,
     data: GenerateInput & {
       concept: PayrollConcept;
-      items: { employeeId: string; days: number; grossSalary?: number }[];
+      items: {
+        employeeId: string;
+        days: number;
+        hours?: number;
+        grossSalary?: number;
+      }[];
     },
   ) {
     if (!PAYROLL_CONCEPTS.includes(data.concept)) {
@@ -1413,6 +1424,20 @@ export class PayrollConceptService {
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
 
+    // Tarifa del cargo para trabajadores sin salario fijo: se consulta una
+    // sola vez por cargo dentro de la generación.
+    const positionCache = new Map<string, JobPosition | null>();
+    const positionOf = async (id: string | null | undefined) => {
+      if (!id) return null;
+      if (!positionCache.has(id)) {
+        positionCache.set(
+          id,
+          await this.positionRepo.findOne({ where: { id, companyId } }),
+        );
+      }
+      return positionCache.get(id) || null;
+    };
+
     for (const line of data.items) {
       const emp = await this.employeeRepo.findOne({
         where: { id: line.employeeId, companyId },
@@ -1431,15 +1456,59 @@ export class PayrollConceptService {
         line.grossSalary != null ? round2(Number(line.grossSalary)) : 0;
 
       if (data.concept === 'salario') {
-        // El usuario puede fijar el salario manualmente (trabajador sin
-        // salario base) o dejar que el sistema lo calcule de los días.
-        if (gross <= 0 && days > 0) {
-          gross = round2(days * contractualRate);
-        }
-        if (gross <= 0) {
-          throw new BadRequestException(
-            `${emp.firstName} ${emp.lastName}: indique días trabajados o salario`,
-          );
+        const hours = Number(line.hours || 0);
+        const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
+        let workedDays: number;
+        let paidUnits: number;
+        let note: string;
+
+        if (baseSalary > 0) {
+          // Salario fijo: el mes completo son 190,6 h (24 días laborables de
+          // 7,9416 h) y se descuenta únicamente el tiempo faltado a la tarifa
+          // horaria (salario / 190,6). Superar el fondo de tiempo no paga más.
+          const workedHours = days * HOURS_PER_WORKDAY + hours;
+          if (workedHours <= 0 && gross <= 0) {
+            throw new BadRequestException(
+              `${employeeName}: indique el tiempo trabajado o el salario`,
+            );
+          }
+          if (gross <= 0) {
+            gross = salaryForWorkedHours(baseSalary, workedHours);
+          }
+          workedDays = workedHours / HOURS_PER_WORKDAY;
+          paidUnits = round2(workedDays);
+          const missedHours = Math.max(0, MONTHLY_LEGAL_HOURS - workedHours);
+          const hourlyRate = round2(baseSalary / MONTHLY_LEGAL_HOURS);
+          note =
+            missedHours > 0
+              ? `Salario: ${round2(workedHours)} h trabajadas; ${round2(missedHours)} h descontadas × ${hourlyRate}`
+              : 'Salario: mes completo';
+        } else {
+          // Sin salario fijo: tiempo trabajado × tarifa del cargo, o el
+          // importe que indique el usuario si el cargo no tiene tarifa.
+          const position = await positionOf(emp.positionId);
+          const rate = Number(position?.salaryRate || 0);
+          if (position?.timeUnit === 'hours') {
+            const workedHours = hours > 0 ? hours : days * HOURS_PER_WORKDAY;
+            if (gross <= 0 && rate > 0 && workedHours > 0) {
+              gross = round2(workedHours * rate);
+            }
+            workedDays = workedHours / HOURS_PER_WORKDAY;
+            paidUnits = round2(workedHours);
+            note = `Salario por horas: ${round2(workedHours)} h × ${rate}`;
+          } else {
+            workedDays = days > 0 ? days : hours / HOURS_PER_WORKDAY;
+            if (gross <= 0 && rate > 0 && workedDays > 0) {
+              gross = round2(workedDays * rate);
+            }
+            paidUnits = round2(workedDays);
+            note = `Salario por días: ${round2(workedDays)} días × ${rate}`;
+          }
+          if (gross <= 0) {
+            throw new BadRequestException(
+              `${employeeName}: sin salario fijo ni tarifa en el cargo — indique el importe`,
+            );
+          }
         }
 
         const { socialSecurity, taxWithholding } = incrementalTaxes(
@@ -1450,7 +1519,6 @@ export class PayrollConceptService {
           ? round2(gross * UNION_DUES_RATE)
           : 0;
         const totalDeductions = round2(socialSecurity + taxWithholding + unionDues);
-        const accrual = this.vacationAccrual(emp, days || WORKING_DAYS_PER_MONTH);
 
         items.push({
           ...this.baseItem(emp, companyId),
@@ -1461,13 +1529,18 @@ export class PayrollConceptService {
           unionDues,
           totalDeductions,
           netSalary: round2(gross - totalDeductions),
-          paidUnits: days || WORKING_DAYS_PER_MONTH,
-          vacationProvision: accrual.vacationProvision,
-          vacationDays: accrual.vacationDays,
+          paidUnits,
+          // Provisión del Art. 102: 9,09 % de lo percibido y de los días
+          // trabajados (equivalentes en días si la tarifa es por horas).
+          vacationProvision: round2(gross * VACATION_ACCRUAL_RATE),
+          vacationDays: round2(
+            Math.min(workedDays, WORKING_DAYS_PER_MONTH) *
+              VACATION_ACCRUAL_RATE,
+          ),
           subsidyRetention: round2(gross * SUBSIDY_RETENTION_RATE),
           averageSalary: baseSalary,
           appliedRate: 1,
-          notes: `Salario manual: ${days} días × ${contractualRate}`,
+          notes: note,
         });
         continue;
       }
@@ -1565,5 +1638,148 @@ export class PayrollConceptService {
       items,
       warnings.length ? warnings.join(' | ') : undefined,
     );
+  }
+
+  /** Catálogo de conceptos y rangos legales que muestra la interfaz. */
+  conceptCatalog() {
+    return {
+      concepts: PAYROLL_CONCEPTS.map((value) => ({
+        value,
+        label: PAYROLL_CONCEPT_LABELS[value],
+      })),
+      nightShift: {
+        bands: [
+          { value: 'evening', label: '7:00 pm a 11:00 pm', min: 0.6, max: 1.2 },
+          { value: 'night', label: '11:00 pm a 7:00 am', min: 1.15, max: 2.3 },
+        ],
+        rates: { evening: 0.6, night: 1.15 },
+      },
+    };
+  }
+
+  /**
+   * Previsualización de la generación manual: por cada línea devuelve la
+   * tarifa aplicable, el importe sugerido, el acumulado de vacaciones y las
+   * advertencias. No escribe nada; la generación real vuelve a validar.
+   */
+  async previewManual(
+    companyId: number,
+    data: GenerateInput & {
+      concept: PayrollConcept;
+      items: {
+        employeeId: string;
+        days: number;
+        hours?: number;
+        grossSalary?: number;
+      }[];
+    },
+  ) {
+    if (!PAYROLL_CONCEPTS.includes(data.concept)) {
+      throw new BadRequestException(
+        `Concepto de nómina no válido: ${data.concept}`,
+      );
+    }
+
+    const needsBalance = ['vacaciones', 'liquidacion'].includes(data.concept);
+    const vacationBalances = needsBalance
+      ? await this.hrReportService.vacationBalances(companyId, data.period)
+      : new Map();
+
+    const positionCache = new Map<string, JobPosition | null>();
+    const positionOf = async (id: string | null | undefined) => {
+      if (!id) return null;
+      if (!positionCache.has(id)) {
+        positionCache.set(
+          id,
+          await this.positionRepo.findOne({ where: { id, companyId } }),
+        );
+      }
+      return positionCache.get(id) || null;
+    };
+
+    const contexts: {
+      employeeId: string;
+      rate: number;
+      suggestedGross: number;
+      accumulatedDays: number | null;
+      accumulatedAmount: number | null;
+      warnings: string[];
+    }[] = [];
+
+    for (const line of data.items) {
+      const emp = await this.employeeRepo.findOne({
+        where: { id: line.employeeId, companyId },
+      });
+      if (!emp) continue;
+
+      const name = `${emp.firstName} ${emp.lastName}`.trim();
+      const baseSalary = Number(emp.salary || 0);
+      const contractualRate = round2(baseSalary / WORKING_DAYS_PER_MONTH);
+      const days = Number(line.days || 0);
+      const hours = Number(line.hours || 0);
+      const ctx = {
+        employeeId: emp.id,
+        rate: 0,
+        suggestedGross: 0,
+        accumulatedDays: null as number | null,
+        accumulatedAmount: null as number | null,
+        warnings: [] as string[],
+      };
+
+      if (data.concept === 'salario') {
+        if (baseSalary > 0) {
+          ctx.rate = round2(baseSalary / MONTHLY_LEGAL_HOURS);
+          const workedHours = days * HOURS_PER_WORKDAY + hours;
+          ctx.suggestedGross = salaryForWorkedHours(baseSalary, workedHours);
+          if (workedHours > MONTHLY_LEGAL_HOURS) {
+            ctx.warnings.push(
+              `${name}: supera el fondo de tiempo del mes (190,6 h); se paga el salario completo`,
+            );
+          }
+        } else {
+          const position = await positionOf(emp.positionId);
+          ctx.rate = Number(position?.salaryRate || 0);
+          const units =
+            position?.timeUnit === 'hours'
+              ? hours > 0
+                ? hours
+                : days * HOURS_PER_WORKDAY
+              : days > 0
+                ? days
+                : hours / HOURS_PER_WORKDAY;
+          ctx.suggestedGross = round2(units * ctx.rate);
+          if (ctx.rate <= 0) {
+            ctx.warnings.push(
+              `${name}: sin salario fijo ni tarifa en el cargo — indique el importe`,
+            );
+          }
+        }
+      } else if (data.concept === 'vacaciones') {
+        const balance = vacationBalances.get(emp.id);
+        ctx.rate = vacationDailyRate(balance, contractualRate);
+        ctx.accumulatedDays = balance?.days ?? 0;
+        ctx.accumulatedAmount = balance?.amount ?? 0;
+        ctx.suggestedGross = round2(days * ctx.rate);
+        if (!balance || balance.days <= 0) {
+          ctx.warnings.push(
+            `${name}: sin acumulado de vacaciones, se paga a la tarifa contractual`,
+          );
+        } else if (days > balance.days) {
+          ctx.warnings.push(
+            `${name}: disfruta ${days} día(s) y solo tiene ${round2(balance.days)} acumulado(s)`,
+          );
+        }
+      } else if (data.concept === 'liquidacion') {
+        const balance = vacationBalances.get(emp.id);
+        ctx.rate = vacationDailyRate(balance, contractualRate);
+        ctx.accumulatedDays = balance?.days ?? 0;
+        ctx.accumulatedAmount = balance?.amount ?? 0;
+        ctx.suggestedGross = round2(Math.max(0, ctx.accumulatedAmount ?? 0));
+      }
+
+      contexts.push(ctx);
+    }
+
+    return contexts;
   }
 }

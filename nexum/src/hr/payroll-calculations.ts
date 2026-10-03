@@ -7,6 +7,7 @@
 import {
   IncapacityOrigin,
   MINIMUM_SUBSIDY,
+  MONTHLY_LEGAL_HOURS,
   SOCIAL_BENEFIT_RATE,
   WEEKS_PER_YEAR,
   WORKING_DAYS_PER_MONTH,
@@ -220,6 +221,19 @@ export function nonWorkedWorkingDays(
     );
   }, 0);
   return Math.min(days, WORKING_DAYS_PER_MONTH);
+}
+
+/**
+ * Devengo de un trabajador con salario fijo mensual a partir del tiempo
+ * trabajado. La tarifa es horaria (salario / 190,6) y el mes completo son
+ * 190,6 horas —24 días laborables de 7,9416 h—, así que el pago es el
+ * salario menos las horas no trabajadas a esa tarifa. Trabajar más del fondo
+ * de tiempo del mes no paga más que el salario: el exceso se topa.
+ */
+export function salaryForWorkedHours(salary: number, workedHours: number): number {
+  const hourlyRate = salary / MONTHLY_LEGAL_HOURS;
+  const missedHours = Math.max(0, MONTHLY_LEGAL_HOURS - workedHours);
+  return round2(Math.max(0, salary - missedHours * hourlyRate));
 }
 
 /**
