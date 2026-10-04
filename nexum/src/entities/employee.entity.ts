@@ -121,9 +121,14 @@ export class Employee {
   expenseAccountCode: string | null;
 
   /**
-   * Categoría ocupacional del Nomenclador 2016. Determina la subcuenta de
-   * Nóminas por Pagar (455-00X0) donde se acredita el neto del trabajador.
+   * Subcuenta de Nóminas por Pagar donde se acredita el neto del trabajador.
+   * La 455 no trae subcuentas: si la empresa crea alguna, la ficha indica en
+   * cuál se acredita; sin subcuentas el neto va a la propia 455.
    */
+  @Column({ name: 'payable_subaccount', type: 'varchar', length: 20, nullable: true })
+  payableSubaccount: string | null;
+
+  /** Categoría ocupacional del Nomenclador 2016 (dato del Modelo SC-4-06). */
   @Column({
     name: 'occupational_category',
     type: 'varchar',

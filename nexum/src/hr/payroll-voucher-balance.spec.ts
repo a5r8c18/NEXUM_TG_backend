@@ -30,6 +30,7 @@ describe('PayrollService.process() — partida doble por concepto', () => {
   let accountMappingService: { getAccountForMapping: jest.Mock };
   let dataSource: { transaction: jest.Mock; query: jest.Mock };
   let voucherCalls: { sourceDocId: string; lines: any[] }[];
+  let payableChildren: { code: string }[];
 
   function item(overrides: Partial<PayrollItem> = {}): PayrollItem {
     return {
@@ -125,8 +126,13 @@ describe('PayrollService.process() — partida doble por concepto', () => {
       getAccountForMapping: jest.fn().mockResolvedValue(null),
     };
 
+    payableChildren = [];
     const manager = {
-      getRepository: jest.fn().mockReturnValue({ save: jest.fn() }),
+      getRepository: jest.fn().mockReturnValue({
+        save: jest.fn(),
+        // Subcuentas de la 455 que la empresa haya creado.
+        find: jest.fn().mockImplementation(() => Promise.resolve(payableChildren)),
+      }),
     };
     dataSource = {
       transaction: jest
@@ -277,6 +283,61 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     // 14 % = 525 (468.75 presupuesto + 56.25 provisión) y 5 % = 187.50.
     expect(Number(ssExpense!.debit)).toBeCloseTo(525, 2);
     expect(Number(lfExpense!.debit)).toBeCloseTo(187.5, 2);
+    expectAllBalanced();
+  });
+
+  describe('subcuentas de Nóminas por Pagar según la empresa', () => {
+    function payableCredits() {
+      return voucherCalls
+        .flatMap((v) => v.lines)
+        .filter((l) => l.accountCode === '455' && Number(l.credit) > 0)
+        .map((l) => ({ sub: l.subaccountCode, credit: Number(l.credit) }));
+    }
+
+    it('sin subcuentas creadas acredita en la propia 455', async () => {
+      await processPayroll(payrollFixture('salario', [item()]));
+      expect(payableCredits()).toEqual([{ sub: '455', credit: 1000 }]);
+    });
+
+    it('acredita en la subcuenta asignada en la ficha', async () => {
+      payableChildren = [{ code: '455-0001' }, { code: '455-0002' }];
+      await processPayroll(
+        payrollFixture('salario', [
+          item({ payableSubaccount: '455-0002' }),
+          item({ id: 2, employeeId: 'e2', payableSubaccount: '455-0001', grossSalary: 500, netSalary: 500 }),
+        ]),
+      );
+      expect(payableCredits()).toEqual(
+        expect.arrayContaining([
+          { sub: '455-0002', credit: 1000 },
+          { sub: '455-0001', credit: 500 },
+        ]),
+      );
+      expectAllBalanced();
+    });
+
+    it('con una sola subcuenta, la usa aunque la ficha no la indique', async () => {
+      payableChildren = [{ code: '455-0100' }];
+      await processPayroll(payrollFixture('salario', [item()]));
+      expect(payableCredits()).toEqual([{ sub: '455-0100', credit: 1000 }]);
+    });
+
+    it('con varias subcuentas y ficha sin asignar no adivina: pide configurarla', async () => {
+      payableChildren = [{ code: '455-0001' }, { code: '455-0002' }];
+      await expect(
+        processPayroll(
+          payrollFixture('salario', [item({ employeeName: 'Ana Pérez' })]),
+        ),
+      ).rejects.toThrow(/Ana Pérez.*asigne en su ficha/);
+    });
+  });
+
+  it('horas extras: cargan a gasto como el salario y acreditan la 455', async () => {
+    await processPayroll(payrollFixture('horas_extras', [item()]));
+    const main = voucherCalls.find((v) => v.sourceDocId === '1');
+    expect(main).toBeDefined();
+    expect(main!.lines.some((l) => Number(l.debit) === 1000)).toBe(true);
+    expect(creditsTo455()).toBe(1000);
     expectAllBalanced();
   });
 });

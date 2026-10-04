@@ -7,7 +7,9 @@ import {
   calculateSubsidy,
   calculateWeeklyAverageSalary,
   evaluateSubsidyLimit,
+  hourlyRateFor,
   nonWorkedWorkingDays,
+  timeSupplementAmount,
   overlapDays,
   overlapWorkingDays,
   round2,
@@ -23,6 +25,56 @@ import {
   subsidyRate,
   subsidyWaitingDays,
 } from './payroll-concept';
+
+describe('Pagos adicionales por tiempo trabajado', () => {
+  const hourly = 30000 / MONTHLY_LEGAL_HOURS; // 157,3977
+
+  it('tarifa horaria: salario / 190,6, o la del cargo convertida a horas', () => {
+    expect(round2(hourlyRateFor(30000))).toBe(157.4);
+    expect(hourlyRateFor(0, { salaryRate: 120, timeUnit: 'hours' })).toBe(120);
+    expect(
+      round2(hourlyRateFor(0, { salaryRate: 1250, timeUnit: 'days' })),
+    ).toBe(round2(1250 / HOURS_PER_WORKDAY));
+    expect(hourlyRateFor(0, null)).toBe(0);
+  });
+
+  it('horas extra: horas × tarifa horaria × recargo de la ficha', () => {
+    expect(
+      timeSupplementAmount('horas_extras', { hours: 10, hourlyRate: hourly }),
+    ).toBe(1573.98);
+    expect(
+      timeSupplementAmount('horas_extras', {
+        hours: 10,
+        hourlyRate: hourly,
+        overtimeRate: 1.5,
+      }),
+    ).toBe(2360.97);
+  });
+
+  it('nocturnidad: horas de cada banda × la tarifa fija de la empresa', () => {
+    expect(
+      timeSupplementAmount('nocturnidad', {
+        hours: 20,
+        nightHours: 16,
+        hourlyRate: hourly,
+        nightShiftRates: { evening: 0.6, night: 1.15 },
+      }),
+    ).toBe(30.4); // 20 × 0,60 + 16 × 1,15
+  });
+
+  it('feriado trabajado: solo el adicional, horas × tarifa horaria', () => {
+    // 8 h en feriado: el salario ya pagó esas horas, aquí va la otra mitad.
+    expect(
+      timeSupplementAmount('feriado', { hours: 8, hourlyRate: hourly }),
+    ).toBe(1259.18);
+  });
+
+  it('sin horas no hay pago', () => {
+    expect(
+      timeSupplementAmount('horas_extras', { hours: 0, hourlyRate: hourly }),
+    ).toBe(0);
+  });
+});
 
 describe('Contribución a la Seguridad Social', () => {
   it('aplica el 5 % hasta 15 000 CUP', () => {

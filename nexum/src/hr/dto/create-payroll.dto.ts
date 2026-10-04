@@ -209,11 +209,30 @@ export class ManualPayrollItemDto {
   @Type(() => Number)
   hours?: number;
 
+  /** Nocturnidad: horas de la banda 11:00 pm a 7:00 am (`hours` es la de 7 a 11 pm). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  nightHours?: number;
+
   @IsOptional()
   @IsNumber()
   @Min(0)
   @Type(() => Number)
   grossSalary?: number;
+}
+
+export class NightShiftRatesDto {
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  nightShiftRateEvening: number;
+
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  nightShiftRateNight: number;
 }
 
 export class GenerateManualDto extends GeneratePayrollDto {

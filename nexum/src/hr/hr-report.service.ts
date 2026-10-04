@@ -6,9 +6,11 @@ import { Payroll } from '../entities/payroll.entity';
 import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { JobPosition } from '../entities/job-position.entity';
+import { buildAccreditationDbf } from './accreditation-dbf';
 import {
   PayrollConcept,
   TAXABLE_INCOME_CONCEPTS,
+  TIME_SUPPLEMENT_CONCEPTS,
   VACATION_ACCRUAL_RATE,
   VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
@@ -78,9 +80,22 @@ const VACATION_MOVEMENT_CONCEPTS: PayrollConcept[] = [
   'salario',
   'subsidio',
   'maternidad',
+  ...TIME_SUPPLEMENT_CONCEPTS,
   'vacaciones',
   'liquidacion',
 ];
+
+/**
+ * Días acumulados por una línea. Las nóminas anteriores a la columna
+ * vacation_days no la traen y se derivan de los días pagados; los pagos
+ * adicionales por horas acumulan solo importe, nunca días.
+ */
+function accruedDaysOf(mov: VacationMovement): number {
+  if (mov.vacationDays || TIME_SUPPLEMENT_CONCEPTS.includes(mov.concept)) {
+    return mov.vacationDays;
+  }
+  return (mov.paidUnits || WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
+}
 
 @Injectable()
 export class HrReportService {
@@ -183,12 +198,7 @@ export class HrReportService {
         add(mov.employeeId, -mov.paidUnits, -mov.grossSalary);
         continue;
       }
-      // Días e importe acumulados por la línea. Las nóminas anteriores a la
-      // columna vacation_days no la traen: se deriva de los días pagados.
-      const days =
-        mov.vacationDays ||
-        (mov.paidUnits || WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
-      add(mov.employeeId, days, mov.vacationProvision);
+      add(mov.employeeId, accruedDaysOf(mov), mov.vacationProvision);
     }
     return balances;
   }
@@ -250,11 +260,7 @@ export class HrReportService {
         }
         continue;
       }
-      // Acumulado de la línea; las nóminas anteriores a vacation_days lo
-      // derivan de los días pagados.
-      const days =
-        mov.vacationDays ||
-        (mov.paidUnits || WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
+      const days = accruedDaysOf(mov);
       if (inPeriod) {
         b.accrued.days += days;
         b.accrued.amount += mov.vacationProvision;
@@ -368,11 +374,12 @@ export class HrReportService {
   async accreditationFile(
     companyId: number,
     period: string,
+    payrollId?: number,
   ): Promise<AccreditationRow[]> {
     const payrolls = await this.payrollRepo.find({
       where: {
         companyId,
-        period,
+        ...(payrollId ? { id: payrollId } : { period }),
         status: In(['processed', 'paid']),
       },
       relations: ['items'],
@@ -412,6 +419,31 @@ export class HrReportService {
       rows.set(item.employeeId, row);
     }
     return [...rows.values()].filter((r) => r.amount > 0);
+  }
+
+  /**
+   * Fichero de acreditación en el DBF del banco. Solo entran los
+   * trabajadores con CI y cuenta: el resto se informa para que se completen
+   * sus fichas, porque el banco rechazaría el registro.
+   */
+  async accreditationDbf(
+    companyId: number,
+    period: string,
+    payrollId?: number,
+  ): Promise<{ file: Buffer; omitted: string[] }> {
+    const rows = await this.accreditationFile(companyId, period, payrollId);
+    const valid = rows.filter((r) => r.documentId && r.bankAccount);
+    const omitted = rows
+      .filter((r) => !r.documentId || !r.bankAccount)
+      .map((r) => r.employeeName);
+    const file = buildAccreditationDbf(
+      valid.map((r) => ({
+        documentId: String(r.documentId).trim(),
+        bankAccount: String(r.bankAccount).replace(/\s+/g, ''),
+        amount: Math.round(r.amount * 100) / 100,
+      })),
+    );
+    return { file, omitted };
   }
 
   /**

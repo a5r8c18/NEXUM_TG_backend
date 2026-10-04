@@ -109,32 +109,6 @@ function generateBudgetSubaccounts(parentCode: string, parentName: string, type:
 }
 
 /**
- * Genera subcuentas de Nóminas por Pagar (455-459) según el Nomenclador 2016.
- * Subcuentas por categoría ocupacional: 0010 Dirigentes, 0020 Técnicos,
- * 0030 Trabajadores de Servicios, 0040 Obreros, 0050 Otros Trabajadores
- */
-function generatePayrollSubaccounts(parentCode: string, parentName: string, type: string, nature: string) {
-  const items: Record<string, string> = {
-    '0010': 'Dirigentes',
-    '0020': 'Técnicos',
-    '0030': 'Trabajadores de Servicios',
-    '0040': 'Obreros',
-    '0050': 'Otros Trabajadores',
-  };
-  return Object.entries(items).map(([sub, name]) => ({
-    code: `${parentCode}-${sub}`,
-    name,
-    description: `${name} — ${parentName}`,
-    type,
-    nature,
-    level: 4,
-    groupNumber: getGroupNumber(parentCode),
-    parentCode,
-    allowsMovements: true,
-  }));
-}
-
-/**
  * Genera subcuentas de Retenciones por Pagar (460-469) según el Nomenclador 2016.
  * Subcuentas por tipo de retención.
  */
@@ -1571,13 +1545,9 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
       allWithSubs.push(...subs);
     }
 
-    // 4.g Nóminas por Pagar (455-459) generan subcuentas por categoría
-    // ocupacional (0010 Dirigentes … 0050 Otros Trabajadores): la nómina
-    // acredita el neto en 45X-00X0, nunca en la agrupadora.
-    if (!isNaN(codeNum) && codeNum >= 455 && codeNum <= 459) {
-      const subs = generatePayrollSubaccounts(code, parentName, type, nature);
-      allWithSubs.push(...subs);
-    }
+    // 4.g Nóminas por Pagar (455-459) no traen subcuentas: quedan como
+    // cuentas con movimiento y cada empresa crea, si quiere, las suyas; la
+    // nómina acredita el neto en la subcuenta asignada en la ficha.
 
     // Gastos Acumulados por Pagar (480-489) se mantienen como cuentas de
     // nivel 3 sin subcuentas obligatorias. Retenciones por Pagar (460-469)

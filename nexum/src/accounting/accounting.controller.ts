@@ -966,8 +966,8 @@ export class AccountingController {
   }
 
   @Get('subaccounts/:id')
-  findOneSubaccount(@Param('id') id: string) {
-    return this.accountService.findOne(id);
+  findOneSubaccount(@Req() req: Request, @Param('id') id: string) {
+    return this.accountService.findOne(id, getCompanyId(req));
   }
 
   @Post('subaccounts')
@@ -977,18 +977,22 @@ export class AccountingController {
   }
 
   @Put('subaccounts/:id')
-  updateSubaccount(@Param('id') id: string, @Body() body: UpdateAccountDto) {
-    return this.accountService.update(id, body);
+  updateSubaccount(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateAccountDto,
+  ) {
+    return this.accountService.update(id, body, getCompanyId(req));
   }
 
   @Patch('subaccounts/:id/toggle-active')
-  toggleSubaccountActive(@Param('id') id: string) {
-    return this.accountService.toggleActive(id);
+  toggleSubaccountActive(@Req() req: Request, @Param('id') id: string) {
+    return this.accountService.toggleActive(id, getCompanyId(req));
   }
 
   @Delete('subaccounts/:id')
-  deleteSubaccount(@Param('id') id: string) {
-    return this.accountService.delete(id);
+  deleteSubaccount(@Req() req: Request, @Param('id') id: string) {
+    return this.accountService.deleteSubaccount(getCompanyId(req), id);
   }
 
   @Get('accounts/children/:parentCode')

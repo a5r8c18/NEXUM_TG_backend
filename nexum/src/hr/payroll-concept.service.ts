@@ -13,6 +13,7 @@ import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
 import { JobPosition } from '../entities/job-position.entity';
+import { Company } from '../entities/company.entity';
 import { HrReportService } from './hr-report.service';
 import {
   calculateMaternityBenefit,
@@ -20,10 +21,12 @@ import {
   calculateSubsidy,
   calculateWeeklyAverageSalary,
   evaluateSubsidyLimit,
+  hourlyRateFor,
   overlapDays,
   overlapWorkingDays,
   round2,
   salaryForWorkedHours,
+  timeSupplementAmount,
   vacationDailyRate,
 } from './payroll-calculations';
 import {
@@ -35,17 +38,29 @@ import {
   LEGAL_VACATION_PERIODS,
   MINIMUM_WAGE,
   MONTHLY_LEGAL_HOURS,
+  NIGHT_SHIFT_BANDS,
   PayrollConcept,
   PAYROLL_CONCEPT_LABELS,
   PAYROLL_CONCEPTS,
+  SINGLE_WORKER_CONCEPTS,
   SOCIAL_BENEFIT_RATE,
   SUBSIDY_RETENTION_RATE,
   TAXABLE_INCOME_CONCEPTS,
+  TIME_SUPPLEMENT_CONCEPTS,
   UNION_DUES_RATE,
   VACATION_ACCRUAL_RATE,
   WEEKS_PER_YEAR,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
+
+/** Línea de la generación manual tal como llega del cliente. */
+interface ManualLineInput {
+  employeeId: string;
+  days: number;
+  hours?: number;
+  nightHours?: number;
+  grossSalary?: number;
+}
 
 interface GenerateInput {
   period: string;
@@ -276,6 +291,76 @@ export class PayrollConceptService {
   }
 
   /**
+   * Los conceptos individuales admiten varias nóminas por período, una por
+   * trabajador: lo que se impide es pagarle dos veces el mismo concepto en
+   * el mismo período.
+   */
+  private async ensureWorkerNotPaid(
+    companyId: number,
+    concept: PayrollConcept,
+    period: string,
+    employeeId: string,
+    employeeName: string,
+  ): Promise<void> {
+    const count = await this.payrollItemRepo
+      .createQueryBuilder('item')
+      .innerJoin(Payroll, 'p', 'p.id = item."payrollId"')
+      .where('item."companyId" = :companyId', { companyId })
+      .andWhere('item."employeeId" = :employeeId', { employeeId })
+      .andWhere('p.concept = :concept', { concept })
+      .andWhere('p.period = :period', { period })
+      .andWhere("p.status <> 'cancelled'")
+      .getCount();
+    if (count > 0) {
+      throw new BadRequestException(
+        `${employeeName} ya tiene una nómina de ${PAYROLL_CONCEPT_LABELS[concept]} en el período ${period}`,
+      );
+    }
+  }
+
+  /** Tarifas de nocturnidad vigentes de la empresa, en CUP por hora. */
+  async nightShiftRates(
+    companyId: number,
+  ): Promise<{ evening: number; night: number }> {
+    const company = await this.payrollRepo.manager
+      .getRepository(Company)
+      .findOne({ where: { id: companyId } });
+    return {
+      evening: Number(
+        company?.nightShiftRateEvening ?? NIGHT_SHIFT_BANDS.evening.default,
+      ),
+      night: Number(
+        company?.nightShiftRateNight ?? NIGHT_SHIFT_BANDS.night.default,
+      ),
+    };
+  }
+
+  /**
+   * Fija las tarifas de nocturnidad de la empresa. La Res. 17/2025 MTSS
+   * acota cada banda: fuera del rango no se admite.
+   */
+  async updateNightShiftRates(
+    companyId: number,
+    rates: { nightShiftRateEvening: number; nightShiftRateNight: number },
+  ) {
+    const check = (value: number, band: 'evening' | 'night') => {
+      const { min, max, label } = NIGHT_SHIFT_BANDS[band];
+      if (!(value >= min && value <= max)) {
+        throw new BadRequestException(
+          `La tarifa de ${label} debe estar entre ${min} y ${max} CUP/hora`,
+        );
+      }
+    };
+    check(Number(rates.nightShiftRateEvening), 'evening');
+    check(Number(rates.nightShiftRateNight), 'night');
+    await this.payrollRepo.manager.getRepository(Company).update(companyId, {
+      nightShiftRateEvening: round2(Number(rates.nightShiftRateEvening)),
+      nightShiftRateNight: round2(Number(rates.nightShiftRateNight)),
+    });
+    return this.nightShiftRates(companyId);
+  }
+
+  /**
    * Reverifica cada claim contra lo ya pagado de la licencia. Se ejecuta
    * dentro de la transacción con la fila de la licencia bloqueada, así que
    * una generación concurrente espera y ve el resultado de la otra: es la
@@ -443,6 +528,7 @@ export class PayrollConceptService {
       position: emp.position || '',
       costCenterId: emp.costCenterId || null,
       expenseAccountCode: emp.expenseAccountCode || null,
+      payableSubaccount: emp.payableSubaccount || null,
       occupationalCategory: emp.occupationalCategory || '0020',
       baseSalary: 0,
       overtimeHours: 0,
@@ -678,25 +764,32 @@ export class PayrollConceptService {
     }
     const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
 
-    // El índice único es por concepto y período, así que todas las
-    // terminaciones del mes comparten una sola nómina de liquidación: la
-    // unicidad real es por trabajador dentro de esa nómina.
-    const settlement = await this.payrollRepo.findOne({
-      where: { companyId, concept: 'liquidacion', period: data.period },
-      relations: ['items'],
-    });
-    if (settlement && settlement.status === 'cancelled') {
-      throw new BadRequestException(
-        `Ya existe una nómina de liquidación cancelada para ${data.period}: ` +
-          'elimínela o genere la liquidación en otro período',
-      );
-    }
-    const alreadySettled = (settlement?.items || []).some(
-      (i) => i.employeeId === data.employeeId,
+    // Cada baja es su propia nómina de liquidación: varias terminaciones del
+    // mes no se bloquean entre sí aunque la primera ya esté procesada.
+    await this.ensureWorkerNotPaid(
+      companyId,
+      'liquidacion',
+      data.period,
+      emp.id,
+      employeeName,
     );
-    if (alreadySettled) {
+
+    // El saldo solo cuenta nóminas contabilizadas: si el salario del mes de
+    // la baja sigue en borrador, lo que acumula quedaría fuera de la
+    // liquidación y sin forma de pagarse después.
+    const pendingAccruals = await this.payrollItemRepo
+      .createQueryBuilder('item')
+      .innerJoin(Payroll, 'p', 'p.id = item."payrollId"')
+      .where('item."companyId" = :companyId', { companyId })
+      .andWhere('item."employeeId" = :employeeId', { employeeId: emp.id })
+      .andWhere('p.period <= :period', { period: data.period })
+      .andWhere("p.status = 'draft'")
+      .andWhere('item."vacation_provision" > 0')
+      .getCount();
+    if (pendingAccruals > 0) {
       throw new BadRequestException(
-        `Ya existe una liquidación de ${employeeName} en el período ${data.period}`,
+        `${employeeName} tiene nóminas en borrador que acumulan vacaciones: ` +
+          'procéselas antes de liquidar para que su acumulado entre en la liquidación',
       );
     }
 
@@ -741,37 +834,17 @@ export class PayrollConceptService {
         `${days} días acumulados × ${rate}`,
     };
 
-    // Si el período ya tiene su nómina de liquidación en borrador, la nueva
-    // terminación se añade como línea y se recalculan los totales.
-    if (settlement) {
-      if (settlement.status !== 'draft') {
-        throw new BadRequestException(
-          `La nómina de liquidación del período ${data.period} ya está ` +
-            `${settlement.status === 'processed' ? 'procesada' : 'pagada'}: ` +
-            'no se pueden añadir trabajadores',
-        );
-      }
-      await this.payrollItemRepo.save({
-        ...item,
-        payrollId: settlement.id,
-      });
-      settlement.totalGross = round2(
-        Number(settlement.totalGross) + gross,
-      );
-      settlement.totalDeductions = round2(
-        Number(settlement.totalDeductions) + totalDeductions,
-      );
-      settlement.totalNet = round2(
-        Number(settlement.totalNet) + item.netSalary!,
-      );
-      await this.payrollRepo.save(settlement);
-      return this.payrollRepo.findOne({
-        where: { id: settlement.id },
-        relations: ['items'],
-      });
-    }
-
-    return this.savePayrollWithItems(companyId, 'liquidacion', data, [item]);
+    const notes =
+      emp.status === 'active'
+        ? `${employeeName} sigue activo en su ficha: márquelo como inactivo al causar baja`
+        : undefined;
+    return this.savePayrollWithItems(
+      companyId,
+      'liquidacion',
+      data,
+      [item],
+      notes,
+    );
   }
 
   // ── Subsidio por enfermedad o accidente (Art. 39-46) ──
@@ -1362,54 +1435,66 @@ export class PayrollConceptService {
   }
 
   /**
-   * Generación manual de nómina: el usuario selecciona los trabajadores, los
-   * días trabajados y, opcionalmente, el salario. El sistema calcula el
-   * devengado y las retenciones por concepto, sin depender de licencias
-   * aprobadas.
+   * Generación manual de nómina: el usuario selecciona los trabajadores y el
+   * tiempo, y el sistema calcula devengado, retenciones y provisión sin
+   * depender de licencias aprobadas.
    *
-   * - Salario: días × tarifa diaria contractual (salario / 24). Si el
-   *   trabajador no tiene salario declarado, el usuario debe enviar el importe.
-   * - Vacaciones: días × tarifa acumulada del submayor; si no hay acumulado,
-   *   se usa la tarifa contractual.
-   * - Otros conceptos: de momento se requiere el importe bruto; se añaden las
-   *   retenciones si el concepto es gravable.
+   * - Salario fijo: salario − horas faltadas × (salario / 190,6), topado en
+   *   el salario. Sin salario fijo: tiempo × tarifa del cargo.
+   * - Horas extra, nocturnidad y feriado: pagos adicionales por horas.
+   * - Vacaciones: días × tarifa acumulada del submayor.
+   * - Liquidación: todo el saldo acumulado (Art. 52).
+   * - Subsidio y maternidad: importe bruto indicado, exento.
    */
   async generateManual(
     companyId: number,
     data: GenerateInput & {
       concept: PayrollConcept;
-      items: {
-        employeeId: string;
-        days: number;
-        hours?: number;
-        grossSalary?: number;
-      }[];
+      items: ManualLineInput[];
     },
   ) {
     if (!PAYROLL_CONCEPTS.includes(data.concept)) {
       throw new BadRequestException(`Concepto de nómina no válido: ${data.concept}`);
     }
 
-    // No se admiten múltiples trabajadores en conceptos que históricamente se
-    // liquidan uno a uno (vacaciones, subsidio, maternidad, liquidación).
-    const singleWorkerConcepts: PayrollConcept[] = [
-      'vacaciones',
-      'subsidio',
-      'maternidad',
-      'liquidacion',
-    ];
-    if (singleWorkerConcepts.includes(data.concept) && data.items.length > 1) {
+    const isSingleWorker = SINGLE_WORKER_CONCEPTS.includes(data.concept);
+    if (isSingleWorker && data.items.length !== 1) {
       throw new BadRequestException(
         `${PAYROLL_CONCEPT_LABELS[data.concept]} se genera para un solo trabajador`,
       );
     }
 
-    await this.ensureUnique(
-      companyId,
-      data.concept,
-      data.period,
-      data.installment ?? undefined,
-    );
+    if (data.concept === 'liquidacion') {
+      return this.generateVacationSettlement(companyId, {
+        ...data,
+        employeeId: data.items[0].employeeId,
+      });
+    }
+
+    if (isSingleWorker) {
+      const worker = await this.employeeRepo.findOne({
+        where: { id: data.items[0].employeeId, companyId },
+      });
+      if (!worker) {
+        throw new NotFoundException(
+          `Empleado ${data.items[0].employeeId} no encontrado`,
+        );
+      }
+      await this.ensureWorkerNotPaid(
+        companyId,
+        data.concept,
+        data.period,
+        worker.id,
+        `${worker.firstName} ${worker.lastName}`.trim(),
+      );
+    } else {
+      await this.ensureUnique(
+        companyId,
+        data.concept,
+        data.period,
+        data.installment ?? undefined,
+      );
+    }
 
     const priorTotals = await monthlyTaxableTotals(
       this.payrollItemRepo,
@@ -1420,6 +1505,10 @@ export class PayrollConceptService {
       data.concept === 'vacaciones'
         ? await this.hrReportService.vacationBalances(companyId, data.period)
         : new Map();
+    const nightRates =
+      data.concept === 'nocturnidad'
+        ? await this.nightShiftRates(companyId)
+        : undefined;
 
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
@@ -1466,15 +1555,15 @@ export class PayrollConceptService {
           // Salario fijo: el mes completo son 190,6 h (24 días laborables de
           // 7,9416 h) y se descuenta únicamente el tiempo faltado a la tarifa
           // horaria (salario / 190,6). Superar el fondo de tiempo no paga más.
+          // El devengo lo fija siempre el servidor: el importe que envíe el
+          // cliente no lo sustituye.
           const workedHours = days * HOURS_PER_WORKDAY + hours;
-          if (workedHours <= 0 && gross <= 0) {
+          if (workedHours <= 0) {
             throw new BadRequestException(
-              `${employeeName}: indique el tiempo trabajado o el salario`,
+              `${employeeName}: indique el tiempo trabajado`,
             );
           }
-          if (gross <= 0) {
-            gross = salaryForWorkedHours(baseSalary, workedHours);
-          }
+          gross = salaryForWorkedHours(baseSalary, workedHours);
           workedDays = workedHours / HOURS_PER_WORKDAY;
           paidUnits = round2(workedDays);
           const missedHours = Math.max(0, MONTHLY_LEGAL_HOURS - workedHours);
@@ -1490,7 +1579,7 @@ export class PayrollConceptService {
           const rate = Number(position?.salaryRate || 0);
           if (position?.timeUnit === 'hours') {
             const workedHours = hours > 0 ? hours : days * HOURS_PER_WORKDAY;
-            if (gross <= 0 && rate > 0 && workedHours > 0) {
+            if (rate > 0) {
               gross = round2(workedHours * rate);
             }
             workedDays = workedHours / HOURS_PER_WORKDAY;
@@ -1498,7 +1587,7 @@ export class PayrollConceptService {
             note = `Salario por horas: ${round2(workedHours)} h × ${rate}`;
           } else {
             workedDays = days > 0 ? days : hours / HOURS_PER_WORKDAY;
-            if (gross <= 0 && rate > 0 && workedDays > 0) {
+            if (rate > 0) {
               gross = round2(workedDays * rate);
             }
             paidUnits = round2(workedDays);
@@ -1545,10 +1634,75 @@ export class PayrollConceptService {
         continue;
       }
 
+      if (TIME_SUPPLEMENT_CONCEPTS.includes(data.concept)) {
+        const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
+        const concept = data.concept as 'horas_extras' | 'nocturnidad' | 'feriado';
+        const position = baseSalary > 0 ? null : await positionOf(emp.positionId);
+        const hourlyRate = hourlyRateFor(baseSalary, position);
+        // Feriado admite el tiempo en días laborables (7,9416 h cada uno).
+        const hours =
+          Number(line.hours || 0) +
+          (concept === 'feriado' ? days * HOURS_PER_WORKDAY : 0);
+        const nightHours = concept === 'nocturnidad' ? Number(line.nightHours || 0) : 0;
+        if (hours + nightHours <= 0) continue;
+        if (concept !== 'nocturnidad' && hourlyRate <= 0) {
+          throw new BadRequestException(
+            `${employeeName}: sin salario fijo ni tarifa en el cargo para calcular la tarifa horaria`,
+          );
+        }
+        const overtimeRate = Number(emp.overtimeRate || 1) || 1;
+        gross = timeSupplementAmount(concept, {
+          hours,
+          nightHours,
+          hourlyRate,
+          overtimeRate,
+          nightShiftRates: nightRates,
+        });
+        if (gross <= 0) continue;
+
+        const { socialSecurity, taxWithholding } = incrementalTaxes(
+          priorTotals.get(emp.id),
+          gross,
+        );
+        const totalDeductions = round2(socialSecurity + taxWithholding);
+        const hr = round2(hourlyRate);
+        const note =
+          concept === 'horas_extras'
+            ? `Horas extras: ${round2(hours)} h × ${hr}` +
+              (overtimeRate !== 1 ? ` × ${overtimeRate}` : '')
+            : concept === 'nocturnidad'
+              ? `Nocturnidad: ${round2(hours)} h × ${nightRates!.evening} + ${round2(nightHours)} h × ${nightRates!.night}`
+              : `Feriado trabajado (adicional): ${round2(hours)} h × ${hr}`;
+
+        items.push({
+          ...this.baseItem(emp, companyId),
+          baseSalary,
+          overtimeHours: concept === 'horas_extras' ? round2(hours) : 0,
+          overtimePay: concept === 'horas_extras' ? gross : 0,
+          grossSalary: gross,
+          socialSecurity,
+          taxWithholding,
+          totalDeductions,
+          netSalary: round2(gross - totalDeductions),
+          paidUnits: round2(hours + nightHours),
+          // Pago adicional: acumula vacaciones sobre el importe percibido
+          // (Art. 102), pero no días, que ya cuenta la nómina de salario.
+          vacationProvision: round2(gross * VACATION_ACCRUAL_RATE),
+          vacationDays: 0,
+          subsidyRetention: round2(gross * SUBSIDY_RETENTION_RATE),
+          averageSalary: hr,
+          appliedRate: concept === 'horas_extras' ? overtimeRate : 1,
+          notes: note,
+        });
+        continue;
+      }
+
       if (data.concept === 'vacaciones') {
         const balance = vacationBalances.get(emp.id);
         const dailyRate = vacationDailyRate(balance, contractualRate);
-        if (gross <= 0 && days > 0) {
+        // Con días indicados el importe es días × tarifa acumulada; el
+        // importe manual solo vale cuando no se indican días.
+        if (days > 0) {
           gross = round2(days * dailyRate);
         }
         if (gross <= 0) {
@@ -1640,19 +1794,24 @@ export class PayrollConceptService {
     );
   }
 
-  /** Catálogo de conceptos y rangos legales que muestra la interfaz. */
-  conceptCatalog() {
+  /** Catálogo de conceptos, tarifas de nocturnidad y sus rangos legales. */
+  async conceptCatalog(companyId: number) {
     return {
       concepts: PAYROLL_CONCEPTS.map((value) => ({
         value,
         label: PAYROLL_CONCEPT_LABELS[value],
+        singleWorker: SINGLE_WORKER_CONCEPTS.includes(value),
       })),
       nightShift: {
-        bands: [
-          { value: 'evening', label: '7:00 pm a 11:00 pm', min: 0.6, max: 1.2 },
-          { value: 'night', label: '11:00 pm a 7:00 am', min: 1.15, max: 2.3 },
-        ],
-        rates: { evening: 0.6, night: 1.15 },
+        bands: (Object.keys(NIGHT_SHIFT_BANDS) as ('evening' | 'night')[]).map(
+          (value) => ({
+            value,
+            label: NIGHT_SHIFT_BANDS[value].label,
+            min: NIGHT_SHIFT_BANDS[value].min,
+            max: NIGHT_SHIFT_BANDS[value].max,
+          }),
+        ),
+        rates: await this.nightShiftRates(companyId),
       },
     };
   }
@@ -1666,12 +1825,7 @@ export class PayrollConceptService {
     companyId: number,
     data: GenerateInput & {
       concept: PayrollConcept;
-      items: {
-        employeeId: string;
-        days: number;
-        hours?: number;
-        grossSalary?: number;
-      }[];
+      items: ManualLineInput[];
     },
   ) {
     if (!PAYROLL_CONCEPTS.includes(data.concept)) {
@@ -1684,6 +1838,10 @@ export class PayrollConceptService {
     const vacationBalances = needsBalance
       ? await this.hrReportService.vacationBalances(companyId, data.period)
       : new Map();
+    const nightRates =
+      data.concept === 'nocturnidad'
+        ? await this.nightShiftRates(companyId)
+        : undefined;
 
     const positionCache = new Map<string, JobPosition | null>();
     const positionOf = async (id: string | null | undefined) => {
@@ -1754,11 +1912,28 @@ export class PayrollConceptService {
             );
           }
         }
+      } else if (TIME_SUPPLEMENT_CONCEPTS.includes(data.concept)) {
+        const concept = data.concept as 'horas_extras' | 'nocturnidad' | 'feriado';
+        const position = baseSalary > 0 ? null : await positionOf(emp.positionId);
+        const hourlyRate = hourlyRateFor(baseSalary, position);
+        ctx.rate = round2(hourlyRate);
+        ctx.suggestedGross = timeSupplementAmount(concept, {
+          hours: hours + (concept === 'feriado' ? days * HOURS_PER_WORKDAY : 0),
+          nightHours: Number(line.nightHours || 0),
+          hourlyRate,
+          overtimeRate: Number(emp.overtimeRate || 1) || 1,
+          nightShiftRates: nightRates,
+        });
+        if (concept !== 'nocturnidad' && hourlyRate <= 0) {
+          ctx.warnings.push(
+            `${name}: sin salario fijo ni tarifa en el cargo para calcular la tarifa horaria`,
+          );
+        }
       } else if (data.concept === 'vacaciones') {
         const balance = vacationBalances.get(emp.id);
         ctx.rate = vacationDailyRate(balance, contractualRate);
-        ctx.accumulatedDays = balance?.days ?? 0;
-        ctx.accumulatedAmount = balance?.amount ?? 0;
+        ctx.accumulatedDays = round2(balance?.days ?? 0);
+        ctx.accumulatedAmount = round2(balance?.amount ?? 0);
         ctx.suggestedGross = round2(days * ctx.rate);
         if (!balance || balance.days <= 0) {
           ctx.warnings.push(
@@ -1772,9 +1947,17 @@ export class PayrollConceptService {
       } else if (data.concept === 'liquidacion') {
         const balance = vacationBalances.get(emp.id);
         ctx.rate = vacationDailyRate(balance, contractualRate);
-        ctx.accumulatedDays = balance?.days ?? 0;
-        ctx.accumulatedAmount = balance?.amount ?? 0;
-        ctx.suggestedGross = round2(Math.max(0, ctx.accumulatedAmount ?? 0));
+        ctx.accumulatedDays = round2(balance?.days ?? 0);
+        ctx.accumulatedAmount = round2(balance?.amount ?? 0);
+        ctx.suggestedGross = Math.max(0, ctx.accumulatedAmount);
+        if (ctx.accumulatedDays <= 0 || ctx.accumulatedAmount <= 0) {
+          ctx.warnings.push(`${name}: no tiene vacaciones acumuladas que liquidar`);
+        }
+        if (emp.status === 'active') {
+          ctx.warnings.push(
+            `${name} sigue activo en su ficha: márquelo como inactivo al causar baja`,
+          );
+        }
       }
 
       contexts.push(ctx);

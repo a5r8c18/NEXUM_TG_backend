@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Account } from '../entities/account.entity';
+import { VoucherLine } from '../entities/voucher-line.entity';
 import { Elemento } from '../entities/elemento.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
 
@@ -168,19 +169,8 @@ export class AccountService {
   }
 
   async deleteAccount(companyId: number, id: string) {
-    const account = await this.findOneAccount(companyId, id);
-
-    // Verificar que no tenga cuentas hijas
-    const childAccounts = await this.accountRepo.find({
-      where: { parentCode: account.code, companyId },
-    });
-    if (childAccounts.length > 0) {
-      throw new BadRequestException(
-        'No se puede eliminar una cuenta que tiene cuentas hijas',
-      );
-    }
-
-    return this.accountRepo.remove(account);
+    await this.findOneAccount(companyId, id);
+    return this.deleteSubaccount(companyId, id);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -268,7 +258,55 @@ export class AccountService {
       allowsMovements: true, // Las subcuentas permiten movimientos
     });
 
-    return this.accountRepo.save(subaccount);
+    const saved = await this.accountRepo.save(subaccount);
+    // Al subdividirse, la cuenta pasa a agrupadora: los asientos van a sus
+    // subcuentas analíticas.
+    if (parentAccount.allowsMovements) {
+      await this.accountRepo.update(parentAccount.id, { allowsMovements: false });
+    }
+    return saved;
+  }
+
+  /**
+   * Elimina una subcuenta de la empresa. Si tiene asientos no se borra —se
+   * perdería el rastro contable—: debe desactivarse. Al quitar la última
+   * subcuenta, la cuenta padre vuelve a admitir movimientos directos.
+   */
+  async deleteSubaccount(companyId: number, id: string) {
+    const account = await this.accountRepo.findOneBy({ id, companyId });
+    if (!account) {
+      throw new NotFoundException('Subcuenta no encontrada');
+    }
+    const children = await this.accountRepo.count({
+      where: { companyId, parentCode: account.code },
+    });
+    if (children > 0) {
+      throw new BadRequestException(
+        'No se puede eliminar una cuenta que tiene cuentas hijas',
+      );
+    }
+    const movements = await this.accountRepo.manager.count(VoucherLine, {
+      where: { accountId: account.id },
+    });
+    if (movements > 0) {
+      throw new BadRequestException(
+        `La subcuenta ${account.code} tiene ${movements} asiento(s): desactívela en lugar de eliminarla`,
+      );
+    }
+    await this.accountRepo.remove(account);
+
+    if (account.parentCode) {
+      const siblings = await this.accountRepo.count({
+        where: { companyId, parentCode: account.parentCode },
+      });
+      if (siblings === 0) {
+        await this.accountRepo.update(
+          { companyId, code: account.parentCode },
+          { allowsMovements: true },
+        );
+      }
+    }
+    return true;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -513,17 +551,21 @@ export class AccountService {
   // ── LEGACY SUBACCOUNT METHODS (for compatibility) ──
   // ══════════════════════════════════════════════════════════
 
-  async findOne(id: string) {
-    return await this.accountRepo.findOneBy({ id });
+  async findOne(id: string, companyId?: number) {
+    return await this.accountRepo.findOneBy(
+      companyId !== undefined ? { id, companyId } : { id },
+    );
   }
 
-  async update(id: string, data: Partial<Account>) {
-    await this.accountRepo.update(id, data);
-    return await this.findOne(id);
+  async update(id: string, data: Partial<Account>, companyId?: number) {
+    const account = await this.findOne(id, companyId);
+    if (!account) throw new NotFoundException('Cuenta no encontrada');
+    await this.accountRepo.update(account.id, data);
+    return await this.findOne(id, companyId);
   }
 
-  async toggleActive(id: string) {
-    const account = await this.findOne(id);
+  async toggleActive(id: string, companyId?: number) {
+    const account = await this.findOne(id, companyId);
     if (!account) return null;
 
     account.isActive = !account.isActive;
@@ -551,10 +593,5 @@ export class AccountService {
         where: { companyId, level: 4, isActive: true, allowsMovements: true },
       }),
     };
-  }
-
-  async delete(id: string) {
-    const result = await this.accountRepo.delete(id);
-    return (result.affected ?? 0) > 0;
   }
 }

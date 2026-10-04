@@ -17,6 +17,9 @@ export type PayrollConcept =
   | 'subsidio'
   | 'maternidad'
   | 'liquidacion'
+  | 'horas_extras'
+  | 'nocturnidad'
+  | 'feriado'
   | 'libre';
 
 export const PAYROLL_CONCEPTS: PayrollConcept[] = [
@@ -25,6 +28,9 @@ export const PAYROLL_CONCEPTS: PayrollConcept[] = [
   'subsidio',
   'maternidad',
   'liquidacion',
+  'horas_extras',
+  'nocturnidad',
+  'feriado',
   'libre',
 ];
 
@@ -34,7 +40,53 @@ export const PAYROLL_CONCEPT_LABELS: Record<PayrollConcept, string> = {
   subsidio: 'Subsidio por enfermedad o accidente',
   maternidad: 'Licencia de maternidad',
   liquidacion: 'Liquidación por terminación',
+  horas_extras: 'Horas extras',
+  nocturnidad: 'Nocturnidad',
+  feriado: 'Días feriados',
   libre: 'Concepto libre',
+};
+
+/**
+ * Pagos adicionales por tiempo trabajado: horas extra (Art. 122 Ley 116),
+ * nocturnidad (Res. 17/2025 MTSS) y feriado trabajado (Art. 111.c). Se
+ * generan para varios trabajadores a la vez, son remuneración gravable,
+ * cargan a gasto y acumulan vacaciones sobre el importe percibido.
+ */
+export const TIME_SUPPLEMENT_CONCEPTS: PayrollConcept[] = [
+  'horas_extras',
+  'nocturnidad',
+  'feriado',
+];
+
+/** Conceptos que paga la entidad con cargo a gasto del período. */
+export const EXPENSE_CONCEPTS: PayrollConcept[] = [
+  'salario',
+  'libre',
+  ...TIME_SUPPLEMENT_CONCEPTS,
+];
+
+/**
+ * Conceptos que se generan trabajador por trabajador: cada evento (unas
+ * vacaciones, un certificado, una baja) es su propia nómina, así que varios
+ * trabajadores pueden tenerla en el mismo período.
+ */
+export const SINGLE_WORKER_CONCEPTS: PayrollConcept[] = [
+  'vacaciones',
+  'subsidio',
+  'maternidad',
+  'liquidacion',
+];
+
+/** Bandas horarias del pago adicional por nocturnidad (Res. 17/2025 MTSS). */
+export type NightShiftBand = 'evening' | 'night';
+
+/** Rango legal de la tarifa en CUP por hora y valor inicial de cada banda. */
+export const NIGHT_SHIFT_BANDS: Record<
+  NightShiftBand,
+  { label: string; min: number; max: number; default: number }
+> = {
+  evening: { label: '7:00 pm a 11:00 pm', min: 0.6, max: 1.2, default: 0.6 },
+  night: { label: '11:00 pm a 7:00 am', min: 1.15, max: 2.3, default: 1.15 },
 };
 
 /**
@@ -59,12 +111,14 @@ export const TAXABLE_INCOME_CONCEPTS: PayrollConcept[] = [
   'vacaciones',
   'liquidacion',
   'libre',
+  ...TIME_SUPPLEMENT_CONCEPTS,
 ];
 
 /**
- * Categoría ocupacional del trabajador. Determina la subcuenta analítica de
- * Nóminas por Pagar (455-00X0) donde se acredita el neto, según el Nomenclador
- * Cubano 2016.
+ * Categoría ocupacional del trabajador (Nomenclador 2016). Es un dato
+ * estadístico del Modelo SC-4-06: la subcuenta de Nóminas por Pagar donde se
+ * acredita el neto no se deriva de ella, sino de la que la empresa haya
+ * creado y asignado en la ficha (`payableSubaccount`).
  */
 export type OccupationalCategory = '0010' | '0020' | '0030' | '0040' | '0050';
 

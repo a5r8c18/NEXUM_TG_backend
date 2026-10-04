@@ -28,6 +28,7 @@ import {
   GenerateManualDto,
   GeneratePayrollDto,
   GenerateSettlementDto,
+  NightShiftRatesDto,
   PayPayrollDto,
   ProcessPayrollDto,
   UpdatePayrollItemsDto,
@@ -76,10 +77,25 @@ export class PayrollController {
     return this.payrollService.getStatistics(companyId);
   }
 
-  /** Catálogo de conceptos soportados y rangos legales para la UI. */
+  /** Catálogo de conceptos soportados y tarifas de nocturnidad de la empresa. */
   @Get('concepts')
-  getConceptCatalog() {
-    return this.payrollConceptService.conceptCatalog();
+  getConceptCatalog(@Req() req: Request) {
+    return this.payrollConceptService.conceptCatalog(getCompanyId(req));
+  }
+
+  /** Subcuentas de Nóminas por Pagar que la empresa ha creado. */
+  @Get('payable-subaccounts')
+  getPayableSubaccounts(@Req() req: Request) {
+    return this.payrollService.payableSubaccounts(getCompanyId(req));
+  }
+
+  @Roles(...PAYROLL_ADMIN_ROLES)
+  @Put('night-shift-rates')
+  updateNightShiftRates(@Req() req: Request, @Body() body: NightShiftRatesDto) {
+    return this.payrollConceptService.updateNightShiftRates(
+      getCompanyId(req),
+      body,
+    );
   }
 
   @Get(':id/export/pdf')

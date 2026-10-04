@@ -57,7 +57,14 @@ export class PayrollItem {
   @Column({ name: 'expense_account_code', type: 'varchar', length: 20, nullable: true })
   expenseAccountCode: string | null;
 
-  /** Categoría ocupacional que decide la subcuenta 455-00X0 del neto. */
+  /**
+   * Subcuenta de Nóminas por Pagar en que se acredita el neto, congelada al
+   * generar la línea para que el pago debite exactamente lo acreditado.
+   */
+  @Column({ name: 'payable_subaccount', type: 'varchar', length: 20, nullable: true })
+  payableSubaccount: string | null;
+
+  /** Categoría ocupacional del trabajador (Modelo SC-4-06). */
   @Column({
     name: 'occupational_category',
     type: 'varchar',

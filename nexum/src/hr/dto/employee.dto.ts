@@ -149,6 +149,12 @@ export class CreateEmployeeDto {
   @IsIn(occupationalCategories)
   occupationalCategory?: '0010' | '0020' | '0030' | '0040' | '0050';
 
+  /** Subcuenta de Nóminas por Pagar; vacío = la propia cuenta 455. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  payableSubaccount?: string | null;
+
   @IsOptional()
   @IsString()
   @IsIn(employmentSectors)
@@ -292,6 +298,12 @@ export class UpdateEmployeeDto {
   @IsString()
   @IsIn(occupationalCategories)
   occupationalCategory?: '0010' | '0020' | '0030' | '0040' | '0050';
+
+  /** Subcuenta de Nóminas por Pagar; vacío = la propia cuenta 455. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  payableSubaccount?: string | null;
 
   @IsOptional()
   @IsString()

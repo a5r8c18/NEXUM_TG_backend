@@ -5,6 +5,7 @@
  * supuestos de cada artículo sin depender de la base de datos.
  */
 import {
+  HOURS_PER_WORKDAY,
   IncapacityOrigin,
   MINIMUM_SUBSIDY,
   MONTHLY_LEGAL_HOURS,
@@ -234,6 +235,58 @@ export function salaryForWorkedHours(salary: number, workedHours: number): numbe
   const hourlyRate = salary / MONTHLY_LEGAL_HOURS;
   const missedHours = Math.max(0, MONTHLY_LEGAL_HOURS - workedHours);
   return round2(Math.max(0, salary - missedHours * hourlyRate));
+}
+
+/**
+ * Tarifa horaria del trabajador: salario / 190,6 si tiene salario fijo; si
+ * no, la tarifa del cargo, convertida a horas cuando está expresada por día
+ * laborable (7,9416 h).
+ */
+export function hourlyRateFor(
+  salary: number,
+  position?: { salaryRate?: number | null; timeUnit?: 'hours' | 'days' | null } | null,
+): number {
+  if (salary > 0) return salary / MONTHLY_LEGAL_HOURS;
+  const rate = Number(position?.salaryRate || 0);
+  if (rate <= 0) return 0;
+  return position?.timeUnit === 'days' ? rate / HOURS_PER_WORKDAY : rate;
+}
+
+export interface TimeSupplementInput {
+  /** Horas extra, horas de la banda 19-23 h o horas trabajadas en feriado. */
+  hours: number;
+  /** Horas de la banda 23-7 h (solo nocturnidad). */
+  nightHours?: number;
+  hourlyRate: number;
+  /** Recargo de horas extra pactado en la ficha (1 = sin recargo). */
+  overtimeRate?: number;
+  /** Tarifas de nocturnidad de la empresa, en CUP por hora. */
+  nightShiftRates?: { evening: number; night: number };
+}
+
+/**
+ * Importe de un pago adicional por tiempo trabajado.
+ *
+ * - Horas extra (Art. 122 Ley 116): horas × tarifa horaria × recargo.
+ * - Nocturnidad (Res. 17/2025 MTSS): horas de cada banda × la tarifa fija en
+ *   CUP/h que la entidad fijó; no depende del salario.
+ * - Feriado trabajado (Art. 111.c): se paga doble, pero el salario del mes ya
+ *   retribuye ese tiempo, así que este concepto paga solo el adicional:
+ *   horas × tarifa horaria.
+ */
+export function timeSupplementAmount(
+  concept: 'horas_extras' | 'nocturnidad' | 'feriado',
+  input: TimeSupplementInput,
+): number {
+  const hours = Math.max(0, Number(input.hours || 0));
+  if (concept === 'nocturnidad') {
+    const rates = input.nightShiftRates || { evening: 0, night: 0 };
+    const nightHours = Math.max(0, Number(input.nightHours || 0));
+    return round2(hours * rates.evening + nightHours * rates.night);
+  }
+  const multiplier =
+    concept === 'horas_extras' ? Number(input.overtimeRate || 1) || 1 : 1;
+  return round2(hours * input.hourlyRate * multiplier);
 }
 
 /**

@@ -28,8 +28,10 @@ import {
   monthlyTaxableTotals,
   MonthlyTaxableTotals,
 } from './monthly-taxable';
+import { Account } from '../entities/account.entity';
 import {
   EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE,
+  EXPENSE_CONCEPTS,
   EmploymentSector,
   HOURS_PER_WORKDAY,
   LABOR_FORCE_TAX_RATE,
@@ -38,6 +40,7 @@ import {
   PayrollConcept,
   SUBSIDY_RETENTION_RATE,
   TAXABLE_INCOME_CONCEPTS,
+  TIME_SUPPLEMENT_CONCEPTS,
   UNION_DUES_RATE,
   VACATION_ACCRUAL_RATE,
   VACATION_FUND_CONCEPTS,
@@ -374,6 +377,7 @@ export class PayrollService {
         position: emp.position || '',
         costCenterId: emp.costCenterId || null,
         expenseAccountCode: emp.expenseAccountCode || null,
+        payableSubaccount: emp.payableSubaccount || null,
         occupationalCategory: emp.occupationalCategory || '0020',
         baseSalary,
         overtimeHours,
@@ -505,6 +509,7 @@ export class PayrollService {
     let totalNet = 0;
 
     const isSalary = payroll.concept === 'salario';
+    const isTimeSupplement = TIME_SUPPLEMENT_CONCEPTS.includes(payroll.concept);
     // CESS e IIP solo gravan las remuneraciones (salario, vacaciones,
     // liquidación y libre); subsidio y maternidad son prestaciones exentas.
     const isTaxable = TAXABLE_INCOME_CONCEPTS.includes(payroll.concept);
@@ -607,6 +612,10 @@ export class PayrollService {
         position: item.position || '',
         costCenterId: item.costCenterId || employee?.costCenterId || null,
         expenseAccountCode: employee?.expenseAccountCode || null,
+        // La subcuenta del neto se congela al generar: si la ficha cambió
+        // después, la línea conserva la de origen.
+        payableSubaccount:
+          previous?.payableSubaccount ?? employee?.payableSubaccount ?? null,
         occupationalCategory: employee?.occupationalCategory || '0020',
         baseSalary: Number(item.baseSalary || 0),
         paidUnits: isSalary ? paidUnits : Number(item.paidUnits || 0),
@@ -629,9 +638,10 @@ export class PayrollService {
         // La provisión de vacaciones se recalcula sobre los salarios percibidos
         // del período (Art. 102), igual que en la generación. En los demás
         // conceptos se conserva el valor que ya trae la línea.
-        vacationProvision: isSalary
-          ? round2(grossSalary * VACATION_ACCRUAL_RATE)
-          : Number((item as Partial<PayrollItem>).vacationProvision || 0),
+        vacationProvision:
+          isSalary || isTimeSupplement
+            ? round2(grossSalary * VACATION_ACCRUAL_RATE)
+            : Number((item as Partial<PayrollItem>).vacationProvision || 0),
         vacationDays: isSalary
           ? round2(
               // En líneas por horas (sin salario fijo) las unidades son horas:
@@ -786,7 +796,7 @@ export class PayrollService {
 
         const concept = payroll.concept || 'salario';
         // Solo los conceptos pagados por la empresa cargan a cuentas de gasto.
-        const chargesExpense = concept === 'salario' || concept === 'libre';
+        const chargesExpense = EXPENSE_CONCEPTS.includes(concept);
         // Los tributos patronales gravan toda remuneración devengada, incluido
         // el pago de vacaciones y la liquidación; subsidio y maternidad son
         // prestaciones sociales exentas.
@@ -806,11 +816,14 @@ export class PayrollService {
         // centro de costo.
         const employerSSByCostCenter = new Map<string, number>();
         const laborForceTaxByCostCenter = new Map<string, number>();
-        // Neto a pagar por subcuenta de Nóminas por Pagar: cuando el mapeo
-        // apunta a una agrupadora 455-459 se acredita en 45X-00X0 según la
-        // categoría ocupacional de cada línea (Nomenclador 2016).
+        // Neto a pagar por subcuenta de Nóminas por Pagar, según las
+        // subcuentas que la empresa haya creado y la asignada a cada línea.
         const payableBase = payableAccount || '455';
-        const payableIsGrouping = /^45[5-9]$/.test(payableBase);
+        const payableSubs = await this.payableChildren(
+          companyId,
+          payableBase,
+          manager,
+        );
         const netByPayableSub = new Map<string, number>();
         let totalVacationProvision = 0;
         // Impuestos empresariales
@@ -880,9 +893,11 @@ export class PayrollService {
             maternityStateAmount += net;
           }
 
-          const payableSub = payableIsGrouping
-            ? `${payableBase}-${item.occupationalCategory || '0020'}`
-            : payableBase;
+          const payableSub = this.payableAccountFor(
+            item,
+            payableBase,
+            payableSubs,
+          );
           netByPayableSub.set(
             payableSub,
             (netByPayableSub.get(payableSub) || 0) + net,
@@ -1031,7 +1046,7 @@ export class PayrollService {
               accountCode,
               debit: amount,
               credit: 0,
-              description: `Salarios ${payroll.period}`,
+              description: `${concept === 'salario' ? 'Salarios' : conceptLabel} ${payroll.period}`,
               costCenterId,
               subelement: '50100',
             });
@@ -1485,11 +1500,14 @@ export class PayrollService {
             MappingType.PAYROLL_CASH,
           ),
         ]);
-        // El débito replica el desglose de los créditos: si la cuenta de
-        // Nóminas por Pagar es una agrupadora 455-459, cada categoría
-        // ocupacional va a su subcuenta 45X-00X0.
+        // El débito replica el desglose de los créditos: cada línea a la
+        // subcuenta de Nóminas por Pagar en que se acreditó.
         const payableBase = payableAccount || '455';
-        const payableIsGrouping = /^45[5-9]$/.test(payableBase);
+        const payableSubs = await this.payableChildren(
+          companyId,
+          payableBase,
+          manager,
+        );
         const netByPayableSub = new Map<string, number>();
         for (const item of payroll.items) {
           if (
@@ -1498,9 +1516,7 @@ export class PayrollService {
           ) {
             continue;
           }
-          const sub = payableIsGrouping
-            ? `${payableBase}-${item.occupationalCategory || '0020'}`
-            : payableBase;
+          const sub = this.payableAccountFor(item, payableBase, payableSubs);
           netByPayableSub.set(
             sub,
             (netByPayableSub.get(sub) || 0) + Number(item.netSalary || 0),
@@ -1820,6 +1836,71 @@ export class PayrollService {
       [companyId, accountCode],
     );
     return Number(rows[0]?.balance || 0);
+  }
+
+  /**
+   * Subcuentas con movimientos de la cuenta de Nóminas por Pagar. El plan
+   * de cuentas no las trae: existen solo si la empresa las creó.
+   */
+  private async payableChildren(
+    companyId: number,
+    base: string,
+    manager?: EntityManager,
+  ): Promise<Set<string>> {
+    const repo = (manager ?? this.dataSource.manager).getRepository(Account);
+    const children = await repo.find({
+      where: { companyId, parentCode: base, isActive: true, allowsMovements: true },
+    });
+    return new Set(children.map((c) => c.code));
+  }
+
+  /**
+   * Cuenta en que se acredita (y luego se debita) el neto de una línea.
+   * Sin subcuentas, la propia cuenta de Nóminas por Pagar. Con subcuentas,
+   * la asignada al trabajador; si no tiene, la única que exista. Una línea
+   * sin asignación entre varias subcuentas no se adivina: se pide configurarla.
+   */
+  private payableAccountFor(
+    item: Pick<PayrollItem, 'payableSubaccount' | 'employeeName' | 'occupationalCategory'>,
+    base: string,
+    children: Set<string>,
+  ): string {
+    if (children.size === 0) return base;
+    if (item.payableSubaccount && children.has(item.payableSubaccount)) {
+      return item.payableSubaccount;
+    }
+    // Líneas anteriores a la asignación en ficha: la subcuenta por
+    // categoría solo vale si la empresa la tiene creada.
+    const legacy = `${base}-${item.occupationalCategory}`;
+    if (!item.payableSubaccount && children.has(legacy)) return legacy;
+    if (children.size === 1) return [...children][0];
+    throw new BadRequestException(
+      `${item.employeeName}: la cuenta ${base} tiene subcuentas ` +
+        `(${[...children].sort().join(', ')}); asigne en su ficha la subcuenta ` +
+        'de Nóminas por Pagar' +
+        (item.payableSubaccount
+          ? ` (la asignada, ${item.payableSubaccount}, ya no existe o no admite movimientos)`
+          : ''),
+    );
+  }
+
+  /** Cuenta de Nóminas por Pagar de la empresa y sus subcuentas, para la ficha. */
+  async payableSubaccounts(companyId: number) {
+    const base =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.PAYROLL_PAYMENT,
+      )) || '455';
+    const subaccounts = await this.dataSource.manager
+      .getRepository(Account)
+      .find({
+        where: { companyId, parentCode: base, isActive: true, allowsMovements: true },
+        order: { code: 'ASC' },
+      });
+    return {
+      account: base,
+      subaccounts: subaccounts.map((a) => ({ code: a.code, name: a.name })),
+    };
   }
 
   private resolveExpenseAccount(

@@ -48,8 +48,8 @@ export class AccountMappingService {
     [MappingType.PAYROLL_PROCESSING_PRODUCTION]: '700-0020', // Gastos del Período — Producción en Proceso
     [MappingType.PAYROLL_PROCESSING_ASSOCIATED]: '731', // Gastos Asociados a la Producción
     [MappingType.PAYROLL_PROCESSING_ADMINISTRATIVE]: '822', // Gastos Generales y de Administración
-    // Cuenta agrupadora: el servicio de nómina le añade la subcuenta de categoría
-    // ocupacional (455-0010 Dirigentes … 455-0050 Otros Trabajadores).
+    // Sin subcuentas por defecto: la nómina acredita en la 455 o, si la
+    // empresa le creó subcuentas, en la asignada en la ficha del trabajador.
     [MappingType.PAYROLL_PAYMENT]: '455', // Nóminas por Pagar
     // Retenciones practicadas al trabajador: la entidad actúa como agente de
     // retención y las entera al Presupuesto del Estado, por lo que se acreditan

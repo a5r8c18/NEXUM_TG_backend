@@ -53,6 +53,17 @@ export class Company {
   @Column({ name: 'income_tax_rate', type: 'decimal', precision: 5, scale: 2, default: 35, nullable: true })
   incomeTaxRate: number | null;
 
+  /**
+   * Tarifas del pago adicional por nocturnidad en CUP por hora, fijadas por
+   * la entidad dentro del rango de la Res. 17/2025 MTSS: 0,60-1,20 de 7:00 pm
+   * a 11:00 pm y 1,15-2,30 de 11:00 pm a 7:00 am.
+   */
+  @Column({ name: 'night_shift_rate_evening', type: 'decimal', precision: 6, scale: 2, default: 0.6 })
+  nightShiftRateEvening: number;
+
+  @Column({ name: 'night_shift_rate_night', type: 'decimal', precision: 6, scale: 2, default: 1.15 })
+  nightShiftRateNight: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
