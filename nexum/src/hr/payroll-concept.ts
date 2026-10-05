@@ -115,6 +115,18 @@ export const TAXABLE_INCOME_CONCEPTS: PayrollConcept[] = [
 ];
 
 /**
+ * Conceptos sobre los que la entidad paga aporte patronal (14 %) e
+ * impuesto por la utilización de la fuerza de trabajo (5 %). Las vacaciones,
+ * la liquidación, el subsidio y la maternidad no generan estos tributos
+ * patronales.
+ */
+export const EMPLOYER_TAX_CONCEPTS: PayrollConcept[] = [
+  'salario',
+  'libre',
+  ...TIME_SUPPLEMENT_CONCEPTS,
+];
+
+/**
  * Categoría ocupacional del trabajador (Nomenclador 2016). Es un dato
  * estadístico del Modelo SC-4-06: la subcuenta de Nóminas por Pagar donde se
  * acredita el neto no se deriva de ella, sino de la que la empresa haya

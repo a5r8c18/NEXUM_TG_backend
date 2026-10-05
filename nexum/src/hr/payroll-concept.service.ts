@@ -28,6 +28,7 @@ import {
   salaryForWorkedHours,
   timeSupplementAmount,
   vacationDailyRate,
+  vacationGross,
 } from './payroll-calculations';
 import {
   incrementalTaxes,
@@ -670,7 +671,7 @@ export class PayrollConceptService {
       // Sin acumulado —primer año o apertura del sistema— se paga a la tarifa
       // contractual, dejando constancia en la línea.
       const dailyRate = vacationDailyRate(balance, contractualRate);
-      const gross = round2(dailyRate * days);
+      const gross = vacationGross(balance, days, contractualRate);
       // IIP y CESS sobre el acumulado mensual de todos los conceptos de pago
       // (Res. 41/2023): se retiene la diferencia con lo ya
       // retenido en las demás nóminas del período.
@@ -1146,7 +1147,6 @@ export class PayrollConceptService {
         data.installment === 1 ? prenatalWeeks : 6;
 
       const benefit = calculateMaternityBenefit(weeklyAverage, weeks);
-      const isStateSector = emp.employmentSector !== 'non_state';
 
       items.push({
         ...this.baseItem(emp, companyId),
@@ -1161,10 +1161,7 @@ export class PayrollConceptService {
         // se computan 5 días laborables por semana de prestación.
         ...this.vacationAccrual(emp, weeks * 5),
         notes:
-          `Maternidad plazo ${data.installment} (${weeks} semanas × ${weeklyAverage})` +
-          (isStateSector
-            ? ' — cargo a 164-0030'
-            : ' — sector no estatal: paga la Filial INSS (Art. 37 DL 56/2021), sin asiento'),
+          `Maternidad plazo ${data.installment} (${weeks} semanas × ${weeklyAverage}) — cargo a 164-0030`,
       });
       claims.push({
         leaveId: leave.id,
@@ -1308,7 +1305,6 @@ export class PayrollConceptService {
       const amount = round2((monthlyBenefit * coveredDays) / periodDays);
       if (amount <= 0) continue;
 
-      const isStateSector = emp.employmentSector !== 'non_state';
       items.push({
         ...this.baseItem(emp, companyId),
         grossSalary: amount,
@@ -1334,10 +1330,7 @@ export class PayrollConceptService {
             )),
         notes:
           `Prestación social ${variant} (60 %, Art. 30.1.${variant} DL 56/2021): ` +
-          `${coveredDays}/${periodDays} días × ${monthlyBenefit} mensual` +
-          (isStateSector
-            ? ''
-            : ' — sector no estatal: paga la Filial INSS (Art. 37 DL 56/2021), sin asiento'),
+          `${coveredDays}/${periodDays} días × ${monthlyBenefit} mensual — cargo a 164-0030`,
       });
       claims.push({
         leaveId: leave.id,
@@ -1703,7 +1696,7 @@ export class PayrollConceptService {
         // Con días indicados el importe es días × tarifa acumulada; el
         // importe manual solo vale cuando no se indican días.
         if (days > 0) {
-          gross = round2(days * dailyRate);
+          gross = vacationGross(balance, days, contractualRate);
         }
         if (gross <= 0) {
           throw new BadRequestException(
@@ -1934,7 +1927,7 @@ export class PayrollConceptService {
         ctx.rate = vacationDailyRate(balance, contractualRate);
         ctx.accumulatedDays = round2(balance?.days ?? 0);
         ctx.accumulatedAmount = round2(balance?.amount ?? 0);
-        ctx.suggestedGross = round2(days * ctx.rate);
+        ctx.suggestedGross = vacationGross(balance, days, contractualRate);
         if (!balance || balance.days <= 0) {
           ctx.warnings.push(
             `${name}: sin acumulado de vacaciones, se paga a la tarifa contractual`,

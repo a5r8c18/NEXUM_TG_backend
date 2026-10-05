@@ -15,6 +15,7 @@ import {
   round2,
   salaryForWorkedHours,
   vacationDailyRate,
+  vacationGross,
 } from './payroll-calculations';
 import {
   HOURS_PER_WORKDAY,
@@ -531,5 +532,11 @@ describe('Retribución de las vacaciones (Art. 102)', () => {
     expect(
       vacationDailyRate({ days: -2, amount: -400 }, contractualRate),
     ).toBe(contractualRate);
+  });
+
+  it('paga el saldo exacto al disfrutar todos los días acumulados', () => {
+    const balance = { days: 4.36, amount: 5454.0 };
+    expect(vacationGross(balance, 4.36, contractualRate)).toBe(5454.0);
+    expect(vacationGross(balance, 2.18, contractualRate)).toBe(2727.0);
   });
 });

@@ -31,6 +31,7 @@ import {
 import { Account } from '../entities/account.entity';
 import {
   EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE,
+  EMPLOYER_TAX_CONCEPTS,
   EXPENSE_CONCEPTS,
   EmploymentSector,
   HOURS_PER_WORKDAY,
@@ -797,10 +798,11 @@ export class PayrollService {
         const concept = payroll.concept || 'salario';
         // Solo los conceptos pagados por la empresa cargan a cuentas de gasto.
         const chargesExpense = EXPENSE_CONCEPTS.includes(concept);
-        // Los tributos patronales gravan toda remuneración devengada, incluido
-        // el pago de vacaciones y la liquidación; subsidio y maternidad son
-        // prestaciones sociales exentas.
-        const chargesEmployerTaxes = TAXABLE_INCOME_CONCEPTS.includes(concept);
+        // Los tributos patronales (14 % SS y 5 % fuerza de trabajo) solo
+        // gravan salario, libre y pagos adicionales por tiempo trabajado.
+        // Vacaciones, liquidación, subsidio y maternidad no generan estos
+        // tributos a cargo de la entidad.
+        const chargesEmployerTaxes = EMPLOYER_TAX_CONCEPTS.includes(concept);
 
         const expenseByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
         const vacationByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
@@ -838,27 +840,9 @@ export class PayrollService {
         let totalPension = 0;
         let totalUnionDues = 0;
 
-        // En maternidad el débito depende del sector de cada trabajador.
-        let maternityStateAmount = 0;
-        let maternityNonStateAmount = 0;
-        const maternitySectorByItem = new Map<number, string>();
-        if (concept === 'maternidad') {
-          const ids = [
-            ...new Set(payroll.items.map((i) => i.employeeId)),
-          ];
-          const emps = ids.length
-            ? await this.employeeRepo.findBy({ companyId, id: In(ids) })
-            : [];
-          const sectorById = new Map(
-            emps.map((e) => [e.id, e.employmentSector || 'state']),
-          );
-          for (const item of payroll.items) {
-            maternitySectorByItem.set(
-              item.id,
-              sectorById.get(item.employeeId) || 'state',
-            );
-          }
-        }
+        // En maternidad el débito va a 164-0030 y el crédito a la 455,
+        // independientemente del sector de la trabajadora.
+        let maternityAmount = 0;
 
         for (const item of payroll.items) {
           const accountCode = this.resolveExpenseAccount(item, {
@@ -882,15 +866,7 @@ export class PayrollService {
           }
 
           if (concept === 'maternidad') {
-            // Sector estatal: la empresa paga y recupera del presupuesto (164-0030).
-            // Sector no estatal: paga la Filial INSS, no genera asiento ni
-            // pasivo en Nóminas por Pagar.
-            const sector = maternitySectorByItem.get(item.id) || 'state';
-            if (sector === 'non_state') {
-              maternityNonStateAmount += gross;
-              continue;
-            }
-            maternityStateAmount += net;
+            maternityAmount += net;
           }
 
           const payableSub = this.payableAccountFor(
@@ -1123,11 +1099,10 @@ export class PayrollService {
         }
 
         // ── Comprobante independiente de licencia de maternidad ──
-        // Solo el sector estatal se contabiliza, como adeudo recuperable del
-        // presupuesto; el no estatal lo paga la Filial INSS.
+        // 164-0030 al débito contra la 455, sin distinción de sector.
         const maternityLines: any[] = [];
         if (concept === 'maternidad') {
-          const maternityDebit = round2(maternityStateAmount);
+          const maternityDebit = round2(maternityAmount);
           if (maternityDebit > 0) {
             maternityLines.push({
               accountCode: maternityReceivableAccount || '164-0030',
@@ -1147,13 +1122,6 @@ export class PayrollService {
                 description: `Licencia de maternidad por pagar ${payroll.period}`,
               });
             }
-          }
-          if (maternityNonStateAmount > 0) {
-            const msg =
-              `${round2(maternityNonStateAmount)} CUP de maternidad del sector ` +
-              'no estatal los paga la Filial INSS; no se contabilizan.';
-            this.logger.warn(`Nómina ${payroll.id}: ${msg}`);
-            processWarnings.push(msg);
           }
         }
 

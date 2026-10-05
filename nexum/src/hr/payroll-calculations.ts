@@ -309,6 +309,27 @@ export function vacationDailyRate(
   return round2(balance.amount / balance.days);
 }
 
+/**
+ * Importe a pagar por N días de vacaciones (Art. 102 Ley 116). Cuando se
+ * disfrutan todos los días acumulados se retorna el saldo exacto, evitando
+ * el desfase de un centavo que produce redondear primero la tarifa diaria.
+ * Sin acumulado se paga a la tarifa contractual.
+ */
+export function vacationGross(
+  balance: { days: number; amount: number } | undefined,
+  days: number,
+  contractualRate: number,
+): number {
+  if (days <= 0) return 0;
+  if (!balance || balance.days <= 0 || balance.amount <= 0) {
+    return round2(days * contractualRate);
+  }
+  if (round2(days) >= round2(balance.days)) {
+    return round2(balance.amount);
+  }
+  return round2((days * balance.amount) / balance.days);
+}
+
 // ── Subsidio por enfermedad o accidente (Art. 39-46) ──
 
 export interface SubsidyInput {

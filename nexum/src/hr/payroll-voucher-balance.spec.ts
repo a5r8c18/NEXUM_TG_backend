@@ -210,13 +210,16 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     expect(creditsTo455()).toBe(1000);
   });
 
-  it('maternidad del sector no estatal: la paga la Filial INSS, sin comprobantes', async () => {
+  it('maternidad del sector no estatal: también genera MAT- 164-0030 contra 455', async () => {
     employeeRepo.findBy.mockResolvedValue([
       { id: 'e1', employmentSector: 'non_state' },
     ]);
     await processPayroll(payrollFixture('maternidad', [item()]));
 
-    expect(voucherCalls).toHaveLength(0);
+    const mat = voucherCalls.find((v) => v.sourceDocId === 'MAT-1');
+    expect(mat).toBeDefined();
+    expectAllBalanced();
+    expect(creditsTo455()).toBe(1000);
   });
 
   it('vacaciones: débito a la 492 y crédito a la 455 por el neto', async () => {
@@ -259,9 +262,7 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     expectAllBalanced();
   });
 
-  it('vacaciones y liquidación también tributan el aporte patronal y la fuerza de trabajo', async () => {
-    // La paga de vacaciones es remuneración: el 14 % y el 5 % patronales no
-    // se evaden por pagarse desde el fondo 492.
+  it('vacaciones y liquidación no generan aporte patronal ni fuerza de trabajo', async () => {
     await processPayroll(
       payrollFixture('vacaciones', [
         item({ grossSalary: 3750, netSalary: 3750 }),
@@ -269,20 +270,7 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     );
 
     const imp = voucherCalls.find((v) => v.sourceDocId === 'IMP-1');
-    expect(imp).toBeDefined();
-    const ssExpense = imp!.lines.find(
-      (l) =>
-        l.accountCode === '855' &&
-        l.description.includes('Seguridad Social'),
-    );
-    const lfExpense = imp!.lines.find(
-      (l) =>
-        l.accountCode === '855' &&
-        l.description.includes('Fuerza de Trabajo'),
-    );
-    // 14 % = 525 (468.75 presupuesto + 56.25 provisión) y 5 % = 187.50.
-    expect(Number(ssExpense!.debit)).toBeCloseTo(525, 2);
-    expect(Number(lfExpense!.debit)).toBeCloseTo(187.5, 2);
+    expect(imp).toBeUndefined();
     expectAllBalanced();
   });
 
