@@ -1837,10 +1837,6 @@ export class PayrollService {
     if (item.payableSubaccount && children.has(item.payableSubaccount)) {
       return item.payableSubaccount;
     }
-    // Líneas anteriores a la asignación en ficha: la subcuenta por
-    // categoría solo vale si la empresa la tiene creada.
-    const legacy = `${base}-${item.occupationalCategory}`;
-    if (!item.payableSubaccount && children.has(legacy)) return legacy;
     if (children.size === 1) return [...children][0];
     throw new BadRequestException(
       `${item.employeeName}: la cuenta ${base} tiene subcuentas ` +

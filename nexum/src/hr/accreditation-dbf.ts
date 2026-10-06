@@ -3,13 +3,13 @@
  * (Visual FoxPro), con la misma estructura que la muestra entregada por el
  * banco (`nominalimpia.dbf`):
  *
+ *   COD_TIPID   C 2    tipo de identificación ('CI')
+ *   COD_PAEXID  C 3    código fijo '247'
  *   NUM_IDEPER  C 15   carné de identidad del trabajador
  *   CTA_MNAC    C 16   cuenta o tarjeta en moneda nacional
  *   IMPORTE_N   N 16,2 importe a acreditar en CUP
  *   CTA_MLC     C 16   cuenta en MLC (vacía)
  *   IMPORTE_D   N 16,2 importe en MLC (0.00)
- *   COD_TIPID   C 2    tipo de identificación ('CI')
- *   COD_PAEXID  C 3    código fijo '247'
  */
 
 export interface AccreditationDbfRow {
@@ -26,13 +26,13 @@ interface DbfField {
 }
 
 const FIELDS: DbfField[] = [
+  { name: 'COD_TIPID', type: 'C', length: 2, decimals: 0 },
+  { name: 'COD_PAEXID', type: 'C', length: 3, decimals: 0 },
   { name: 'NUM_IDEPER', type: 'C', length: 15, decimals: 0 },
   { name: 'CTA_MNAC', type: 'C', length: 16, decimals: 0 },
   { name: 'IMPORTE_N', type: 'N', length: 16, decimals: 2 },
   { name: 'CTA_MLC', type: 'C', length: 16, decimals: 0 },
   { name: 'IMPORTE_D', type: 'N', length: 16, decimals: 2 },
-  { name: 'COD_TIPID', type: 'C', length: 2, decimals: 0 },
-  { name: 'COD_PAEXID', type: 'C', length: 3, decimals: 0 },
 ];
 
 /** Tipo de identificación y código que la muestra del banco fija en cada fila. */
@@ -94,13 +94,13 @@ export function buildAccreditationDbf(
 
   const records = rows.map((row) => {
     const values = [
+      ACCREDITATION_ID_TYPE,
+      ACCREDITATION_COUNTRY_CODE,
       charField(row.documentId, 15),
       charField(row.bankAccount, 16),
       numericField(row.amount, 16, 2),
       charField('', 16),
       numericField(0, 16, 2),
-      ACCREDITATION_ID_TYPE,
-      ACCREDITATION_COUNTRY_CODE,
     ];
     return Buffer.from(' ' + values.join(''), 'latin1');
   });

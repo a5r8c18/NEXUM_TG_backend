@@ -7,8 +7,12 @@ import { PayrollItem } from '../entities/payroll-item.entity';
 import { Employee } from '../entities/employee.entity';
 import { JobPosition } from '../entities/job-position.entity';
 import { buildAccreditationDbf } from './accreditation-dbf';
+import { round2 } from './payroll-calculations';
 import {
   PayrollConcept,
+  EMPLOYER_SOCIAL_SECURITY_RATE,
+  EMPLOYER_TAX_CONCEPTS,
+  LABOR_FORCE_TAX_RATE,
   TAXABLE_INCOME_CONCEPTS,
   TIME_SUPPLEMENT_CONCEPTS,
   VACATION_ACCRUAL_RATE,
@@ -45,6 +49,15 @@ export interface PayrollCncRow {
   socialSecurity: number;
   taxWithholding: number;
   netSalary: number;
+}
+
+export interface EmployerTaxesRow {
+  employeeName: string;
+  documentId: string | null;
+  grossSalary: number;
+  employerSocialSecurity: number;
+  laborForceTax: number;
+  totalEmployerTaxes: number;
 }
 
 export interface AccreditationRow {
@@ -364,12 +377,47 @@ export class HrReportService {
   }
 
   /**
+   * Impuestos empresariales (aporte patronal 14 % y uso de fuerza de trabajo
+   * 5 %) descontados por trabajador en el período. Se suman los importes de
+   * todas las nóminas cuyo concepto genera estos tributos.
+   */
+  async employerTaxesReport(
+    companyId: number,
+    period: string,
+  ): Promise<EmployerTaxesRow[]> {
+    const payrolls = await this.periodPayrolls(
+      companyId,
+      period,
+      EMPLOYER_TAX_CONCEPTS,
+    );
+    const rows = new Map<string, EmployerTaxesRow>();
+    for (const payroll of payrolls) {
+      for (const i of payroll.items || []) {
+        const gross = Number(i.grossSalary || 0);
+        const row = rows.get(i.employeeId) || {
+          employeeName: i.employeeName,
+          documentId: i.employeeDocument || null,
+          grossSalary: 0,
+          employerSocialSecurity: 0,
+          laborForceTax: 0,
+          totalEmployerTaxes: 0,
+        };
+        row.grossSalary += gross;
+        row.employerSocialSecurity += round2(gross * EMPLOYER_SOCIAL_SECURITY_RATE);
+        row.laborForceTax += round2(gross * LABOR_FORCE_TAX_RATE);
+        row.totalEmployerTaxes =
+          round2(row.employerSocialSecurity + row.laborForceTax);
+        rows.set(i.employeeId, row);
+      }
+    }
+    return [...rows.values()].filter((r) => r.grossSalary > 0);
+  }
+
+  /**
    * Fichero de acreditación: por trabajador, CI, nombre, banco, cuenta e
    * importe a acreditar, agregando el neto de TODAS las nóminas del período
    * —salario, vacaciones, subsidio, maternidad, liquidación y libre— porque
-   * el banco acredita el total del mes. La maternidad del sector no estatal
-   * la paga la Filial INSS (Art. 37 DL 56/2021): no sale por el banco de la
-   * empresa y se excluye del fichero.
+   * el banco acredita el total del mes.
    */
   async accreditationFile(
     companyId: number,
@@ -399,15 +447,8 @@ export class HrReportService {
     const empById = new Map(employees.map((e) => [e.id, e]));
 
     const rows = new Map<string, AccreditationRow>();
-    for (const { item, concept } of items) {
+    for (const { item } of items) {
       const emp = empById.get(item.employeeId);
-      // Maternidad del sector no estatal: la paga la Filial INSS.
-      if (
-        concept === 'maternidad' &&
-        (emp?.employmentSector || 'state') === 'non_state'
-      ) {
-        continue;
-      }
       const row = rows.get(item.employeeId) || {
         documentId: item.employeeDocument || emp?.documentId || null,
         employeeName: item.employeeName,

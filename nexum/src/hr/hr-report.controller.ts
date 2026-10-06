@@ -47,6 +47,18 @@ export class HrReportController {
     );
   }
 
+  /** Impuestos empresariales (14 % SS + 5 % UFT) por trabajador en el período. */
+  @Get('employer-taxes')
+  employerTaxesReport(
+    @Req() req: Request,
+    @Query('period') period?: string,
+  ) {
+    return this.service.employerTaxesReport(
+      getCompanyId(req),
+      this.periodOrCurrent(period),
+    );
+  }
+
   @Get('accreditation')
   accreditationFile(
     @Req() req: Request,

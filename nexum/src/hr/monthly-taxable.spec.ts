@@ -225,13 +225,11 @@ describe('HrReportService — CNC y acreditación por todos los conceptos', () =
     });
   });
 
-  it('acreditación excluye la maternidad del sector no estatal (la paga el INSS)', async () => {
+  it('acreditación incluye la maternidad del sector no estatal', async () => {
     payrollRepo.find.mockResolvedValue([
-      // Madre estatal: sí se acredita por el banco de la empresa.
       payroll('maternidad', [
         item({ employeeId: emp.id, netSalary: 6000 }),
       ]),
-      // Madre TCP: la Filial INSS le paga directo; no va en el fichero.
       payroll('maternidad', [
         item({
           employeeId: nonStateEmp.id,
@@ -245,9 +243,11 @@ describe('HrReportService — CNC y acreditación por todos los conceptos', () =
 
     const rows = await service.accreditationFile(10, '2026-05');
 
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
     expect(rows[0].documentId).toBe('90010100001');
     expect(rows[0].amount).toBe(6000);
+    expect(rows[1].documentId).toBe('85050500002');
+    expect(rows[1].amount).toBe(3210);
   });
 
   it('acreditación toma todas las nóminas liquidadas del período, sin filtro de concepto', async () => {

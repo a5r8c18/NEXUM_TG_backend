@@ -43,27 +43,27 @@ describe('Fichero DBF de acreditación bancaria', () => {
 
   it('declara los siete campos del banco en su orden y ancho', () => {
     expect(fields()).toEqual([
+      { name: 'COD_TIPID', type: 'C', len: 2, dec: 0 },
+      { name: 'COD_PAEXID', type: 'C', len: 3, dec: 0 },
       { name: 'NUM_IDEPER', type: 'C', len: 15, dec: 0 },
       { name: 'CTA_MNAC', type: 'C', len: 16, dec: 0 },
       { name: 'IMPORTE_N', type: 'N', len: 16, dec: 2 },
       { name: 'CTA_MLC', type: 'C', len: 16, dec: 0 },
       { name: 'IMPORTE_D', type: 'N', len: 16, dec: 2 },
-      { name: 'COD_TIPID', type: 'C', len: 2, dec: 0 },
-      { name: 'COD_PAEXID', type: 'C', len: 3, dec: 0 },
     ]);
   });
 
   it('escribe CI, cuenta e importe con los rellenos de la muestra', () => {
     expect(record(0)).toBe(
       ' ' +
+        'CI' +
+        '247' +
         '88021108437    ' +
         '0598712087525119' +
         '        17913.00' +
         '                ' +
-        '            0.00' +
-        'CI' +
-        '247',
+        '            0.00',
     );
-    expect(record(1).slice(32, 48)).toBe('         7273.80');
+    expect(record(1).slice(37, 53)).toBe('         7273.80');
   });
 });
