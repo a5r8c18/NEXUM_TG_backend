@@ -162,7 +162,7 @@ export class PayrollReportService {
           : a.name.localeCompare(b.name),
     );
 
-    const isVacations = payroll.concept === 'vacaciones';
+    const isLiquidacion = payroll.concept === 'liquidacion';
     const isHours = unit === 'horas';
     const unitLabel = isHours ? 'Horas' : 'Días';
     const HOURS_PER_DAY = MONTHLY_LEGAL_HOURS / WORKING_DAYS_PER_MONTH;
@@ -179,6 +179,15 @@ export class PayrollReportService {
           : WORKING_DAYS_PER_MONTH;
       return Math.min(units, WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
     };
+    // El tiempo devengado de cada línea: en salario se deriva de los días
+    // pagados cuando la línea no lo trae guardado; en los demás conceptos se
+    // usa lo almacenado (los pagos adicionales acumulan solo importe).
+    const vacationDaysOf = (item: PayrollItem): number =>
+      payroll.concept === 'salario'
+        ? accruedVacationDays(item)
+        : Number(item.vacationDays || 0);
+    const vacationProvisionOf = (item: PayrollItem): number =>
+      isLiquidacion ? 0 : Number(item.vacationProvision || 0);
 
     const rowHtml = (item: PayrollItem): string => {
       const baseForRate = Number(item.baseSalary || item.averageSalary || 0);
@@ -198,16 +207,10 @@ export class PayrollReportService {
       const gross = Number(item.grossSalary || 0);
       const aCobrar = Math.max(0, round2(gross - pat - bonif));
 
-      const vacationTime = isVacations
-        ? String(Number(item.paidUnits || 0).toFixed(3))
-        : (payroll.concept === 'salario'
-          ? accruedVacationDays(item).toFixed(3)
-          : '—');
-      const vacationAmount = isVacations
-        ? gross
-        : (payroll.concept === 'salario'
-          ? Number(item.vacationProvision || 0)
-          : 0);
+      const vacationTime = isLiquidacion
+        ? '—'
+        : vacationDaysOf(item).toFixed(3);
+      const vacationAmount = vacationProvisionOf(item);
 
       return `<tr>
         <td>${this.esc(codeByEmployee.get(item.employeeId) ?? '')}</td>
@@ -248,14 +251,10 @@ export class PayrollReportService {
         segSocial: sum(area.items, (i) => Number(i.socialSecurity || 0)),
         retenciones: sum(area.items, (i) => Number(i.totalDeductions || 0)),
         pagado: sum(area.items, (i) => Number(i.netSalary || 0)),
-        vacationTime: isVacations
-          ? sum(area.items, (i) => Number(i.paidUnits || 0)).toFixed(3)
-          : (payroll.concept === 'salario'
-            ? sum(area.items, accruedVacationDays).toFixed(3)
-            : ''),
-        vacationImporte: isVacations
-          ? sum(area.items, (i) => Number(i.grossSalary || 0))
-          : sum(area.items, (i) => (payroll.concept === 'salario' ? Number(i.vacationProvision || 0) : 0)),
+        vacationTime: isLiquidacion
+          ? ''
+          : sum(area.items, vacationDaysOf).toFixed(3),
+        vacationImporte: sum(area.items, vacationProvisionOf),
       };
       return `
       ${showHeader ? `<div class="area-header">${groupLabel}: ${this.esc(area.name)}</div>` : ''}
@@ -324,12 +323,10 @@ export class PayrollReportService {
       segSocial: sum(items, (i) => Number(i.socialSecurity || 0)),
       retenciones: sum(items, (i) => Number(i.totalDeductions || 0)),
       pagado: sum(items, (i) => Number(i.netSalary || 0)),
-      vacationTime: isVacations
-        ? sum(items, (i) => Number(i.paidUnits || 0)).toFixed(3)
-        : '',
-      vacationImporte: isVacations
-        ? sum(items, (i) => Number(i.grossSalary || 0))
-        : sum(items, (i) => (payroll.concept === 'salario' ? Number(i.vacationProvision || 0) : 0)),
+      vacationTime: isLiquidacion
+        ? ''
+        : sum(items, vacationDaysOf).toFixed(3),
+      vacationImporte: sum(items, vacationProvisionOf),
     };
 
     const totalNomina = `

@@ -196,6 +196,16 @@ describe('PayrollConceptService — doble pago de licencias', () => {
 
     expect(savedItems).toHaveLength(1);
     expect(savedItems[0].leaveRequestId).toBe('lv-1');
+    // El disfrute también acumula (Art. 102): 9,09 % del importe pagado y
+    // de los días disfrutados, con el tope de 24 días laborables del mes.
+    expect(savedItems[0].vacationProvision).toBeCloseTo(
+      Number(savedItems[0].grossSalary) * 0.0909,
+      2,
+    );
+    expect(savedItems[0].vacationDays).toBeCloseTo(
+      Math.min(Number(savedItems[0].paidUnits), 24) * 0.0909,
+      2,
+    );
   });
 
   it('vacaciones: de una licencia a medio pagar solo paga los días restantes', async () => {

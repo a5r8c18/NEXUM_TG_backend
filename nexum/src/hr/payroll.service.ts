@@ -508,6 +508,7 @@ export class PayrollService {
     let totalNet = 0;
 
     const isSalary = payroll.concept === 'salario';
+    const isVacations = payroll.concept === 'vacaciones';
     const isTimeSupplement = TIME_SUPPLEMENT_CONCEPTS.includes(payroll.concept);
     // CESS e IIP solo gravan las remuneraciones (salario, vacaciones,
     // liquidación y libre); subsidio y maternidad son prestaciones exentas.
@@ -631,7 +632,7 @@ export class PayrollService {
         // del período (Art. 102), igual que en la generación. En los demás
         // conceptos se conserva el valor que ya trae la línea.
         vacationProvision:
-          isSalary || isTimeSupplement
+          isSalary || isTimeSupplement || isVacations
             ? round2(grossSalary * VACATION_ACCRUAL_RATE)
             : Number((item as Partial<PayrollItem>).vacationProvision || 0),
         vacationDays: isSalary
@@ -646,7 +647,14 @@ export class PayrollService {
                 WORKING_DAYS_PER_MONTH,
               ) * VACATION_ACCRUAL_RATE,
             )
-          : Number((item as Partial<PayrollItem>).vacationDays || 0),
+          : isVacations
+            ? round2(
+                Math.min(
+                  Number(item.paidUnits || 0),
+                  WORKING_DAYS_PER_MONTH,
+                ) * VACATION_ACCRUAL_RATE,
+              )
+            : Number((item as Partial<PayrollItem>).vacationDays || 0),
         subsidyRetention: round2(grossSalary * SUBSIDY_RETENTION_RATE),
         // Trazabilidad del cálculo: se conserva de la línea previa cuando el
         // cliente no la reenvía — sin ella, cancel() no puede restituir la
@@ -850,11 +858,12 @@ export class PayrollService {
 
           // ── Provisión de vacaciones (Art. 102) ──
           // Se acumula en todo concepto que genere derecho: además del
-          // salario, el reposo médico y la maternidad, que la ley cuenta como
-          // días efectivamente laborados. Las vacaciones y la liquidación no
-          // provisionan, porque consumen la provisión en lugar de formarla.
+          // salario, el reposo médico, la maternidad y el propio disfrute de
+          // vacaciones, que la ley cuenta como días efectivamente laborados.
+          // Solo la liquidación no provisiona: consume la provisión sin
+          // formarla.
           const vacation = Number(item.vacationProvision || 0);
-          if (vacation > 0 && !VACATION_FUND_CONCEPTS.includes(concept)) {
+          if (vacation > 0 && concept !== 'liquidacion') {
             totalVacationProvision += vacation;
             const vacKey = `${accountCode}#${costCenterId || ''}`;
             const vacExisting = vacationByAccountAndCC.get(vacKey) || { accountCode, amount: 0, costCenterId };
@@ -1607,6 +1616,11 @@ export class PayrollService {
         if (item.employeeId !== employeeId) continue;
         if (VACATION_FUND_CONCEPTS.includes(p.concept as any)) {
           balance -= Number(item.grossSalary || 0);
+          // El disfrute de vacaciones también acumula (Art. 102): se
+          // acredita lo provisionado por la propia línea.
+          if (p.concept === 'vacaciones') {
+            balance += Number(item.vacationProvision || 0);
+          }
         } else {
           balance += Number(item.vacationProvision || 0);
         }

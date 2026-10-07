@@ -149,6 +149,41 @@ describe('HrReportService.vacationSubmayor()', () => {
     expect(r.closingAmount).toBeCloseTo(749.8, 2);
   });
 
+  it('el disfrute de vacaciones también devenga: consume el pago y acumula lo provisionado', async () => {
+    withPayrolls([
+      payroll('salario', '2026-07', [
+        item({ employeeId: 'e1', vacationDays: 2.18, vacationProvision: 545.4, paidUnits: 24 }),
+      ]),
+      payroll('vacaciones', '2026-07', [
+        item({ employeeId: 'e1', paidUnits: 5, grossSalary: 1250, vacationDays: 0.45, vacationProvision: 113.63 }),
+      ]),
+    ]);
+
+    const rows = await service.vacationSubmayor(10, '2026-07');
+    const r = rows.find((x) => x.employeeName === 'Ana Pérez')!;
+    // Liquidado del mes: el disfrute consume días e importe como antes.
+    expect(r.settledDays).toBe(5);
+    expect(r.settledAmount).toBe(1250);
+    // Devengado del mes: el salario más lo que el propio disfrute acumula.
+    expect(r.accruedDays).toBeCloseTo(2.18 + 0.45, 2);
+    expect(r.accruedAmount).toBeCloseTo(545.4 + 113.63, 2);
+  });
+
+  it('una nómina de vacaciones anterior a la acumulación no devenga días fantasma', async () => {
+    withPayrolls([
+      payroll('vacaciones', '2026-07', [
+        item({ employeeId: 'e2', paidUnits: 10, grossSalary: 2000 }),
+      ]),
+    ]);
+
+    const rows = await service.vacationSubmayor(10, '2026-07');
+    const r = rows.find((x) => x.employeeName === 'Luis Gómez')!;
+    expect(r.accruedDays).toBe(0);
+    expect(r.accruedAmount).toBe(0);
+    expect(r.closingDays).toBe(-10);
+    expect(r.closingAmount).toBe(-2000);
+  });
+
   it('la liquidación del Art. 52 consume todo el saldo acumulado', async () => {
     withPayrolls([
       payroll('salario', '2026-06', [

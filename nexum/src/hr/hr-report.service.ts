@@ -144,8 +144,8 @@ export class HrReportService {
    * para calcular un saldo que solo necesita cuatro columnas por línea.
    *
    * Acumulan el salario y los conceptos que la ley cuenta como días laborados
-   * (reposo médico y maternidad); las vacaciones y la liquidación del Art. 52
-   * consumen.
+   * (reposo médico, maternidad y el propio disfrute de vacaciones); la
+   * liquidación del Art. 52 solo consume.
    */
   private async vacationMovements(
     companyId: number,
@@ -209,6 +209,13 @@ export class HrReportService {
       if (VACATION_FUND_CONCEPTS.includes(mov.concept)) {
         // Vacaciones disfrutadas y liquidación: consumen días e importe.
         add(mov.employeeId, -mov.paidUnits, -mov.grossSalary);
+        if (mov.concept === 'vacaciones') {
+          // El disfrute también acumula (Art. 102): se acredita lo que la
+          // línea provisionó, con los valores guardados — las nóminas
+          // anteriores a la acumulación en vacaciones traen 0 y no generan
+          // días fantasma.
+          add(mov.employeeId, mov.vacationDays, mov.vacationProvision);
+        }
         continue;
       }
       add(mov.employeeId, accruedDaysOf(mov), mov.vacationProvision);
@@ -270,6 +277,13 @@ export class HrReportService {
         } else {
           b.opening.days -= mov.paidUnits;
           b.opening.amount -= mov.grossSalary;
+        }
+        if (mov.concept === 'vacaciones') {
+          // El disfrute también acumula (Art. 102): lo provisionado por la
+          // línea se devenga en su período o integra el saldo de apertura.
+          const acc = inPeriod ? b.accrued : b.opening;
+          acc.days += mov.vacationDays;
+          acc.amount += mov.vacationProvision;
         }
         continue;
       }

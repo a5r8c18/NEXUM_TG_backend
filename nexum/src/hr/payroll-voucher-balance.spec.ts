@@ -234,6 +234,39 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     expect(creditsTo455()).toBe(1000);
   });
 
+  it('vacaciones con provisión: el disfrute también acumula y cuadra', async () => {
+    await processPayroll(
+      payrollFixture('vacaciones', [item({ vacationProvision: 90.9 })]),
+    );
+
+    const main = voucherCalls.find((v) => v.sourceDocId === '1');
+    expect(main).toBeDefined();
+    expectAllBalanced();
+    expect(creditsTo455()).toBe(1000);
+    // La provisión del disfrute (Art. 102) se acredita a la 492 y se
+    // debita en la cuenta de gasto, dentro del mismo comprobante.
+    const credit492 = main!.lines
+      .filter((l) => l.accountCode === '492' && Number(l.credit) > 0)
+      .reduce((s, l) => s + Number(l.credit), 0);
+    expect(credit492).toBeCloseTo(90.9, 2);
+  });
+
+  it('liquidación: aunque la línea traiga provisión, no provisiona', async () => {
+    await processPayroll(
+      payrollFixture('liquidacion', [item({ vacationProvision: 90.9 })]),
+    );
+
+    const main = voucherCalls.find((v) => v.sourceDocId === '1');
+    expect(main).toBeDefined();
+    expectAllBalanced();
+    expect(creditsTo455()).toBe(1000);
+    // Ninguna línea de provisión: la liquidación solo consume el fondo.
+    const provisionLines = main!.lines.filter(
+      (l) => l.description && l.description.includes('Provisión'),
+    );
+    expect(provisionLines).toHaveLength(0);
+  });
+
   it('los tributos patronales usan solo el devengado, sin la provisión de vacaciones', async () => {
     // Bruto 10 000 + provisión 909: la base del 14 % y del 5 % es 10 000,
     // no 10 909. La provisión es cargo a la reserva 492, no remuneración.

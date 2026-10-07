@@ -703,6 +703,13 @@ export class PayrollConceptService {
         leaveRequestId: leave.id,
         averageSalary: salary,
         paidUnits: days,
+        // El disfrute también acumula (Art. 102): 9,09 % del importe pagado
+        // y de los días disfrutados, que la nómina de salario descuenta como
+        // no laborados.
+        vacationProvision: round2(gross * VACATION_ACCRUAL_RATE),
+        vacationDays: round2(
+          Math.min(days, WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE,
+        ),
         appliedRate: 1,
         notes:
           `Vacaciones ${leave.startDate} a ${leave.endDate}: ` +
@@ -1725,6 +1732,12 @@ export class PayrollConceptService {
           totalDeductions,
           netSalary: round2(gross - totalDeductions),
           paidUnits: days,
+          // El disfrute también acumula (Art. 102): 9,09 % del importe
+          // pagado y de los días disfrutados.
+          vacationProvision: round2(gross * VACATION_ACCRUAL_RATE),
+          vacationDays: round2(
+            Math.min(days, WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE,
+          ),
           averageSalary: baseSalary,
           appliedRate: 1,
           notes:
