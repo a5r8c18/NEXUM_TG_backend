@@ -10,6 +10,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { Payroll, PayrollItem } from '../entities';
+import { Voucher } from '../entities/voucher.entity';
+import { VoucherLine } from '../entities/voucher-line.entity';
 import { Employee } from '../entities/employee.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
@@ -18,6 +20,7 @@ import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
 import { FinanceService } from '../finance/finance.service';
+import { AccountPayable } from '../entities/account-payable.entity';
 import {
   NON_SALARY_LEAVE_TYPES,
   nonWorkedWorkingDays,
@@ -798,11 +801,6 @@ export class PayrollService {
         const concept = payroll.concept || 'salario';
         // Solo los conceptos pagados por la empresa cargan a cuentas de gasto.
         const chargesExpense = EXPENSE_CONCEPTS.includes(concept);
-        // Los tributos patronales (14 % SS y 5 % fuerza de trabajo) solo
-        // gravan salario, libre y pagos adicionales por tiempo trabajado.
-        // Vacaciones, liquidación, subsidio y maternidad no generan estos
-        // tributos a cargo de la entidad.
-        const chargesEmployerTaxes = EMPLOYER_TAX_CONCEPTS.includes(concept);
 
         const expenseByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
         const vacationByAccountAndCC = new Map<string, { accountCode: string; amount: number; costCenterId?: string }>();
@@ -812,12 +810,6 @@ export class PayrollService {
         // 164-0030 en maternidad estatal), porque la 455 solo
         // recoge el neto a pagar.
         const deductionsByFunding = new Map<string, { accountCode: string; amount: number; costCenterId?: string; subelement?: string }>();
-        // Los tributos a cargo de la entidad (aporte patronal y UFT) no son
-        // gasto de salario: se cargan a la 855 Otros Impuestos, Tasas y
-        // Contribuciones en el comprobante de impuestos, desglosados solo por
-        // centro de costo.
-        const employerSSByCostCenter = new Map<string, number>();
-        const laborForceTaxByCostCenter = new Map<string, number>();
         // Neto a pagar por subcuenta de Nóminas por Pagar, según las
         // subcuentas que la empresa haya creado y la asignada a cada línea.
         const payableBase = payableAccount || '455';
@@ -828,17 +820,6 @@ export class PayrollService {
         );
         const netByPayableSub = new Map<string, number>();
         let totalVacationProvision = 0;
-        // Impuestos empresariales
-        let employerSSBudgetTotal = 0;
-        let subsidyProvisionTotal = 0;
-        let laborForceTaxTotal = 0;
-        // Impuestos salariales (retenciones)
-        let totalSocialSecurity = 0;
-        let totalIncomeTax = 0;
-        let totalOtherRetention = 0;
-        let totalHealthInsurance = 0;
-        let totalPension = 0;
-        let totalUnionDues = 0;
 
         // En maternidad el débito va a 164-0030 y el crédito a la 455,
         // independientemente del sector de la trabajadora.
@@ -893,82 +874,7 @@ export class PayrollService {
             vacationByAccountAndCC.set(vacKey, vacExisting);
           }
 
-          // ── Tributos a cargo de la entidad (comprobante de impuestos) ──
-          if (chargesEmployerTaxes) {
-            // La base son las remuneraciones devengadas. La provisión de
-            // vacaciones es un cargo a la reserva 492, no salario pagado:
-            // no integra la base del aporte patronal ni de la fuerza de trabajo.
-            const retentionBase = gross;
-            // Aporte patronal 14 %: 12,5 % al presupuesto + 1,5 % a la provisión 500.
-            const ssBudget = round2(retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE);
-            const ssProvision = Number(item.subsidyRetention || 0) ||
-              round2(retentionBase * SUBSIDY_RETENTION_RATE);
-            const employerSS = round2(ssBudget + ssProvision);
-            if (employerSS > 0) {
-              employerSSBudgetTotal += ssBudget;
-              subsidyProvisionTotal += ssProvision;
-              const ccKey = costCenterId || '';
-              employerSSByCostCenter.set(
-                ccKey,
-                (employerSSByCostCenter.get(ccKey) || 0) + employerSS,
-              );
-            }
-
-            // Impuesto por la Utilización de la Fuerza de Trabajo (5 %).
-            const laborForceTax = round2(retentionBase * LABOR_FORCE_TAX_RATE);
-            if (laborForceTax > 0) {
-              laborForceTaxTotal += laborForceTax;
-              const ccKey = costCenterId || '';
-              laborForceTaxByCostCenter.set(
-                ccKey,
-                (laborForceTaxByCostCenter.get(ccKey) || 0) + laborForceTax,
-              );
-            }
-          }
-
-          // ── Impuestos salariales: la entidad solo retiene ──
-          // La cuota sindical se retiene al trabajador afiliado y se entera a
-          // la organización sindical como obligación del comprobante.
-          totalSocialSecurity += Number(item.socialSecurity || 0);
-          totalIncomeTax += Number(item.taxWithholding || 0);
-          totalOtherRetention += Number(item.otherDeductions || 0);
-          totalHealthInsurance += Number(item.healthInsurance || 0);
-          totalPension += Number(item.pension || 0);
-          totalUnionDues += Number(item.unionDues || 0);
-
-          // Las retenciones se debitan en el comprobante de impuestos a la
-          // cuenta que financió el pago de la línea.
-          const itemDeductions = Number(item.totalDeductions || 0);
-          if (itemDeductions > 0) {
-            const fundingAccount =
-              VACATION_FUND_CONCEPTS.includes(concept)
-                ? vacationProvisionAccount || '492'
-                : concept === 'subsidio'
-                  ? subsidyProvisionAccount || '500'
-                  : concept === 'maternidad'
-                    ? maternityReceivableAccount || '164-0030'
-                    : accountCode;
-            const dedCc = chargesExpense ? costCenterId : undefined;
-            const dedKey = `${fundingAccount}#${dedCc || ''}`;
-            const dedEntry = deductionsByFunding.get(dedKey) || {
-              accountCode: fundingAccount,
-              amount: 0,
-              costCenterId: dedCc,
-              subelement: chargesExpense ? '50100' : undefined,
-            };
-            dedEntry.amount += itemDeductions;
-            deductionsByFunding.set(dedKey, dedEntry);
-          }
         }
-        employerSSBudgetTotal = round2(employerSSBudgetTotal);
-        subsidyProvisionTotal = round2(subsidyProvisionTotal);
-        laborForceTaxTotal = round2(laborForceTaxTotal);
-        totalSocialSecurity = round2(totalSocialSecurity);
-        totalIncomeTax = round2(totalIncomeTax);
-        totalOtherRetention = round2(totalOtherRetention);
-        totalHealthInsurance = round2(totalHealthInsurance);
-        totalPension = round2(totalPension);
-        totalUnionDues = round2(totalUnionDues);
 
         const lines: any[] = [];
         const conceptLabel = PAYROLL_CONCEPT_LABELS[concept] || concept;
@@ -1125,112 +1031,6 @@ export class PayrollService {
           }
         }
 
-        // ── Comprobante único de impuestos: salariales y empresariales ──
-        // Débito: las retenciones a la cuenta que financió el pago (gasto, 492,
-        // 500 o 164-0030), porque la 455 ya recogió solo el neto, y los
-        // tributos a cargo de la entidad contra la 855.
-        // Crédito: la transitoria 699 por cada obligación con el presupuesto —la
-        // 440 la registra Finanzas al crear la CxP— y la provisión 500 por el
-        // 1,5 %, que no se entera al presupuesto.
-        const taxLines: any[] = [];
-        const transitAccount = taxTransitAccount || '699';
-        for (const [, ded] of deductionsByFunding.entries()) {
-          const dedAmount = round2(ded.amount);
-          if (dedAmount <= 0) continue;
-          taxLines.push({
-            accountCode: ded.accountCode,
-            debit: dedAmount,
-            credit: 0,
-            description: `Retenciones a trabajadores ${payroll.period}`,
-            costCenterId: ded.costCenterId,
-            subelement: ded.subelement,
-          });
-        }
-        for (const [ccKey, amount] of employerSSByCostCenter.entries()) {
-          taxLines.push({
-            accountCode: employerSSExpenseAccount || '855',
-            debit: round2(amount),
-            credit: 0,
-            description: `Aporte patronal a la Seguridad Social ${payroll.period}`,
-            costCenterId: ccKey || undefined,
-            subelement: '50400',
-          });
-        }
-        for (const [ccKey, amount] of laborForceTaxByCostCenter.entries()) {
-          taxLines.push({
-            accountCode: laborForceTaxExpenseAccount || '855',
-            debit: round2(amount),
-            credit: 0,
-            description: `Impuesto por Utilización de la Fuerza de Trabajo ${payroll.period}`,
-            costCenterId: ccKey || undefined,
-          });
-        }
-
-        // Una obligación por cada impuesto, tanto empresarial como retenido.
-        const budgetObligations = [
-          {
-            amount: employerSSBudgetTotal,
-            accountCode: employerSocialSecurityAccount || '440-0008',
-            description: 'Contribución a la Seguridad Social — aporte patronal 12,5 %',
-          },
-          {
-            amount: laborForceTaxTotal,
-            accountCode: laborForceTaxAccount || '440-0007',
-            description: 'Impuesto por la Utilización de la Fuerza de Trabajo 5 %',
-          },
-          {
-            amount: totalSocialSecurity,
-            accountCode: socialSecurityAccount || '440-0008',
-            description: 'Contribución Especial a la Seguridad Social retenida',
-          },
-          {
-            amount: totalIncomeTax,
-            accountCode: incomeTaxAccount || '440-0005',
-            description: 'Impuesto sobre Ingresos Personales retenido',
-          },
-          {
-            amount: totalOtherRetention,
-            accountCode: otherRetentionAccount || '440-0007',
-            description: 'Otras deducciones retenidas',
-          },
-          {
-            amount: totalPension,
-            accountCode: socialSecurityAccount || '440-0008',
-            description: 'Pensión retenida a trabajadores',
-          },
-          {
-            amount: totalHealthInsurance,
-            accountCode: otherRetentionAccount || '440-0007',
-            description: 'Seguro de salud retenido a trabajadores',
-          },
-          {
-            amount: totalUnionDues,
-            accountCode: otherRetentionAccount || '440-0007',
-            description: 'Cuota sindical retenida a trabajadores 1 %',
-          },
-        ].filter((obligation) => obligation.amount > 0);
-
-        for (const obligation of budgetObligations) {
-          taxLines.push({
-            accountCode: transitAccount,
-            debit: 0,
-            credit: round2(obligation.amount),
-            description: `${obligation.description} ${payroll.period}`,
-          });
-        }
-
-        // El 1,5 % del aporte patronal no va al presupuesto: financia las
-        // prestaciones de seguridad social a corto plazo (provisión 500).
-        if (subsidyProvisionTotal > 0) {
-          taxLines.push({
-            accountCode: subsidyProvisionAccount || '500',
-            subaccountCode: subsidyProvisionAccount || '500',
-            debit: 0,
-            credit: subsidyProvisionTotal,
-            description: `Provisión para prestaciones de seguridad social a corto plazo 1,5 % ${payroll.period}`,
-          });
-        }
-
         const date = payroll.endDate || new Date().toISOString().split('T')[0];
         const createdBy = processedBy || 'Sistema';
 
@@ -1239,8 +1039,7 @@ export class PayrollService {
         if (
           lines.length === 0 &&
           subsidyLines.length === 0 &&
-          maternityLines.length === 0 &&
-          taxLines.length === 0
+          maternityLines.length === 0
         ) {
           this.logger.log(
             `Nómina ${payroll.id} (${conceptLabel}): sin movimientos contables`,
@@ -1302,33 +1101,42 @@ export class PayrollService {
           this.logger.log(`Comprobante maternidad ${payroll.period} generado`);
         }
 
-        if (taxLines.length > 0) {
-          await this.voucherService.createVoucherFromModule(
-            companyId,
-            'payroll',
-            `IMP-${payroll.id}`,
-            {
-              date,
-              description: `Impuestos y retenciones de nómina ${payroll.period}`,
-              type: 'payroll',
-              reference: `IMP-${payroll.period}-${payroll.id}`,
-              createdBy,
-              lines: taxLines,
-            },
-            manager,
-          );
-          this.logger.log(`Comprobante impuestos ${payroll.period} generado`);
+        // ── Comprobante único de impuestos y retenciones del período ──
+        // Se recalcula con TODAS las nóminas del período ya procesadas,
+        // reemplazando el comprobante anterior si existiera.
+        const { budgetObligations } = await this.createOrUpdatePeriodTaxVoucher(
+          companyId,
+          payroll.period,
+          payroll,
+          {
+            employerSSExpenseAccount,
+            laborForceTaxExpenseAccount,
+            employerSocialSecurityAccount,
+            laborForceTaxAccount,
+            socialSecurityAccount,
+            incomeTaxAccount,
+            otherRetentionAccount,
+            subsidyProvisionAccount,
+            taxTransitAccount,
+            vacationProvisionAccount,
+            maternityReceivableAccount,
+          },
+          {
+            production: prodExpenseAccount,
+            associated: assocExpenseAccount,
+            administrative: adminExpenseAccount,
+            free: freeConceptAccount,
+          },
+          manager,
+        );
 
-          // El comprobante de impuestos genera una obligación de pago en
-          // Finanzas por cada tributo, tanto los que son a cargo de la entidad
-          // como las retenciones practicadas al trabajador. Al crearse, Finanzas
-          // cancela la transitoria 699 contra la subcuenta de la 440.
-          await this.createTaxObligations(
+        if (budgetObligations.length > 0) {
+          await this.createPeriodTaxObligations(
             companyId,
-            payroll,
+            payroll.period,
             date,
             budgetObligations,
-            transitAccount,
+            taxTransitAccount || '699',
             manager,
           );
         }
@@ -1894,6 +1702,405 @@ export class PayrollService {
         return defaults.associated || '731';
       default:
         return defaults.administrative || '822';
+    }
+  }
+
+  /**
+   * Calcula los impuestos de una sola nómina: retenciones al trabajador y
+   * tributos a cargo de la entidad (aporte patronal SS y UFT). Se usa tanto
+   * en el procesamiento individual como en el cálculo agregado por período.
+   */
+  private calculatePayrollTaxes(
+    payroll: Payroll,
+    defaults: {
+      production?: string | null;
+      associated?: string | null;
+      administrative?: string | null;
+      free?: string | null;
+    },
+    accounts: {
+      vacationProvisionAccount?: string | null;
+      subsidyProvisionAccount?: string | null;
+      maternityReceivableAccount?: string | null;
+    },
+  ) {
+    const concept = payroll.concept || 'salario';
+    const chargesExpense = EXPENSE_CONCEPTS.includes(concept);
+    const chargesEmployerTaxes = EMPLOYER_TAX_CONCEPTS.includes(concept);
+
+    const employerSSByCostCenter = new Map<string, number>();
+    const laborForceTaxByCostCenter = new Map<string, number>();
+    const deductionsByFunding = new Map<
+      string,
+      { accountCode: string; amount: number; costCenterId?: string; subelement?: string }
+    >();
+
+    let employerSSBudgetTotal = 0;
+    let subsidyProvisionTotal = 0;
+    let laborForceTaxTotal = 0;
+    let totalSocialSecurity = 0;
+    let totalIncomeTax = 0;
+    let totalOtherRetention = 0;
+    let totalHealthInsurance = 0;
+    let totalPension = 0;
+    let totalUnionDues = 0;
+
+    for (const item of payroll.items || []) {
+      const accountCode = this.resolveExpenseAccount(item, defaults, concept);
+      const gross = Number(item.grossSalary || 0);
+      const costCenterId = item.costCenterId || undefined;
+
+      if (chargesEmployerTaxes) {
+        const retentionBase = gross;
+        const ssBudget = round2(retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE);
+        const ssProvision =
+          Number(item.subsidyRetention || 0) ||
+          round2(retentionBase * SUBSIDY_RETENTION_RATE);
+        const employerSS = round2(ssBudget + ssProvision);
+        if (employerSS > 0) {
+          employerSSBudgetTotal += ssBudget;
+          subsidyProvisionTotal += ssProvision;
+          const ccKey = costCenterId || '';
+          employerSSByCostCenter.set(
+            ccKey,
+            (employerSSByCostCenter.get(ccKey) || 0) + employerSS,
+          );
+        }
+
+        const laborForceTax = round2(retentionBase * LABOR_FORCE_TAX_RATE);
+        if (laborForceTax > 0) {
+          laborForceTaxTotal += laborForceTax;
+          const ccKey = costCenterId || '';
+          laborForceTaxByCostCenter.set(
+            ccKey,
+            (laborForceTaxByCostCenter.get(ccKey) || 0) + laborForceTax,
+          );
+        }
+      }
+
+      totalSocialSecurity += Number(item.socialSecurity || 0);
+      totalIncomeTax += Number(item.taxWithholding || 0);
+      totalOtherRetention += Number(item.otherDeductions || 0);
+      totalHealthInsurance += Number(item.healthInsurance || 0);
+      totalPension += Number(item.pension || 0);
+      totalUnionDues += Number(item.unionDues || 0);
+
+      const itemDeductions = Number(item.totalDeductions || 0);
+      if (itemDeductions > 0) {
+        const fundingAccount = VACATION_FUND_CONCEPTS.includes(concept)
+          ? accounts.vacationProvisionAccount || '492'
+          : concept === 'subsidio'
+            ? accounts.subsidyProvisionAccount || '500'
+            : concept === 'maternidad'
+              ? accounts.maternityReceivableAccount || '164-0030'
+              : accountCode;
+        const dedCc = chargesExpense ? costCenterId : undefined;
+        const dedKey = `${fundingAccount}#${dedCc || ''}`;
+        const dedEntry = deductionsByFunding.get(dedKey) || {
+          accountCode: fundingAccount,
+          amount: 0,
+          costCenterId: dedCc,
+          subelement: chargesExpense ? '50100' : undefined,
+        };
+        dedEntry.amount += itemDeductions;
+        deductionsByFunding.set(dedKey, dedEntry);
+      }
+    }
+
+    return {
+      concept,
+      chargesExpense,
+      employerSSBudgetTotal: round2(employerSSBudgetTotal),
+      subsidyProvisionTotal: round2(subsidyProvisionTotal),
+      laborForceTaxTotal: round2(laborForceTaxTotal),
+      totalSocialSecurity: round2(totalSocialSecurity),
+      totalIncomeTax: round2(totalIncomeTax),
+      totalOtherRetention: round2(totalOtherRetention),
+      totalHealthInsurance: round2(totalHealthInsurance),
+      totalPension: round2(totalPension),
+      totalUnionDues: round2(totalUnionDues),
+      employerSSByCostCenter,
+      laborForceTaxByCostCenter,
+      deductionsByFunding,
+    };
+  }
+
+  /**
+   * Genera (o reemplaza) el comprobante único de impuestos y retenciones del
+   * período, sumando los tributos de todas las nóminas procesadas o pagadas.
+   */
+  private async createOrUpdatePeriodTaxVoucher(
+    companyId: number,
+    period: string,
+    currentPayroll: Payroll,
+    accounts: {
+      employerSSExpenseAccount?: string | null;
+      laborForceTaxExpenseAccount?: string | null;
+      employerSocialSecurityAccount?: string | null;
+      laborForceTaxAccount?: string | null;
+      socialSecurityAccount?: string | null;
+      incomeTaxAccount?: string | null;
+      otherRetentionAccount?: string | null;
+      subsidyProvisionAccount?: string | null;
+      taxTransitAccount?: string | null;
+      vacationProvisionAccount?: string | null;
+      maternityReceivableAccount?: string | null;
+    },
+    defaults: {
+      production?: string | null;
+      associated?: string | null;
+      administrative?: string | null;
+      free?: string | null;
+    },
+    manager: EntityManager,
+  ) {
+    const otherPayrolls = await manager.getRepository(Payroll).find({
+      where: { companyId, period, status: In(['processed', 'paid']) },
+      relations: ['items', 'items.costCenter'],
+      order: { id: 'ASC' },
+    });
+    const payrolls = [
+      currentPayroll,
+      ...otherPayrolls.filter((p) => p.id !== currentPayroll.id),
+    ];
+
+    const totals = {
+      employerSSBudgetTotal: 0,
+      subsidyProvisionTotal: 0,
+      laborForceTaxTotal: 0,
+      totalSocialSecurity: 0,
+      totalIncomeTax: 0,
+      totalOtherRetention: 0,
+      totalHealthInsurance: 0,
+      totalPension: 0,
+      totalUnionDues: 0,
+      employerSSByCostCenter: new Map<string, number>(),
+      laborForceTaxByCostCenter: new Map<string, number>(),
+      deductionsByFunding: new Map<
+        string,
+        { accountCode: string; amount: number; costCenterId?: string; subelement?: string }
+      >(),
+    };
+
+    for (const payroll of payrolls) {
+      const t = this.calculatePayrollTaxes(payroll, defaults, {
+        vacationProvisionAccount: accounts.vacationProvisionAccount,
+        subsidyProvisionAccount: accounts.subsidyProvisionAccount,
+        maternityReceivableAccount: accounts.maternityReceivableAccount,
+      });
+
+      totals.employerSSBudgetTotal += t.employerSSBudgetTotal;
+      totals.subsidyProvisionTotal += t.subsidyProvisionTotal;
+      totals.laborForceTaxTotal += t.laborForceTaxTotal;
+      totals.totalSocialSecurity += t.totalSocialSecurity;
+      totals.totalIncomeTax += t.totalIncomeTax;
+      totals.totalOtherRetention += t.totalOtherRetention;
+      totals.totalHealthInsurance += t.totalHealthInsurance;
+      totals.totalPension += t.totalPension;
+      totals.totalUnionDues += t.totalUnionDues;
+
+      for (const [k, v] of t.employerSSByCostCenter.entries()) {
+        totals.employerSSByCostCenter.set(
+          k,
+          (totals.employerSSByCostCenter.get(k) || 0) + v,
+        );
+      }
+      for (const [k, v] of t.laborForceTaxByCostCenter.entries()) {
+        totals.laborForceTaxByCostCenter.set(
+          k,
+          (totals.laborForceTaxByCostCenter.get(k) || 0) + v,
+        );
+      }
+      for (const [k, v] of t.deductionsByFunding.entries()) {
+        const existing = totals.deductionsByFunding.get(k) || {
+          accountCode: v.accountCode,
+          amount: 0,
+          costCenterId: v.costCenterId,
+          subelement: v.subelement,
+        };
+        existing.amount += v.amount;
+        totals.deductionsByFunding.set(k, existing);
+      }
+    }
+
+    const taxLines: any[] = [];
+    const transitAccount = accounts.taxTransitAccount || '699';
+
+    for (const [, ded] of totals.deductionsByFunding.entries()) {
+      const dedAmount = round2(ded.amount);
+      if (dedAmount <= 0) continue;
+      taxLines.push({
+        accountCode: ded.accountCode,
+        debit: dedAmount,
+        credit: 0,
+        description: `Retenciones a trabajadores ${period}`,
+        costCenterId: ded.costCenterId,
+        subelement: ded.subelement,
+      });
+    }
+
+    for (const [ccKey, amount] of totals.employerSSByCostCenter.entries()) {
+      taxLines.push({
+        accountCode: accounts.employerSSExpenseAccount || '855',
+        debit: round2(amount),
+        credit: 0,
+        description: `Aporte patronal a la Seguridad Social ${period}`,
+        costCenterId: ccKey || undefined,
+        subelement: '50400',
+      });
+    }
+
+    for (const [ccKey, amount] of totals.laborForceTaxByCostCenter.entries()) {
+      taxLines.push({
+        accountCode: accounts.laborForceTaxExpenseAccount || '855',
+        debit: round2(amount),
+        credit: 0,
+        description: `Impuesto por Utilización de la Fuerza de Trabajo ${period}`,
+        costCenterId: ccKey || undefined,
+      });
+    }
+
+    const budgetObligations = [
+      {
+        amount: round2(totals.employerSSBudgetTotal),
+        accountCode: accounts.employerSocialSecurityAccount || '440-0008',
+        description: 'Contribución a la Seguridad Social — aporte patronal 12,5 %',
+      },
+      {
+        amount: round2(totals.laborForceTaxTotal),
+        accountCode: accounts.laborForceTaxAccount || '440-0007',
+        description: 'Impuesto por la Utilización de la Fuerza de Trabajo 5 %',
+      },
+      {
+        amount: round2(totals.totalSocialSecurity),
+        accountCode: accounts.socialSecurityAccount || '440-0008',
+        description: 'Contribución Especial a la Seguridad Social retenida',
+      },
+      {
+        amount: round2(totals.totalIncomeTax),
+        accountCode: accounts.incomeTaxAccount || '440-0005',
+        description: 'Impuesto sobre Ingresos Personales retenido',
+      },
+      {
+        amount: round2(totals.totalOtherRetention),
+        accountCode: accounts.otherRetentionAccount || '440-0007',
+        description: 'Otras deducciones retenidas',
+      },
+      {
+        amount: round2(totals.totalPension),
+        accountCode: accounts.socialSecurityAccount || '440-0008',
+        description: 'Pensión retenida a trabajadores',
+      },
+      {
+        amount: round2(totals.totalHealthInsurance),
+        accountCode: accounts.otherRetentionAccount || '440-0007',
+        description: 'Seguro de salud retenido a trabajadores',
+      },
+      {
+        amount: round2(totals.totalUnionDues),
+        accountCode: accounts.otherRetentionAccount || '440-0007',
+        description: 'Cuota sindical retenida a trabajadores 1 %',
+      },
+    ].filter((obligation) => obligation.amount > 0);
+
+    for (const obligation of budgetObligations) {
+      taxLines.push({
+        accountCode: transitAccount,
+        debit: 0,
+        credit: round2(obligation.amount),
+        description: `${obligation.description} ${period}`,
+      });
+    }
+
+    if (round2(totals.subsidyProvisionTotal) > 0) {
+      taxLines.push({
+        accountCode: accounts.subsidyProvisionAccount || '500',
+        subaccountCode: accounts.subsidyProvisionAccount || '500',
+        debit: 0,
+        credit: round2(totals.subsidyProvisionTotal),
+        description: `Provisión para prestaciones de seguridad social a corto plazo 1,5 % ${period}`,
+      });
+    }
+
+    if (taxLines.length === 0) return { taxLines: [], budgetObligations: [] };
+
+    const existing = await manager.getRepository(Voucher).findOne({
+      where: { companyId, sourceModule: 'payroll' as any, sourceDocumentId: `IMP-${period}` },
+    });
+    if (existing) {
+      await manager.getRepository(VoucherLine).delete({ voucherId: existing.id });
+      await manager.getRepository(Voucher).remove(existing);
+    }
+
+    const lastPayroll = payrolls[payrolls.length - 1];
+    const date = lastPayroll?.endDate || new Date().toISOString().split('T')[0];
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'payroll',
+      `IMP-${period}`,
+      {
+        date,
+        description: `Impuestos y retenciones de nómina ${period}`,
+        type: 'payroll',
+        reference: `IMP-${period}`,
+        createdBy: 'Sistema',
+        lines: taxLines,
+      },
+      manager,
+    );
+
+    return { taxLines, budgetObligations };
+  }
+
+  /**
+   * Registra en Finanzas las obligaciones de pago del comprobante de impuestos
+   * agregado por período.
+   */
+  private async createPeriodTaxObligations(
+    companyId: number,
+    period: string,
+    date: string,
+    obligations: { amount: number; accountCode: string; description: string; creditor?: string }[],
+    transitAccountCode: string,
+    manager: EntityManager,
+  ) {
+    const invoiceNumber = `IMP-${period}`;
+    const dueDate: null = null;
+
+    // Reemplaza las obligaciones anteriores del período para evitar duplicados
+    // cuando se procesan varias nóminas del mismo mes.
+    await manager.getRepository(AccountPayable).delete({ companyId, invoiceNumber });
+
+    for (const obligation of obligations) {
+      if (obligation.amount <= 0) continue;
+      try {
+        await this.financeService.createPayable(
+          companyId,
+          {
+            supplierId: null,
+            supplierName: obligation.creditor || 'Presupuesto del Estado (ONAT)',
+            supplierNit: 'N/D',
+            invoiceNumber,
+            invoiceDate: date,
+            originalAmount: obligation.amount,
+            dueDate,
+            accountCode: obligation.accountCode,
+            transitAccountCode,
+            currency: 'CUP',
+            exchangeRate: 1,
+            paymentTerms: 'mensual',
+            notes: `${obligation.description} — nómina ${period}`,
+          },
+          manager,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Error creando obligación ${obligation.accountCode} de nómina ${period}: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      }
     }
   }
 

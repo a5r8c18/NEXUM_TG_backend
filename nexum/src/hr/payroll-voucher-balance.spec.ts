@@ -132,6 +132,9 @@ describe('PayrollService.process() — partida doble por concepto', () => {
         save: jest.fn(),
         // Subcuentas de la 455 que la empresa haya creado.
         find: jest.fn().mockImplementation(() => Promise.resolve(payableChildren)),
+        findOne: jest.fn().mockResolvedValue(null),
+        delete: jest.fn().mockResolvedValue(undefined),
+        remove: jest.fn().mockResolvedValue(undefined),
       }),
     };
     dataSource = {
@@ -245,7 +248,7 @@ describe('PayrollService.process() — partida doble por concepto', () => {
       ]),
     );
 
-    const imp = voucherCalls.find((v) => v.sourceDocId === 'IMP-1');
+    const imp = voucherCalls.find((v) => v.sourceDocId === 'IMP-2026-07');
     expect(imp).toBeDefined();
     const expense855 = imp!.lines.filter(
       (l) => l.accountCode === '855' && Number(l.debit) > 0,
@@ -269,7 +272,7 @@ describe('PayrollService.process() — partida doble por concepto', () => {
       ]),
     );
 
-    const imp = voucherCalls.find((v) => v.sourceDocId === 'IMP-1');
+    const imp = voucherCalls.find((v) => v.sourceDocId === 'IMP-2026-07');
     expect(imp).toBeUndefined();
     expectAllBalanced();
   });
