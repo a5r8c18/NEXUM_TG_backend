@@ -887,20 +887,23 @@ export class PayrollService {
           }
 
           // La 492 absorbe el bruto completo: el neto en este comprobante y
-          // las retenciones en el de impuestos. Si el saldo acreedor
-          // contabilizado no lo cubre, la cuenta queda temporalmente en
-          // deudor hasta que se posteen las provisiones acumuladas.
-          const vacationCharge = round2(totalGross);
-          if (vacationCharge > 0) {
-            const provisionAccount = vacationProvisionAccount || '492';
-            const provisionBalance = await this.getPostedAccountBalance(
+          // las retenciones en el de impuestos. Se verifica saldo individual
+          // del trabajador (saldo inicial + provisiones acumuladas - vacaciones
+          // y liquidaciones anteriores) para detectar adelantos.
+          for (const item of payroll.items) {
+            const gross = Number(item.grossSalary || 0);
+            if (gross <= 0) continue;
+            const balance = await this.employeeVacationBalance(
               companyId,
-              provisionAccount,
+              item.employeeId,
+              payroll.id,
+              manager,
             );
-            if (provisionBalance < vacationCharge) {
+            if (balance < gross) {
+              const provisionAccount = vacationProvisionAccount || '492';
               const msg =
-                `El cargo a la provisión ${provisionAccount} (${vacationCharge}) ` +
-                `excede su saldo acreedor contabilizado (${round2(provisionBalance)}): ` +
+                `${item.employeeName || item.employeeId}: el cargo a la provisión ${provisionAccount} ` +
+                `(${gross}) excede su saldo acumulado (${round2(balance)}): ` +
                 'se pagaron vacaciones por encima de lo acumulado (adelanto). ' +
                 'La cuenta quedará en saldo deudor hasta contabilizar las ' +
                 'provisiones pendientes.';
@@ -1574,24 +1577,43 @@ export class PayrollService {
    * los mapeos por tipo de centro.
    */
   /**
-   * Saldo contabilizado de una cuenta (créditos − débitos en comprobantes
-   * posted). Incluye líneas persistidas con la cuenta como subcuenta
-   * (representación anterior a la corrección cuenta/subcuenta).
+   * Saldo acumulado de vacaciones de un trabajador antes de una nómina dada.
+   * Incluye el saldo inicial de la ficha más las provisiones de nóminas
+   * procesadas/pagadas, menos los disfrutes y liquidaciones anteriores.
    */
-  private async getPostedAccountBalance(
+  private async employeeVacationBalance(
     companyId: number,
-    accountCode: string,
+    employeeId: string,
+    excludePayrollId: number,
+    manager: EntityManager,
   ): Promise<number> {
-    const rows = await this.dataSource.query(
-      `SELECT COALESCE(SUM(vl.credit) - SUM(vl.debit), 0) AS balance
-       FROM voucher_lines vl
-       JOIN vouchers v ON v.id = vl.voucher_id
-       WHERE v.company_id = $1
-         AND v.status = 'posted'
-         AND (vl.account_code = $2 OR vl.subaccount_code = $2)`,
-      [companyId, accountCode],
-    );
-    return Number(rows[0]?.balance || 0);
+    const employee = await manager
+      .getRepository(Employee)
+      .findOne({ where: { companyId, id: employeeId } });
+    let balance = Number(employee?.initialVacationAmount || 0);
+
+    const payrolls = await manager.getRepository(Payroll).find({
+      where: {
+        companyId,
+        status: In(['processed', 'paid']),
+      },
+      relations: ['items'],
+      order: { id: 'ASC' },
+    });
+
+    for (const p of payrolls) {
+      if (p.id === excludePayrollId) continue;
+      for (const item of p.items || []) {
+        if (item.employeeId !== employeeId) continue;
+        if (VACATION_FUND_CONCEPTS.includes(p.concept as any)) {
+          balance -= Number(item.grossSalary || 0);
+        } else {
+          balance += Number(item.vacationProvision || 0);
+        }
+      }
+    }
+
+    return round2(balance);
   }
 
   /**
