@@ -48,7 +48,6 @@ import {
   SUBSIDY_RETENTION_RATE,
   TAXABLE_INCOME_CONCEPTS,
   TIME_SUPPLEMENT_CONCEPTS,
-  UNION_DUES_RATE,
   VACATION_ACCRUAL_RATE,
   WEEKS_PER_YEAR,
   WORKING_DAYS_PER_MONTH,
@@ -1597,10 +1596,7 @@ export class PayrollConceptService {
           priorTotals.get(emp.id),
           gross,
         );
-        const unionDues = emp.unionMember
-          ? round2(gross * UNION_DUES_RATE)
-          : 0;
-        const totalDeductions = round2(socialSecurity + taxWithholding + unionDues);
+        const totalDeductions = round2(socialSecurity + taxWithholding);
 
         items.push({
           ...this.baseItem(emp, companyId),
@@ -1608,7 +1604,7 @@ export class PayrollConceptService {
           grossSalary: gross,
           socialSecurity,
           taxWithholding,
-          unionDues,
+          unionDues: 0,
           totalDeductions,
           netSalary: round2(gross - totalDeductions),
           paidUnits,

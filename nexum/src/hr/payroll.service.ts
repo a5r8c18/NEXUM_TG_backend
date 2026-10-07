@@ -45,7 +45,6 @@ import {
   SUBSIDY_RETENTION_RATE,
   TAXABLE_INCOME_CONCEPTS,
   TIME_SUPPLEMENT_CONCEPTS,
-  UNION_DUES_RATE,
   VACATION_ACCRUAL_RATE,
   VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
@@ -348,12 +347,8 @@ export class PayrollService {
         priorTotals.get(emp.id),
         grossSalary,
       );
-      // Cuota sindical: 1 % del devengado, solo a los trabajadores afiliados.
-      const unionDues = emp.unionMember
-        ? round2(grossSalary * UNION_DUES_RATE)
-        : 0;
       const totalDeductionsItem =
-        Math.round((socialSecurity + taxWithholding + unionDues) * 100) / 100;
+        Math.round((socialSecurity + taxWithholding) * 100) / 100;
       const netSalary = Math.round((grossSalary - totalDeductionsItem) * 100) / 100;
 
       // ── Provisión mensual de vacaciones (Art. 102 Ley 116) ──
@@ -394,7 +389,7 @@ export class PayrollService {
         healthInsurance: 0,
         pension: 0,
         taxWithholding,
-        unionDues,
+        unionDues: 0,
         otherDeductions: 0,
         totalDeductions: totalDeductionsItem,
         netSalary,
@@ -590,16 +585,11 @@ export class PayrollService {
         });
       }
 
-      const unionDues =
-        isSalary && employee?.unionMember
-          ? round2(grossSalary * UNION_DUES_RATE)
-          : Number((item as Partial<PayrollItem>).unionDues || 0);
       const totalDeductionsItem =
         socialSecurity +
         taxWithholding +
         Number(item.healthInsurance || 0) +
         Number(item.pension || 0) +
-        unionDues +
         Number(item.otherDeductions || 0);
       const netSalary = grossSalary - totalDeductionsItem;
 
@@ -633,9 +623,7 @@ export class PayrollService {
         healthInsurance: Number(item.healthInsurance || 0),
         pension: Number(item.pension || 0),
         taxWithholding,
-        // Cuota sindical: 1 % del devengado retenido al trabajador afiliado;
-        // se enteró a la organización sindical como obligación.
-        unionDues,
+        unionDues: 0,
         otherDeductions: Number(item.otherDeductions || 0),
         totalDeductions: totalDeductionsItem,
         netSalary,
@@ -1118,14 +1106,6 @@ export class PayrollService {
             otherRetentionAccount,
             subsidyProvisionAccount,
             taxTransitAccount,
-            vacationProvisionAccount,
-            maternityReceivableAccount,
-          },
-          {
-            production: prodExpenseAccount,
-            associated: assocExpenseAccount,
-            administrative: adminExpenseAccount,
-            free: freeConceptAccount,
           },
           manager,
         );
@@ -1712,28 +1692,12 @@ export class PayrollService {
    */
   private calculatePayrollTaxes(
     payroll: Payroll,
-    defaults: {
-      production?: string | null;
-      associated?: string | null;
-      administrative?: string | null;
-      free?: string | null;
-    },
-    accounts: {
-      vacationProvisionAccount?: string | null;
-      subsidyProvisionAccount?: string | null;
-      maternityReceivableAccount?: string | null;
-    },
   ) {
     const concept = payroll.concept || 'salario';
-    const chargesExpense = EXPENSE_CONCEPTS.includes(concept);
     const chargesEmployerTaxes = EMPLOYER_TAX_CONCEPTS.includes(concept);
 
     const employerSSByCostCenter = new Map<string, number>();
     const laborForceTaxByCostCenter = new Map<string, number>();
-    const deductionsByFunding = new Map<
-      string,
-      { accountCode: string; amount: number; costCenterId?: string; subelement?: string }
-    >();
 
     let employerSSBudgetTotal = 0;
     let subsidyProvisionTotal = 0;
@@ -1743,10 +1707,8 @@ export class PayrollService {
     let totalOtherRetention = 0;
     let totalHealthInsurance = 0;
     let totalPension = 0;
-    let totalUnionDues = 0;
 
     for (const item of payroll.items || []) {
-      const accountCode = this.resolveExpenseAccount(item, defaults, concept);
       const gross = Number(item.grossSalary || 0);
       const costCenterId = item.costCenterId || undefined;
 
@@ -1783,33 +1745,10 @@ export class PayrollService {
       totalOtherRetention += Number(item.otherDeductions || 0);
       totalHealthInsurance += Number(item.healthInsurance || 0);
       totalPension += Number(item.pension || 0);
-      totalUnionDues += Number(item.unionDues || 0);
-
-      const itemDeductions = Number(item.totalDeductions || 0);
-      if (itemDeductions > 0) {
-        const fundingAccount = VACATION_FUND_CONCEPTS.includes(concept)
-          ? accounts.vacationProvisionAccount || '492'
-          : concept === 'subsidio'
-            ? accounts.subsidyProvisionAccount || '500'
-            : concept === 'maternidad'
-              ? accounts.maternityReceivableAccount || '164-0030'
-              : accountCode;
-        const dedCc = chargesExpense ? costCenterId : undefined;
-        const dedKey = `${fundingAccount}#${dedCc || ''}`;
-        const dedEntry = deductionsByFunding.get(dedKey) || {
-          accountCode: fundingAccount,
-          amount: 0,
-          costCenterId: dedCc,
-          subelement: chargesExpense ? '50100' : undefined,
-        };
-        dedEntry.amount += itemDeductions;
-        deductionsByFunding.set(dedKey, dedEntry);
-      }
     }
 
     return {
       concept,
-      chargesExpense,
       employerSSBudgetTotal: round2(employerSSBudgetTotal),
       subsidyProvisionTotal: round2(subsidyProvisionTotal),
       laborForceTaxTotal: round2(laborForceTaxTotal),
@@ -1818,10 +1757,8 @@ export class PayrollService {
       totalOtherRetention: round2(totalOtherRetention),
       totalHealthInsurance: round2(totalHealthInsurance),
       totalPension: round2(totalPension),
-      totalUnionDues: round2(totalUnionDues),
       employerSSByCostCenter,
       laborForceTaxByCostCenter,
-      deductionsByFunding,
     };
   }
 
@@ -1843,14 +1780,6 @@ export class PayrollService {
       otherRetentionAccount?: string | null;
       subsidyProvisionAccount?: string | null;
       taxTransitAccount?: string | null;
-      vacationProvisionAccount?: string | null;
-      maternityReceivableAccount?: string | null;
-    },
-    defaults: {
-      production?: string | null;
-      associated?: string | null;
-      administrative?: string | null;
-      free?: string | null;
     },
     manager: EntityManager,
   ) {
@@ -1873,21 +1802,12 @@ export class PayrollService {
       totalOtherRetention: 0,
       totalHealthInsurance: 0,
       totalPension: 0,
-      totalUnionDues: 0,
       employerSSByCostCenter: new Map<string, number>(),
       laborForceTaxByCostCenter: new Map<string, number>(),
-      deductionsByFunding: new Map<
-        string,
-        { accountCode: string; amount: number; costCenterId?: string; subelement?: string }
-      >(),
     };
 
     for (const payroll of payrolls) {
-      const t = this.calculatePayrollTaxes(payroll, defaults, {
-        vacationProvisionAccount: accounts.vacationProvisionAccount,
-        subsidyProvisionAccount: accounts.subsidyProvisionAccount,
-        maternityReceivableAccount: accounts.maternityReceivableAccount,
-      });
+      const t = this.calculatePayrollTaxes(payroll);
 
       totals.employerSSBudgetTotal += t.employerSSBudgetTotal;
       totals.subsidyProvisionTotal += t.subsidyProvisionTotal;
@@ -1897,7 +1817,6 @@ export class PayrollService {
       totals.totalOtherRetention += t.totalOtherRetention;
       totals.totalHealthInsurance += t.totalHealthInsurance;
       totals.totalPension += t.totalPension;
-      totals.totalUnionDues += t.totalUnionDues;
 
       for (const [k, v] of t.employerSSByCostCenter.entries()) {
         totals.employerSSByCostCenter.set(
@@ -1911,53 +1830,57 @@ export class PayrollService {
           (totals.laborForceTaxByCostCenter.get(k) || 0) + v,
         );
       }
-      for (const [k, v] of t.deductionsByFunding.entries()) {
-        const existing = totals.deductionsByFunding.get(k) || {
-          accountCode: v.accountCode,
-          amount: 0,
-          costCenterId: v.costCenterId,
-          subelement: v.subelement,
-        };
-        existing.amount += v.amount;
-        totals.deductionsByFunding.set(k, existing);
-      }
     }
 
     const taxLines: any[] = [];
     const transitAccount = accounts.taxTransitAccount || '699';
+    const taxExpenseAccount = accounts.employerSSExpenseAccount || '855';
 
-    for (const [, ded] of totals.deductionsByFunding.entries()) {
-      const dedAmount = round2(ded.amount);
-      if (dedAmount <= 0) continue;
+    // Todos los impuestos y retenciones se cargan a la 855; cada tipo es una
+    // línea separada identificada por su descripción (no se usan elementos de
+    // gasto ni la cuenta de gasto del trabajador).
+    const employerSS = Array.from(totals.employerSSByCostCenter.values()).reduce(
+      (s, v) => s + v,
+      0,
+    );
+    if (round2(employerSS) > 0) {
       taxLines.push({
-        accountCode: ded.accountCode,
-        debit: dedAmount,
-        credit: 0,
-        description: `Retenciones a trabajadores ${period}`,
-        costCenterId: ded.costCenterId,
-        subelement: ded.subelement,
-      });
-    }
-
-    for (const [ccKey, amount] of totals.employerSSByCostCenter.entries()) {
-      taxLines.push({
-        accountCode: accounts.employerSSExpenseAccount || '855',
-        debit: round2(amount),
+        accountCode: taxExpenseAccount,
+        debit: round2(employerSS),
         credit: 0,
         description: `Aporte patronal a la Seguridad Social ${period}`,
-        costCenterId: ccKey || undefined,
-        subelement: '50400',
       });
     }
 
-    for (const [ccKey, amount] of totals.laborForceTaxByCostCenter.entries()) {
+    const laborForceTax = Array.from(
+      totals.laborForceTaxByCostCenter.values(),
+    ).reduce((s, v) => s + v, 0);
+    if (round2(laborForceTax) > 0) {
       taxLines.push({
-        accountCode: accounts.laborForceTaxExpenseAccount || '855',
-        debit: round2(amount),
+        accountCode: taxExpenseAccount,
+        debit: round2(laborForceTax),
         credit: 0,
         description: `Impuesto por Utilización de la Fuerza de Trabajo ${period}`,
-        costCenterId: ccKey || undefined,
       });
+    }
+
+    const retainedTaxes = [
+      { amount: totals.totalIncomeTax, description: 'Impuesto sobre Ingresos Personales retenido' },
+      { amount: totals.totalSocialSecurity, description: 'Contribución Especial a la Seguridad Social retenida' },
+      { amount: totals.totalPension, description: 'Pensión retenida a trabajadores' },
+      { amount: totals.totalHealthInsurance, description: 'Seguro de salud retenido a trabajadores' },
+      { amount: totals.totalOtherRetention, description: 'Otras deducciones retenidas' },
+    ];
+    for (const retention of retainedTaxes) {
+      const amount = round2(retention.amount);
+      if (amount > 0) {
+        taxLines.push({
+          accountCode: taxExpenseAccount,
+          debit: amount,
+          credit: 0,
+          description: `${retention.description} ${period}`,
+        });
+      }
     }
 
     const budgetObligations = [
@@ -1995,11 +1918,6 @@ export class PayrollService {
         amount: round2(totals.totalHealthInsurance),
         accountCode: accounts.otherRetentionAccount || '440-0007',
         description: 'Seguro de salud retenido a trabajadores',
-      },
-      {
-        amount: round2(totals.totalUnionDues),
-        accountCode: accounts.otherRetentionAccount || '440-0007',
-        description: 'Cuota sindical retenida a trabajadores 1 %',
       },
     ].filter((obligation) => obligation.amount > 0);
 
