@@ -37,6 +37,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { BackupModule } from './backup/backup.module';
 import { BudgetModule } from './budget/budget.module';
+import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
 
 import { Company } from './entities/company.entity';
 import { User } from './entities/user.entity';
@@ -241,6 +242,7 @@ import { DocumentSequence } from './entities/document-sequence.entity';
     PurchaseOrdersModule,
     BackupModule,
     BudgetModule,
+    ExchangeRatesModule,
     LoggerModule,
     RedisCacheModule,
     ThrottlerModule.forRoot([
