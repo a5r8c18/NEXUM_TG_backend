@@ -46,6 +46,8 @@ import {
   TAXABLE_INCOME_CONCEPTS,
   TIME_SUPPLEMENT_CONCEPTS,
   VACATION_ACCRUAL_RATE,
+  VACATION_AMOUNT_ACCRUAL_CONCEPTS,
+  VACATION_DAYS_ACCRUAL_CONCEPTS,
   VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
@@ -597,6 +599,34 @@ export class PayrollService {
       totalDeductions += totalDeductionsItem;
       totalNet += netSalary;
 
+      // La provisión de vacaciones se recalcula según el concepto:
+      // - salario/libre: días e importe.
+      // - feriado y maternidad: solo importe.
+      // - vacaciones, liquidación, subsidio, horas extras, nocturnidad y
+      //   guardia: no acumulan.
+      const accruesDays = VACATION_DAYS_ACCRUAL_CONCEPTS.includes(
+        payroll.concept as PayrollConcept,
+      );
+      const accruesAmount = VACATION_AMOUNT_ACCRUAL_CONCEPTS.includes(
+        payroll.concept as PayrollConcept,
+      );
+      const vacationProvisionForSave = accruesAmount
+        ? round2(grossSalary * VACATION_ACCRUAL_RATE)
+        : Number((item as Partial<PayrollItem>).vacationProvision || 0);
+      const vacationDaysForSave = accruesDays
+        ? round2(
+            // En líneas por horas (sin salario fijo) las unidades son horas:
+            // se convierten a días antes de aplicar el 9,09 %, con el tope
+            // de 24 días del mes en ambos casos.
+            Math.min(
+              Number(item.baseSalary || 0) > 0
+                ? paidUnits
+                : paidUnits / HOURS_PER_WORKDAY,
+              WORKING_DAYS_PER_MONTH,
+            ) * VACATION_ACCRUAL_RATE,
+          )
+        : Number((item as Partial<PayrollItem>).vacationDays || 0);
+
       await itemRepo.save({
         payrollId: payroll.id,
         companyId,
@@ -627,26 +657,8 @@ export class PayrollService {
         otherDeductions: Number(item.otherDeductions || 0),
         totalDeductions: totalDeductionsItem,
         netSalary,
-        // La provisión de vacaciones se recalcula sobre los salarios percibidos
-        // del período (Art. 102), igual que en la generación. En los demás
-        // conceptos se conserva el valor que ya trae la línea.
-        vacationProvision:
-          isSalary || isTimeSupplement
-            ? round2(grossSalary * VACATION_ACCRUAL_RATE)
-            : Number((item as Partial<PayrollItem>).vacationProvision || 0),
-        vacationDays: isSalary
-          ? round2(
-              // En líneas por horas (sin salario fijo) las unidades son horas:
-              // se convierten a días antes de aplicar el 9,09 %, con el tope
-              // de 24 días del mes en ambos casos.
-              Math.min(
-                Number(item.baseSalary || 0) > 0
-                  ? paidUnits
-                  : paidUnits / HOURS_PER_WORKDAY,
-                WORKING_DAYS_PER_MONTH,
-              ) * VACATION_ACCRUAL_RATE,
-            )
-          : Number((item as Partial<PayrollItem>).vacationDays || 0),
+        vacationProvision: vacationProvisionForSave,
+        vacationDays: vacationDaysForSave,
         subsidyRetention: round2(grossSalary * SUBSIDY_RETENTION_RATE),
         // Trazabilidad del cálculo: se conserva de la línea previa cuando el
         // cliente no la reenvía — sin ella, cancel() no puede restituir la
@@ -1735,11 +1747,9 @@ export class PayrollService {
       const costCenterId = item.costCenterId || undefined;
 
       if (chargesEmployerTaxes) {
-        const retentionBase = gross;
+        const retentionBase = round2(gross + Number(item.vacationProvision || 0));
         const ssBudget = round2(retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE);
-        const ssProvision =
-          Number(item.subsidyRetention || 0) ||
-          round2(retentionBase * SUBSIDY_RETENTION_RATE);
+        const ssProvision = round2(retentionBase * SUBSIDY_RETENTION_RATE);
         const employerSS = round2(ssBudget + ssProvision);
         if (employerSS > 0) {
           employerSSBudgetTotal += ssBudget;

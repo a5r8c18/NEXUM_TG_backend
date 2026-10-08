@@ -20,6 +20,7 @@ export type PayrollConcept =
   | 'horas_extras'
   | 'nocturnidad'
   | 'feriado'
+  | 'guardia'
   | 'libre';
 
 export const PAYROLL_CONCEPTS: PayrollConcept[] = [
@@ -31,6 +32,7 @@ export const PAYROLL_CONCEPTS: PayrollConcept[] = [
   'horas_extras',
   'nocturnidad',
   'feriado',
+  'guardia',
   'libre',
 ];
 
@@ -43,14 +45,15 @@ export const PAYROLL_CONCEPT_LABELS: Record<PayrollConcept, string> = {
   horas_extras: 'Horas extras',
   nocturnidad: 'Nocturnidad',
   feriado: 'Días feriados',
+  guardia: 'Guardia',
   libre: 'Concepto libre',
 };
 
 /**
  * Pagos adicionales por tiempo trabajado: horas extra (Art. 122 Ley 116),
- * nocturnidad (Res. 17/2025 MTSS) y feriado trabajado (Art. 111.c). Se
- * generan para varios trabajadores a la vez, son remuneración gravable,
- * cargan a gasto y acumulan vacaciones sobre el importe percibido.
+ * nocturnidad (Res. 17/2025 MTSS), feriado trabajado (Art. 111.c) y guardia.
+ * Se generan para varios trabajadores a la vez, son remuneración gravable y
+ * cargan a gasto; solo el feriado acumula importe de vacaciones.
  */
 export const TIME_SUPPLEMENT_CONCEPTS: PayrollConcept[] = [
   'horas_extras',
@@ -63,6 +66,7 @@ export const EXPENSE_CONCEPTS: PayrollConcept[] = [
   'salario',
   'libre',
   ...TIME_SUPPLEMENT_CONCEPTS,
+  'guardia',
 ];
 
 /**
@@ -99,6 +103,24 @@ export const VACATION_FUND_CONCEPTS: PayrollConcept[] = [
 ];
 
 /**
+ * Conceptos que acumulan DÍAS e IMPORTE de vacaciones (Art. 102).
+ */
+export const VACATION_DAYS_ACCRUAL_CONCEPTS: PayrollConcept[] = [
+  'salario',
+  'libre',
+];
+
+/**
+ * Conceptos que acumulan solo IMPORTE de vacaciones, sin días.
+ */
+export const VACATION_AMOUNT_ACCRUAL_CONCEPTS: PayrollConcept[] = [
+  'salario',
+  'libre',
+  'feriado',
+  'maternidad',
+];
+
+/**
  * Conceptos cuya retribución integra la base imponible mensual del Impuesto
  * sobre Ingresos Personales (Res. 41/2023: "el total de las remuneraciones…
  * por todos los conceptos de pago; incluyendo el pago por descanso
@@ -111,6 +133,7 @@ export const TAXABLE_INCOME_CONCEPTS: PayrollConcept[] = [
   'vacaciones',
   'liquidacion',
   'libre',
+  'guardia',
   ...TIME_SUPPLEMENT_CONCEPTS,
 ];
 
@@ -123,6 +146,7 @@ export const TAXABLE_INCOME_CONCEPTS: PayrollConcept[] = [
 export const EMPLOYER_TAX_CONCEPTS: PayrollConcept[] = [
   'salario',
   'libre',
+  'guardia',
   ...TIME_SUPPLEMENT_CONCEPTS,
 ];
 

@@ -1014,13 +1014,9 @@ export class PayrollConceptService {
         averageSalary: average,
         paidUnits: result.paidDays,
         appliedRate: result.rate,
-        // Los días de reposo médico acumulan vacaciones (Art. 102), incluidos
-        // los de carencia: aunque el subsidio no los paga, son parte de la
-        // licencia y cuentan como tiempo de servicio.
-        ...this.vacationAccrual(
-          emp,
-          result.paidDays + result.waitingDaysApplied,
-        ),
+        // El subsidio por enfermedad o accidente no acumula vacaciones.
+        vacationProvision: 0,
+        vacationDays: 0,
         notes:
           `Subsidio ${origin === 'occupational' ? 'profesional' : 'común'}` +
           `${hospitalized ? ' hospitalizado' : ''}: ${result.paidDays} días × ` +
@@ -1147,6 +1143,10 @@ export class PayrollConceptService {
 
       const benefit = calculateMaternityBenefit(weeklyAverage, weeks);
 
+      const { vacationProvision } = this.vacationAccrual(
+        emp,
+        weeks * 5,
+      );
       items.push({
         ...this.baseItem(emp, companyId),
         grossSalary: benefit,
@@ -1156,9 +1156,10 @@ export class PayrollConceptService {
         averageSalary: weeklyAverage,
         paidUnits: weeks,
         appliedRate: 1,
-        // La licencia retribuida de maternidad acumula vacaciones (Art. 102);
-        // se computan 5 días laborables por semana de prestación.
-        ...this.vacationAccrual(emp, weeks * 5),
+        // La licencia retribuida de maternidad acumula solo importe de
+        // vacaciones (Art. 102); no días.
+        vacationProvision,
+        vacationDays: 0,
         notes:
           `Maternidad plazo ${data.installment} (${weeks} semanas × ${weeklyAverage}) — cargo a 164-0030`,
       });
@@ -1304,6 +1305,18 @@ export class PayrollConceptService {
       const amount = round2((monthlyBenefit * coveredDays) / periodDays);
       if (amount <= 0) continue;
 
+      const maternityWorkingDays =
+        variant === 'b'
+          ? 0
+          : overlapWorkingDays(
+              windowStart,
+              windowEnd,
+              data.startDate,
+              data.endDate,
+            );
+      const { vacationProvision } = maternityWorkingDays
+        ? this.vacationAccrual(emp, maternityWorkingDays)
+        : { vacationProvision: 0 };
       items.push({
         ...this.baseItem(emp, companyId),
         grossSalary: amount,
@@ -1314,19 +1327,10 @@ export class PayrollConceptService {
         paidUnits: coveredDays,
         appliedRate: SOCIAL_BENEFIT_RATE,
         // En la variante b la madre trabaja y acumula vacaciones por su
-        // salario; en a y c el tiempo de prestación cuenta como servicio
-        // (Art. 12.1 DL 56/2021) y provisiona aquí.
-        ...(variant === 'b'
-          ? {}
-          : this.vacationAccrual(
-              emp,
-              overlapWorkingDays(
-                windowStart,
-                windowEnd,
-                data.startDate,
-                data.endDate,
-              ),
-            )),
+        // salario; en a y c acumula solo importe de vacaciones
+        // (Art. 12.1 DL 56/2021), no días.
+        vacationProvision: variant === 'b' ? 0 : vacationProvision,
+        vacationDays: 0,
         notes:
           `Prestación social ${variant} (60 %, Art. 30.1.${variant} DL 56/2021): ` +
           `${coveredDays}/${periodDays} días × ${monthlyBenefit} mensual — cargo a 164-0030`,
@@ -1674,9 +1678,10 @@ export class PayrollConceptService {
           totalDeductions,
           netSalary: round2(gross - totalDeductions),
           paidUnits: round2(hours + nightHours),
-          // Pago adicional: acumula vacaciones sobre el importe percibido
-          // (Art. 102), pero no días, que ya cuenta la nómina de salario.
-          vacationProvision: round2(gross * VACATION_ACCRUAL_RATE),
+          // Solo el feriado trabajado acumula importe de vacaciones (Art. 102);
+          // horas extras, nocturnidad y guardia no acumulan.
+          vacationProvision:
+            concept === 'feriado' ? round2(gross * VACATION_ACCRUAL_RATE) : 0,
           vacationDays: 0,
           subsidyRetention: round2(gross * SUBSIDY_RETENTION_RATE),
           averageSalary: hr,

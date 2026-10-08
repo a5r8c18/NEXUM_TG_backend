@@ -234,9 +234,8 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     expect(creditsTo455()).toBe(1000);
   });
 
-  it('los tributos patronales usan solo el devengado, sin la provisión de vacaciones', async () => {
-    // Bruto 10 000 + provisión 909: la base del 14 % y del 5 % es 10 000,
-    // no 10 909. La provisión es cargo a la reserva 492, no remuneración.
+  it('los tributos patronales gravan el devengado más la provisión de vacaciones del período', async () => {
+    // Bruto 10 000 + provisión 909: la base del 14 % y del 5 % es 10 909.
     await processPayroll(
       payrollFixture('salario', [
         item({
@@ -259,9 +258,9 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     const lfExpense = expense855.find((l) =>
       l.description.includes('Fuerza de Trabajo'),
     );
-    // 12,5 % presupuesto + 1,5 % provisión = 1 400 sobre 10 000.
-    expect(Number(ssExpense!.debit)).toBeCloseTo(1400, 2);
-    expect(Number(lfExpense!.debit)).toBeCloseTo(500, 2);
+    // 12,5 % presupuesto + 1,5 % provisión = 1 527,27 sobre 10 909.
+    expect(Number(ssExpense!.debit)).toBeCloseTo(1527.27, 2);
+    expect(Number(lfExpense!.debit)).toBeCloseTo(545.45, 2);
     expectAllBalanced();
   });
 

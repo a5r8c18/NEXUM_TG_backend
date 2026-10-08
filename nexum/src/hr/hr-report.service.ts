@@ -16,6 +16,7 @@ import {
   TAXABLE_INCOME_CONCEPTS,
   TIME_SUPPLEMENT_CONCEPTS,
   VACATION_ACCRUAL_RATE,
+  VACATION_DAYS_ACCRUAL_CONCEPTS,
   VACATION_FUND_CONCEPTS,
   WORKING_DAYS_PER_MONTH,
 } from './payroll-concept';
@@ -104,10 +105,10 @@ const VACATION_MOVEMENT_CONCEPTS: PayrollConcept[] = [
  * adicionales por horas acumulan solo importe, nunca días.
  */
 function accruedDaysOf(mov: VacationMovement): number {
-  if (mov.vacationDays || TIME_SUPPLEMENT_CONCEPTS.includes(mov.concept)) {
-    return mov.vacationDays;
+  if (VACATION_DAYS_ACCRUAL_CONCEPTS.includes(mov.concept)) {
+    return mov.vacationDays || (mov.paidUnits || WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
   }
-  return (mov.paidUnits || WORKING_DAYS_PER_MONTH) * VACATION_ACCRUAL_RATE;
+  return 0;
 }
 
 @Injectable()
