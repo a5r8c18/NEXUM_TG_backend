@@ -1004,6 +1004,19 @@ export class AccountingController {
     return this.accountService.findAccountsByParentCode(companyId, parentCode);
   }
 
+  @Post('accounts/seed-2016')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  seedChartOfAccounts(
+    @Req() req: Request,
+    @Body() body: { type?: 'state' | 'non-state' },
+  ) {
+    const companyId = getCompanyId(req);
+    return this.accountService.seedChartOfAccounts2016(
+      companyId,
+      body?.type ?? 'state',
+    );
+  }
+
   @Post('accounts')
   createAccount(@Req() req: Request, @Body() body: CreateAccountDto) {
     const companyId = getCompanyId(req);

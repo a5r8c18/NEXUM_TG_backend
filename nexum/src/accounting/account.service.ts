@@ -10,6 +10,7 @@ import { Account } from '../entities/account.entity';
 import { VoucherLine } from '../entities/voucher-line.entity';
 import { Elemento } from '../entities/elemento.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
+import { seedChartOfAccountsForCompany } from './chart-of-accounts-seeder';
 
 @Injectable()
 export class AccountService {
@@ -84,6 +85,21 @@ export class AccountService {
     if (!account)
       throw new NotFoundException(`Cuenta con código ${code} no encontrada`);
     return account;
+  }
+
+  /**
+   * Carga el plan de cuentas cubano 2016 para la empresa.
+   * Idempotente: inserta solo las cuentas faltantes por código.
+   */
+  async seedChartOfAccounts2016(
+    companyId: number,
+    companyType: 'state' | 'non-state' = 'state',
+  ) {
+    return seedChartOfAccountsForCompany(
+      this.accountRepo,
+      companyId,
+      companyType,
+    );
   }
 
   async createAccount(companyId: number, data: Partial<Account>) {
