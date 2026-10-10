@@ -23,6 +23,8 @@ describe('CompaniesService', () => {
     tenantType: 'SINGLE_COMPANY',
     salesTaxRate: null,
     incomeTaxRate: null,
+    nightShiftRateEvening: null,
+    nightShiftRateNight: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     warehouses: [],

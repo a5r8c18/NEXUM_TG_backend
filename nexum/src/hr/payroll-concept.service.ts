@@ -21,12 +21,10 @@ import {
   calculateSubsidy,
   calculateWeeklyAverageSalary,
   evaluateSubsidyLimit,
-  hourlyRateFor,
   overlapDays,
   overlapWorkingDays,
   round2,
   salaryForWorkedHours,
-  timeSupplementAmount,
   vacationDailyRate,
   vacationGross,
 } from './payroll-calculations';
@@ -1437,7 +1435,8 @@ export class PayrollConceptService {
    *
    * - Salario fijo: salario − horas faltadas × (salario / 190,6), topado en
    *   el salario. Sin salario fijo: tiempo × tarifa del cargo.
-   * - Horas extra, nocturnidad y feriado: pagos adicionales por horas.
+   * - Horas extra, nocturnidad, feriado y guardia: el usuario indica las
+   *   horas y el importe a mano; no se aplican tarifas automáticas.
    * - Vacaciones: días × tarifa acumulada del submayor.
    * - Liquidación: todo el saldo acumulado (Art. 52).
    * - Subsidio y maternidad: importe bruto indicado, exento.
@@ -1501,10 +1500,6 @@ export class PayrollConceptService {
       data.concept === 'vacaciones'
         ? await this.hrReportService.vacationBalances(companyId, data.period)
         : new Map();
-    const nightRates =
-      data.concept === 'nocturnidad'
-        ? await this.nightShiftRates(companyId)
-        : undefined;
 
     const items: Partial<PayrollItem>[] = [];
     const warnings: string[] = [];
@@ -1627,45 +1622,37 @@ export class PayrollConceptService {
         continue;
       }
 
-      if (TIME_SUPPLEMENT_CONCEPTS.includes(data.concept)) {
+      if (
+        TIME_SUPPLEMENT_CONCEPTS.includes(data.concept) ||
+        data.concept === 'guardia'
+      ) {
         const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
-        const concept = data.concept as 'horas_extras' | 'nocturnidad' | 'feriado';
-        const position = baseSalary > 0 ? null : await positionOf(emp.positionId);
-        const hourlyRate = hourlyRateFor(baseSalary, position);
-        // Feriado admite el tiempo en días laborables (7,9416 h cada uno).
-        const hours =
-          Number(line.hours || 0) +
-          (concept === 'feriado' ? days * HOURS_PER_WORKDAY : 0);
-        const nightHours = concept === 'nocturnidad' ? Number(line.nightHours || 0) : 0;
-        if (hours + nightHours <= 0) continue;
-        if (concept !== 'nocturnidad' && hourlyRate <= 0) {
+        const concept = data.concept;
+        const hours = Number(line.hours || 0);
+        const nightHours =
+          concept === 'nocturnidad' ? Number(line.nightHours || 0) : 0;
+        // Estos conceptos son de importe libre: el usuario introduce las
+        // horas y el importe a mano; el sistema no aplica tarifas.
+        if (hours + nightHours <= 0 && gross <= 0) continue;
+        if (gross <= 0) {
           throw new BadRequestException(
-            `${employeeName}: sin salario fijo ni tarifa en el cargo para calcular la tarifa horaria`,
+            `${employeeName}: indique el importe para ${PAYROLL_CONCEPT_LABELS[concept]}`,
           );
         }
-        const overtimeRate = Number(emp.overtimeRate || 1) || 1;
-        gross = timeSupplementAmount(concept, {
-          hours,
-          nightHours,
-          hourlyRate,
-          overtimeRate,
-          nightShiftRates: nightRates,
-        });
-        if (gross <= 0) continue;
 
         const { socialSecurity, taxWithholding } = incrementalTaxes(
           priorTotals.get(emp.id),
           gross,
         );
         const totalDeductions = round2(socialSecurity + taxWithholding);
-        const hr = round2(hourlyRate);
         const note =
           concept === 'horas_extras'
-            ? `Horas extras: ${round2(hours)} h × ${hr}` +
-              (overtimeRate !== 1 ? ` × ${overtimeRate}` : '')
+            ? `Horas extras: ${round2(hours)} h`
             : concept === 'nocturnidad'
-              ? `Nocturnidad: ${round2(hours)} h × ${nightRates!.evening} + ${round2(nightHours)} h × ${nightRates!.night}`
-              : `Feriado trabajado (adicional): ${round2(hours)} h × ${hr}`;
+              ? `Nocturnidad: ${round2(hours)} h (7-11 pm) + ${round2(nightHours)} h (11 pm-7 am)`
+              : concept === 'guardia'
+                ? `Guardia: ${round2(hours)} h`
+                : `Feriado/día festivo trabajado: ${round2(hours)} h`;
 
         items.push({
           ...this.baseItem(emp, companyId),
@@ -1684,8 +1671,8 @@ export class PayrollConceptService {
             concept === 'feriado' ? round2(gross * VACATION_ACCRUAL_RATE) : 0,
           vacationDays: 0,
           subsidyRetention: round2(gross * SUBSIDY_RETENTION_RATE),
-          averageSalary: hr,
-          appliedRate: concept === 'horas_extras' ? overtimeRate : 1,
+          averageSalary: baseSalary,
+          appliedRate: 1,
           notes: note,
         });
         continue;
@@ -1832,11 +1819,6 @@ export class PayrollConceptService {
     const vacationBalances = needsBalance
       ? await this.hrReportService.vacationBalances(companyId, data.period)
       : new Map();
-    const nightRates =
-      data.concept === 'nocturnidad'
-        ? await this.nightShiftRates(companyId)
-        : undefined;
-
     const positionCache = new Map<string, JobPosition | null>();
     const positionOf = async (id: string | null | undefined) => {
       if (!id) return null;
@@ -1906,23 +1888,13 @@ export class PayrollConceptService {
             );
           }
         }
-      } else if (TIME_SUPPLEMENT_CONCEPTS.includes(data.concept)) {
-        const concept = data.concept as 'horas_extras' | 'nocturnidad' | 'feriado';
-        const position = baseSalary > 0 ? null : await positionOf(emp.positionId);
-        const hourlyRate = hourlyRateFor(baseSalary, position);
-        ctx.rate = round2(hourlyRate);
-        ctx.suggestedGross = timeSupplementAmount(concept, {
-          hours: hours + (concept === 'feriado' ? days * HOURS_PER_WORKDAY : 0),
-          nightHours: Number(line.nightHours || 0),
-          hourlyRate,
-          overtimeRate: Number(emp.overtimeRate || 1) || 1,
-          nightShiftRates: nightRates,
-        });
-        if (concept !== 'nocturnidad' && hourlyRate <= 0) {
-          ctx.warnings.push(
-            `${name}: sin salario fijo ni tarifa en el cargo para calcular la tarifa horaria`,
-          );
-        }
+      } else if (
+        TIME_SUPPLEMENT_CONCEPTS.includes(data.concept) ||
+        data.concept === 'guardia'
+      ) {
+        // Importe libre: el usuario introduce las horas y el importe a mano;
+        // el preview devuelve el importe indicado, sin tarifas.
+        ctx.suggestedGross = round2(Number(line.grossSalary) || 0);
       } else if (data.concept === 'vacaciones') {
         const balance = vacationBalances.get(emp.id);
         ctx.rate = vacationDailyRate(balance, contractualRate);

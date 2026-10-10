@@ -60,6 +60,8 @@ describe('AuthService', () => {
     tenantType: 'SINGLE_COMPANY',
     salesTaxRate: null,
     incomeTaxRate: null,
+    nightShiftRateEvening: null,
+    nightShiftRateNight: null,
     logoPath: null,
     isActive: true,
     createdAt: new Date(),
