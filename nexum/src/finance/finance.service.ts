@@ -189,7 +189,8 @@ export class FinanceService {
       .createQueryBuilder('ar')
       .where('ar.company_id = :companyId', { companyId })
       .leftJoinAndSelect('ar.payments', 'payments')
-      .orderBy('ar.due_date', 'ASC');
+      .orderBy('ar.created_at', 'DESC')
+      .addOrderBy('ar.ar_number', 'DESC');
 
     if (filters?.status) qb.andWhere('ar.status = :status', { status: filters.status });
     if (filters?.customerName) qb.andWhere('ar.customer_name ILIKE :name', { name: `%${filters.customerName}%` });
@@ -262,7 +263,8 @@ export class FinanceService {
       .createQueryBuilder('ap')
       .where('ap.company_id = :companyId', { companyId })
       .leftJoinAndSelect('ap.payments', 'payments')
-      .orderBy('ap.due_date', 'ASC');
+      .orderBy('ap.created_at', 'DESC')
+      .addOrderBy('ap.ap_number', 'DESC');
 
     if (filters?.status) qb.andWhere('ap.status = :status', { status: filters.status });
     if (filters?.supplierName) qb.andWhere('ap.supplier_name ILIKE :name', { name: `%${filters.supplierName}%` });
@@ -276,7 +278,14 @@ export class FinanceService {
       relations: ['payments'],
     });
     if (!ap) throw new NotFoundException(`CxP ${id} no encontrada`);
-    return ap;
+
+    // Comprobante(s) contable(s) con que nació la obligación (transitoria →
+    // pasivo), para visualizar las cuentas y subcuentas afectadas.
+    const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
+      companyId,
+      `AP-${ap.id}`,
+    );
+    return { ...ap, vouchers };
   }
 
   /**

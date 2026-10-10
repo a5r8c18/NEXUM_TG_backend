@@ -252,14 +252,19 @@ describe('PayrollService.process() — partida doble por concepto', () => {
     const expense855 = imp!.lines.filter(
       (l) => l.accountCode === '855' && Number(l.debit) > 0,
     );
-    const ssExpense = expense855.find((l) =>
-      l.description.includes('Seguridad Social'),
+    const ssExpense = expense855.find(
+      (l) => l.subaccountCode === '855-0030',
     );
-    const lfExpense = expense855.find((l) =>
-      l.description.includes('Fuerza de Trabajo'),
+    const provisionExpense = expense855.find(
+      (l) => l.subaccountCode === '855-0050',
     );
-    // 12,5 % presupuesto + 1,5 % provisión = 1 527,27 sobre 10 909.
-    expect(Number(ssExpense!.debit)).toBeCloseTo(1527.27, 2);
+    const lfExpense = expense855.find(
+      (l) => l.subaccountCode === '855-0040',
+    );
+    // 12,5 % presupuesto en la 855-0030 y 1,5 % provisión en la 855-0050,
+    // sobre 10 909 (1 363,63 + 163,64 = 1 527,27).
+    expect(Number(ssExpense!.debit)).toBeCloseTo(1363.63, 2);
+    expect(Number(provisionExpense!.debit)).toBeCloseTo(163.64, 2);
     expect(Number(lfExpense!.debit)).toBeCloseTo(545.45, 2);
     expectAllBalanced();
   });

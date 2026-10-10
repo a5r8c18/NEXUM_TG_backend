@@ -198,6 +198,7 @@ export class VoucherService {
         sourceDocumentId,
         ...(sourceModule ? { sourceModule: sourceModule as SourceModule } : {}),
       },
+      relations: ['lines'],
       order: { createdAt: 'ASC' },
     });
   }

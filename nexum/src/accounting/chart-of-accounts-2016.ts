@@ -1555,6 +1555,19 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
       allWithSubs.push(...subs);
     }
 
+    // Otros Impuestos, Tasas y Contribuciones (855): una subcuenta por tipo
+    // de impuesto o retención, según el comprobante de impuestos de nómina.
+    if (code === '855') {
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, {
+        '0010': 'Impuestos sobre Ingresos Personales',
+        '0020': 'Contribución Especial a la Seguridad Social',
+        '0030': 'Aporte a la Seguridad Social',
+        '0040': 'Impuesto sobre Utilización de la Fuerza de Trabajo',
+        '0050': 'Provisión para el Pago de Subsidios',
+      });
+      allWithSubs.push(...subs);
+    }
+
     // 5. Activos Fijos Intangibles en Proceso (264)
     if (code === '264') {
       const items = {

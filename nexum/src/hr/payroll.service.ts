@@ -1868,19 +1868,28 @@ export class PayrollService {
     const transitAccount = accounts.taxTransitAccount || '699';
     const taxExpenseAccount = accounts.employerSSExpenseAccount || '855';
 
-    // Todos los impuestos y retenciones se cargan a la 855; cada tipo es una
-    // línea separada identificada por su descripción (no se usan elementos de
-    // gasto ni la cuenta de gasto del trabajador).
-    const employerSS = Array.from(totals.employerSSByCostCenter.values()).reduce(
-      (s, v) => s + v,
-      0,
-    );
-    if (round2(employerSS) > 0) {
+    // Todos los impuestos y retenciones se cargan a la 855 en su subcuenta:
+    // 0010 IIP, 0020 CESS, 0030 Aporte SS (incl. pensión/salud/otras), 0040 UFT,
+    // 0050 Provisión para el pago de subsidios.
+    const taxSub = (code: string) => `${taxExpenseAccount}-${code}`;
+
+    if (round2(totals.employerSSBudgetTotal) > 0) {
       taxLines.push({
         accountCode: taxExpenseAccount,
-        debit: round2(employerSS),
+        subaccountCode: taxSub('0030'),
+        debit: round2(totals.employerSSBudgetTotal),
         credit: 0,
-        description: `Aporte patronal a la Seguridad Social ${period}`,
+        description: `Aporte patronal a la Seguridad Social 12,5 % ${period}`,
+      });
+    }
+
+    if (round2(totals.subsidyProvisionTotal) > 0) {
+      taxLines.push({
+        accountCode: taxExpenseAccount,
+        subaccountCode: taxSub('0050'),
+        debit: round2(totals.subsidyProvisionTotal),
+        credit: 0,
+        description: `Provisión para el pago de subsidios 1,5 % ${period}`,
       });
     }
 
@@ -1890,6 +1899,7 @@ export class PayrollService {
     if (round2(laborForceTax) > 0) {
       taxLines.push({
         accountCode: taxExpenseAccount,
+        subaccountCode: taxSub('0040'),
         debit: round2(laborForceTax),
         credit: 0,
         description: `Impuesto por Utilización de la Fuerza de Trabajo ${period}`,
@@ -1897,17 +1907,18 @@ export class PayrollService {
     }
 
     const retainedTaxes = [
-      { amount: totals.totalIncomeTax, description: 'Impuesto sobre Ingresos Personales retenido' },
-      { amount: totals.totalSocialSecurity, description: 'Contribución Especial a la Seguridad Social retenida' },
-      { amount: totals.totalPension, description: 'Pensión retenida a trabajadores' },
-      { amount: totals.totalHealthInsurance, description: 'Seguro de salud retenido a trabajadores' },
-      { amount: totals.totalOtherRetention, description: 'Otras deducciones retenidas' },
+      { amount: totals.totalIncomeTax, sub: '0010', description: 'Impuesto sobre Ingresos Personales retenido' },
+      { amount: totals.totalSocialSecurity, sub: '0020', description: 'Contribución Especial a la Seguridad Social retenida' },
+      { amount: totals.totalPension, sub: '0030', description: 'Pensión retenida a trabajadores' },
+      { amount: totals.totalHealthInsurance, sub: '0030', description: 'Seguro de salud retenido a trabajadores' },
+      { amount: totals.totalOtherRetention, sub: '0030', description: 'Otras deducciones retenidas' },
     ];
     for (const retention of retainedTaxes) {
       const amount = round2(retention.amount);
       if (amount > 0) {
         taxLines.push({
           accountCode: taxExpenseAccount,
+          subaccountCode: taxSub(retention.sub),
           debit: amount,
           credit: 0,
           description: `${retention.description} ${period}`,
