@@ -1467,6 +1467,17 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
   // Combinar todas las cuentas base
   const allBase = [...base, ...equity, ...production, ...nominal];
 
+  // El plan incluye los bloques 50.3/50.4 (variantes para empresas de
+  // seguros) que repiten los códigos de 50.1/50.2: una empresa solo puede
+  // tener una cuenta por código, así que gana la primera ocurrencia
+  // (la variante general).
+  const seenCodes = new Set<string>();
+  const dedupedBase = allBase.filter((a) => {
+    if (seenCodes.has(a.code)) return false;
+    seenCodes.add(a.code);
+    return true;
+  });
+
   // Ahora generar subcuentas para las cuentas que las requieren
   const allWithSubs: any[] = [];
 
@@ -1699,7 +1710,7 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
   }
 
   // Agregar todas las cuentas base
-  allBase.forEach(acc => addAccount(acc));
+  dedupedBase.forEach(acc => addAccount(acc));
 
   return allWithSubs;
 }
