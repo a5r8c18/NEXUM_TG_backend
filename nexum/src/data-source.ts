@@ -10,7 +10,7 @@ export default new DataSource({
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'nexum_db',
-  entities: ['src/entities/**/*.entity.ts'],
+  entities: ['src/**/*.entity.ts'],
   migrations: ['src/migrations/**/*.ts'],
   synchronize: false,
 });
