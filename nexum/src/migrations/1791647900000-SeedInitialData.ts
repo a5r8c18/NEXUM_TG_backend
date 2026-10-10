@@ -6,9 +6,10 @@ import { GLOBAL_SUBELEMENTS } from "../accounting/global-subelements.data";
  * Datos iniciales mínimos para que el sistema sea operativo en cualquier
  * base de datos nueva (dev o prod):
  *
- *  - Usuario superadmin inicial. Email y contraseña configurables con
- *    SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD (por defecto admin@nexum.local /
- *    Admin1234). Cambiar la contraseña tras el primer acceso.
+ *  - Usuario superadmin inicial (único por ahora). Email y contraseña
+ *    configurables con SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD
+ *    (por defecto midas@teneduriagarcia.com / Admin1234).
+ *    Cambiar la contraseña tras el primer acceso.
  *  - Subelementos globales del Nomenclador de Sub elementos de Gasto
  *    (company_id NULL), disponibles para todas las empresas.
  *
@@ -18,7 +19,7 @@ export class SeedInitialData1791647900000 implements MigrationInterface {
     name = 'SeedInitialData1791647900000'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
-        const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@nexum.local';
+        const adminEmail = process.env.SEED_ADMIN_EMAIL || 'midas@teneduriagarcia.com';
         const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'Admin1234';
 
         const existing = await queryRunner.query(
@@ -45,7 +46,7 @@ export class SeedInitialData1791647900000 implements MigrationInterface {
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {
-        const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@nexum.local';
+        const adminEmail = process.env.SEED_ADMIN_EMAIL || 'midas@teneduriagarcia.com';
         await queryRunner.query(
             `DELETE FROM "subelements" WHERE "company_id" IS NULL AND "code" = ANY($1)`,
             [GLOBAL_SUBELEMENTS.map((s) => s.code)],
