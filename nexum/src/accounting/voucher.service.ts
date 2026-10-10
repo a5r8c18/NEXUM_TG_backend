@@ -971,6 +971,15 @@ export class VoucherService {
         let accountName = line.accountName;
         let subaccountCode = line.subaccountCode;
 
+        // Cuando la "subcuenta" pedida es la propia cuenta (455, 492, 500
+        // envían subaccountCode igual al accountCode para que el asiento
+        // caiga en la cuenta hoja), no es una subcuenta real: si además la
+        // cuenta resuelta resulta ser una subcuenta verdadera (164-0030),
+        // la resolución la vuelve a asignar abajo.
+        if (subaccountCode === line.accountCode) {
+          subaccountCode = null;
+        }
+
         if (!accountId) {
           const account = await this.resolvePostableAccount(
             manager.getRepository(Account),
