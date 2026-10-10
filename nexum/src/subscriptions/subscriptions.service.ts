@@ -157,18 +157,11 @@ export class SubscriptionsService {
     isGracePeriod: boolean;
     message: string;
   }> {
-    const subscription = await this.findByTenantId(tenantId);
-
-    if (!subscription) {
-      return {
-        hasAccess: false,
-        status: SubscriptionStatus.CANCELLED,
-        plan: SubscriptionPlan.TRIAL,
-        daysRemaining: 0,
-        isGracePeriod: false,
-        message: 'No existe suscripción para este tenant.',
-      };
-    }
+    // Auto-heal: todo tenant registrado debe tener suscripción; si falta,
+    // se crea su trial aquí en vez de bloquearlo.
+    const subscription =
+      (await this.findByTenantId(tenantId)) ??
+      (await this.createTrialForTenant(tenantId));
 
     const now = new Date();
 

@@ -22,11 +22,12 @@ import { RegistrationRequest } from '../entities/registration-request.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { LoginAttempt } from '../entities/login-attempt.entity';
 import { UserMFA } from '../entities/user-mfa.entity';
+import { Subscription } from '../entities/subscription.entity';
 
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Company, RegistrationRequest, RefreshToken, LoginAttempt, UserMFA]),
+    TypeOrmModule.forFeature([User, Company, RegistrationRequest, RefreshToken, LoginAttempt, UserMFA, Subscription]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

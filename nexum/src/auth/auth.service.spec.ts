@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import { User, UserRole } from '../entities/user.entity';
 import { Company } from '../entities/company.entity';
 import { UserMFA } from '../entities/user-mfa.entity';
+import { Subscription } from '../entities/subscription.entity';
 import { RegistrationRequestsService } from './registration-requests.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { PasswordPolicyService } from './password-policy.service';
@@ -116,6 +117,14 @@ describe('AuthService', () => {
             findOneBy: jest.fn().mockResolvedValue(null),
             save: jest.fn(),
             create: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(Subscription),
+          useValue: {
+            save: jest.fn(),
+            findOne: jest.fn(),
+            findOneBy: jest.fn(),
           },
         },
         {

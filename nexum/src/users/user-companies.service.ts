@@ -55,10 +55,30 @@ export class UserCompaniesService {
 
   // Obtener empresas asignadas a un usuario
   async getUserCompanies(userId: string): Promise<UserCompany[]> {
+    const user = await this.userRepo.findOneBy({ id: userId });
+
+    // El superadmin administra la plataforma: ve todas las empresas activas
+    // aunque no tenga asignaciones explícitas en user_companies.
+    if (user?.role === 'superadmin') {
+      const companies = await this.companyRepo.find({
+        where: { isActive: true },
+        order: { id: 'ASC' },
+      });
+      return companies.map((company) => {
+        const uc = new UserCompany();
+        uc.userId = userId;
+        uc.companyId = company.id;
+        uc.role = 'superadmin';
+        uc.isActive = true;
+        uc.company = company;
+        return uc;
+      });
+    }
+
     return this.userCompanyRepo.find({
-      where: { 
-        userId, 
-        isActive: true 
+      where: {
+        userId,
+        isActive: true
       },
       relations: ['company']
     });

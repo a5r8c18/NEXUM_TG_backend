@@ -12,6 +12,11 @@ import { LoginAttemptService } from './login-attempt.service';
 import { MfaService } from './mfa.service';
 import { LoginResponseDto } from './dto/refresh-token.dto';
 import { PasswordPolicyService } from './password-policy.service';
+import {
+  Subscription,
+  SubscriptionPlan,
+  SubscriptionStatus,
+} from '../entities/subscription.entity';
 import { LoggerService, LogCategory } from '../common/logger.service';
 
 @Injectable()
@@ -23,6 +28,8 @@ export class AuthService {
     private readonly companyRepo: Repository<Company>,
     @InjectRepository(UserMFA)
     private readonly userMfaRepo: Repository<UserMFA>,
+    @InjectRepository(Subscription)
+    private readonly subscriptionRepo: Repository<Subscription>,
     private registrationRequestsService: RegistrationRequestsService,
     private jwtService: JwtService,
     private refreshTokenService: RefreshTokenService,
@@ -285,6 +292,24 @@ export class AuthService {
     newCompany.isActive = true;
     newCompany.taxId = 'TAX-' + Date.now();
     const savedCompany = await this.companyRepo.save(newCompany);
+
+    // Todo tenant registrado nace con su trial (7 días); sin esto el guard
+    // de suscripción bloquea el acceso del propio dueño de la empresa.
+    const now = new Date();
+    const trialEnd = new Date(now);
+    trialEnd.setDate(trialEnd.getDate() + 7);
+    const subscription = new Subscription();
+    subscription.tenantId = savedCompany.tenantId!;
+    subscription.plan = SubscriptionPlan.TRIAL;
+    subscription.status = SubscriptionStatus.TRIAL;
+    subscription.trialEndsAt = trialEnd;
+    subscription.currentPeriodStart = now;
+    subscription.currentPeriodEnd = trialEnd;
+    subscription.priceUsd = 0;
+    subscription.maxUsers = 2;
+    subscription.maxCompanies = 1;
+    subscription.gracePeriodDays = 3;
+    await this.subscriptionRepo.save(subscription);
 
     // Crear usuario como ADMIN de su tenant (NO superadmin)
     const newUser = new User();
