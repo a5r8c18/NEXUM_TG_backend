@@ -14,6 +14,10 @@ export class JobPosition {
   @Column({ name: 'company_id' })
   companyId: number;
 
+  /** Código interno del cargo (introducido por el usuario). */
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  code: string | null;
+
   @Column({ type: 'varchar', length: 150 })
   name: string;
 
@@ -28,12 +32,12 @@ export class JobPosition {
   @Column({ name: 'approved_count', type: 'int', default: 1 })
   approvedCount: number;
 
-  /** Jornada laboral en horas. */
-  @Column({ name: 'working_hours', type: 'decimal', precision: 5, scale: 2, default: 8 })
+  /** Jornada laboral en horas. Valor estándar: 7,9416 h. */
+  @Column({ name: 'working_hours', type: 'decimal', precision: 5, scale: 2, default: 7.9416 })
   workingHours: number;
 
   /** Fondo de tiempo (horas o días) que cubre el salario base. */
-  @Column({ name: 'time_bank', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({ name: 'time_bank', type: 'decimal', precision: 10, scale: 2, default: 190.6 })
   timeBank: number;
 
   /** Unidad del fondo de tiempo: 'hours' o 'days'. */

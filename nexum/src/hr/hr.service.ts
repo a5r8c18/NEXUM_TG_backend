@@ -298,7 +298,10 @@ export class HrService {
   async createPosition(companyId: number, data: Partial<JobPosition>) {
     const name = (data.name || '').trim();
     if (!name) throw new BadRequestException('El nombre del cargo es obligatorio');
+    const code = (data.code || '').trim();
+    if (!code) throw new BadRequestException('El código del cargo es obligatorio');
     await this.assertPositionNameIsFree(companyId, name);
+    await this.assertPositionCodeIsFree(companyId, code);
 
     const processed = this.processPositionData(data);
     const position = this.positionRepo.create({
@@ -320,6 +323,12 @@ export class HrService {
       if (!name) throw new BadRequestException('El nombre del cargo es obligatorio');
       await this.assertPositionNameIsFree(companyId, name, id);
       data.name = name;
+    }
+    if (data.code !== undefined) {
+      const code = (data.code || '').trim();
+      if (!code) throw new BadRequestException('El código del cargo es obligatorio');
+      await this.assertPositionCodeIsFree(companyId, code, id);
+      data.code = code;
     }
     const processed = this.processPositionData(data);
 
@@ -362,9 +371,9 @@ export class HrService {
 
   private processPositionData(data: Partial<JobPosition>): Partial<JobPosition> {
     const baseSalary = data.baseSalary !== undefined ? Number(data.baseSalary) : (data as any).baseSalary;
-    const workingHours = data.workingHours !== undefined ? Number(data.workingHours) : (data as any).workingHours;
-    const timeBank = data.timeBank !== undefined ? Number(data.timeBank) : (data as any).timeBank;
-    const timeUnit = data.timeUnit || 'hours';
+    const timeUnit = (data.timeUnit || 'hours') as 'hours' | 'days';
+    const workingHours = Number(data.workingHours) || 7.9416;
+    const timeBank = Number(data.timeBank) || (timeUnit === 'hours' ? 190.6 : 24);
     const salaryRate =
       timeBank && Number(timeBank) > 0
         ? Number((Number(baseSalary || 0) / Number(timeBank)).toFixed(4))
@@ -372,11 +381,12 @@ export class HrService {
 
     return {
       baseSalary: Number(baseSalary) || 0,
-      workingHours: Number(workingHours) || 0,
-      timeBank: Number(timeBank) || 0,
-      timeUnit: timeUnit as 'hours' | 'days',
+      workingHours,
+      timeBank,
+      timeUnit,
       salaryRate,
       paymentConcept: data.paymentConcept ?? null,
+      code: data.code?.trim() || null,
     };
   }
 
@@ -392,6 +402,21 @@ export class HrService {
     });
     if (existing) {
       throw new ConflictException(`Ya existe un cargo llamado "${name}"`);
+    }
+  }
+
+  private async assertPositionCodeIsFree(
+    companyId: number,
+    code: string,
+    excludeId?: string,
+  ) {
+    const existing = await this.positionRepo.findOne({
+      where: excludeId
+        ? { companyId, code, id: Not(excludeId) }
+        : { companyId, code },
+    });
+    if (existing) {
+      throw new ConflictException(`Ya existe un cargo con el código "${code}"`);
     }
   }
 

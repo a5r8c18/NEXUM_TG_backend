@@ -14,6 +14,11 @@ import { Type } from 'class-transformer';
 const timeUnits = ['hours', 'days'] as const;
 
 export class CreatePositionDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  code?: string;
+
   @IsString()
   @MaxLength(100)
   name: string;
@@ -70,6 +75,11 @@ export class CreatePositionDto {
 }
 
 export class UpdatePositionDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  code?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(100)
