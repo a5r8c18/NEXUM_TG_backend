@@ -18,6 +18,7 @@ export class InventoryController {
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
     @Query('product') product?: string,
+    @Query('search') search?: string,
     @Query('expirationDate') expirationDate?: string,
     @Query('warehouse') warehouse?: string,
     @Query('entity') entity?: string,
@@ -27,7 +28,7 @@ export class InventoryController {
     const companyId = getCompanyId(req);
     return this.inventoryWarehouseService.findFiltered(companyId, {
       warehouse,
-      product,
+      product: search || product,
       minStock: minStock ? Number(minStock) : undefined,
       maxStock: maxStock ? Number(maxStock) : undefined,
     });
