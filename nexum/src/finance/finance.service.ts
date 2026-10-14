@@ -462,6 +462,8 @@ export class FinanceService {
     const fields = pick(data, BANK_ACCOUNT_FIELDS);
     const ba = this.bankRepo.create({
       ...fields,
+      accountName: (fields.accountName ?? fields.bankName ?? '').trim(),
+      openingDate: fields.openingDate ?? new Date().toISOString().split('T')[0],
       companyId,
       availableBalance: Number(fields.balance ?? 0),
     });
@@ -471,6 +473,8 @@ export class FinanceService {
   async updateBankAccount(companyId: number, id: string, data: any) {
     const ba = await this.findOneBankAccount(companyId, id);
     Object.assign(ba, pick(data, BANK_ACCOUNT_UPDATE_FIELDS));
+    if (!ba.accountName?.trim()) ba.accountName = ba.bankName;
+    if (!ba.openingDate) ba.openingDate = new Date().toISOString().split('T')[0];
     return this.bankRepo.save(ba);
   }
 
