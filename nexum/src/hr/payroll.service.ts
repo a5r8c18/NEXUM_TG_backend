@@ -1748,9 +1748,9 @@ export class PayrollService {
 
       if (chargesEmployerTaxes) {
         const retentionBase = round2(gross + Number(item.vacationProvision || 0));
-        const ssBudget = round2(retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE);
-        const ssProvision = round2(retentionBase * SUBSIDY_RETENTION_RATE);
-        const employerSS = round2(ssBudget + ssProvision);
+        const ssBudget = retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE;
+        const ssProvision = retentionBase * SUBSIDY_RETENTION_RATE;
+        const employerSS = ssBudget + ssProvision;
         if (employerSS > 0) {
           employerSSBudgetTotal += ssBudget;
           subsidyProvisionTotal += ssProvision;
@@ -1761,7 +1761,7 @@ export class PayrollService {
           );
         }
 
-        const laborForceTax = round2(retentionBase * LABOR_FORCE_TAX_RATE);
+        const laborForceTax = retentionBase * LABOR_FORCE_TAX_RATE;
         if (laborForceTax > 0) {
           laborForceTaxTotal += laborForceTax;
           const ccKey = costCenterId || '';
@@ -1781,9 +1781,9 @@ export class PayrollService {
 
     return {
       concept,
-      employerSSBudgetTotal: round2(employerSSBudgetTotal),
-      subsidyProvisionTotal: round2(subsidyProvisionTotal),
-      laborForceTaxTotal: round2(laborForceTaxTotal),
+      employerSSBudgetTotal,
+      subsidyProvisionTotal,
+      laborForceTaxTotal,
       totalSocialSecurity: round2(totalSocialSecurity),
       totalIncomeTax: round2(totalIncomeTax),
       totalOtherRetention: round2(totalOtherRetention),
