@@ -16,14 +16,14 @@ import {
   subsidyWaitingDays,
 } from './payroll-concept';
 
-/** Redondea a dos decimales. */
+/** Redondea a dos decimales (medio hacia arriba, tolerante a flotantes). */
 export function round2(value: number): number {
-  return Math.round(value * 100) / 100;
+  return Math.round((value + Number.EPSILON * Math.abs(value)) * 100) / 100;
 }
 
-/** Redondea a cuatro decimales, para las tasas almacenadas. */
+/** Redondea a cuatro decimales (medio hacia arriba, tolerante a flotantes). */
 export function round4(value: number): number {
-  return Math.round(value * 10000) / 10000;
+  return Math.round((value + Number.EPSILON * Math.abs(value)) * 10000) / 10000;
 }
 
 /**
