@@ -55,12 +55,12 @@ export class AccountMappingService {
     // retención y las entera al Presupuesto del Estado, por lo que se acreditan
     // en las subcuentas de la 440 del Nomenclador 2016 (0001-0016). El contador
     // puede sustituirlas por sus propias subcuentas desde Mapeo de Cuentas.
-    [MappingType.PAYROLL_RETENTION]: '440-0006', // Contribución Especial a la Seguridad Social (CESS retenida al trabajador)
+    [MappingType.PAYROLL_RETENTION]: '440-0010', // Contribución Especial a la Seguridad Social (CESS retenida al trabajador)
     [MappingType.PAYROLL_RETENTION_INCOME_TAX]: '440-0005', // Impuesto sobre Ingresos Personales
     [MappingType.PAYROLL_RETENTION_OTHER]: '440-0007', // Otros Impuestos (otras retenciones)
     // Tributos a cargo de la entidad: obligación directa con el presupuesto.
     [MappingType.PAYROLL_EMPLOYER_SOCIAL_SECURITY]: '440-0008', // Aporte a la Seguridad Social (12,5 %)
-    [MappingType.PAYROLL_LABOR_FORCE_TAX]: '440-0010', // Impuesto por Utilización de la Fuerza de Trabajo (5 %)
+    [MappingType.PAYROLL_LABOR_FORCE_TAX]: '440-0006', // Impuesto por Utilización de la Fuerza de Trabajo (5 %)
     // Gasto por los tributos a cargo de la entidad. El contador puede abrir
     // subcuentas de la 855 y asignar una distinta a cada tributo.
     [MappingType.PAYROLL_TAX_EXPENSE_SOCIAL_SECURITY]: '855', // Otros Impuestos, Tasas y Contribuciones
@@ -343,10 +343,10 @@ export class AccountMappingService {
       '434': 'Materiales Recibidos de Forma Anticipada',
       '440': 'Obligaciones con el Presupuesto del Estado',
       '440-0005': 'Impuesto sobre Ingresos Personales - Obligaciones con el Presupuesto',
-      '440-0006': 'Contribución Especial a la Seguridad Social - Obligaciones con el Presupuesto',
+      '440-0006': 'Impuesto por Utilización de la Fuerza de Trabajo - Obligaciones con el Presupuesto',
       '440-0007': 'Otros Impuestos - Obligaciones con el Presupuesto',
       '440-0008': 'Aporte a la Seguridad Social - Obligaciones con el Presupuesto',
-      '440-0010': 'Impuesto por Utilización de la Fuerza de Trabajo - Obligaciones con el Presupuesto',
+      '440-0010': 'Contribución Especial a la Seguridad Social - Obligaciones con el Presupuesto',
       '455': 'Nóminas por Pagar',
       '855': 'Otros Impuestos, Tasas y Contribuciones',
       '460': 'Retenciones por Pagar',

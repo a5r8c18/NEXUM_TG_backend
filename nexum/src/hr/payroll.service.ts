@@ -1443,6 +1443,7 @@ export class PayrollService {
         `MAT-${payroll.id}`,
         `VAC-${payroll.id}`,
         `IMP-${payroll.id}`,
+        `IMP-${payroll.period}`,
         `PAY-${payroll.id}`,
       ];
       for (const sourceId of sourceIds) {
@@ -1467,7 +1468,7 @@ export class PayrollService {
       const payablesResult =
         await this.financeService.cancelPayablesByInvoiceNumber(
           companyId,
-          `IMP-${payroll.period}-${payroll.id}`,
+          `IMP-${payroll.period}`,
           `Anulada por cancelación de nómina ${payroll.period}`,
           manager,
         );
@@ -1529,6 +1530,59 @@ export class PayrollService {
         ? `${payroll.notes ? payroll.notes + ' | ' : ''}Cancelada: ${reason}`
         : payroll.notes;
       await payrollRepo.save(payroll);
+
+      // ── Recalcular comprobante de impuestos y obligaciones del período ──
+      // Se excluye esta nómina del agregado; si quedan otras nóminas del mismo
+      // período se regeneran con los importes correctos, y si no quedan se
+      // eliminan el comprobante y las obligaciones.
+      const taxAccounts = await this.accountMappingService.getMultipleMappings(
+        companyId,
+        [
+          MappingType.PAYROLL_TAX_EXPENSE_SOCIAL_SECURITY,
+          MappingType.PAYROLL_TAX_EXPENSE_LABOR_FORCE,
+          MappingType.PAYROLL_EMPLOYER_SOCIAL_SECURITY,
+          MappingType.PAYROLL_LABOR_FORCE_TAX,
+          MappingType.PAYROLL_RETENTION,
+          MappingType.PAYROLL_RETENTION_INCOME_TAX,
+          MappingType.PAYROLL_RETENTION_OTHER,
+          MappingType.PAYROLL_SUBSIDY_PROVISION,
+          MappingType.PAYROLL_TAX_TRANSIT,
+        ],
+      );
+      const { budgetObligations } = await this.createOrUpdatePeriodTaxVoucher(
+        companyId,
+        payroll.period,
+        { ...payroll, items: [] },
+        {
+          employerSSExpenseAccount:
+            taxAccounts[MappingType.PAYROLL_TAX_EXPENSE_SOCIAL_SECURITY],
+          laborForceTaxExpenseAccount:
+            taxAccounts[MappingType.PAYROLL_TAX_EXPENSE_LABOR_FORCE],
+          employerSocialSecurityAccount:
+            taxAccounts[MappingType.PAYROLL_EMPLOYER_SOCIAL_SECURITY],
+          laborForceTaxAccount:
+            taxAccounts[MappingType.PAYROLL_LABOR_FORCE_TAX],
+          socialSecurityAccount:
+            taxAccounts[MappingType.PAYROLL_RETENTION],
+          incomeTaxAccount:
+            taxAccounts[MappingType.PAYROLL_RETENTION_INCOME_TAX],
+          otherRetentionAccount:
+            taxAccounts[MappingType.PAYROLL_RETENTION_OTHER],
+          subsidyProvisionAccount:
+            taxAccounts[MappingType.PAYROLL_SUBSIDY_PROVISION],
+          taxTransitAccount:
+            taxAccounts[MappingType.PAYROLL_TAX_TRANSIT],
+        },
+        manager,
+      );
+      await this.createPeriodTaxObligations(
+        companyId,
+        payroll.period,
+        payroll.endDate || new Date().toISOString().split('T')[0],
+        budgetObligations,
+        taxAccounts[MappingType.PAYROLL_TAX_TRANSIT] || '699',
+        manager,
+      );
 
       this.logger.log(`Nómina ${payroll.period} (#${payroll.id}) cancelada`);
       return { payroll };
@@ -2030,7 +2084,36 @@ export class PayrollService {
     const dueDate: null = null;
 
     // Reemplaza las obligaciones anteriores del período para evitar duplicados
-    // cuando se procesan varias nóminas del mismo mes.
+    // cuando se procesan varias nóminas del mismo mes. Si alguna obligación ya
+    // fue pagada, se bloquea la regeneración para evitar inconsistencias.
+    const existing = await manager.getRepository(AccountPayable).find({
+      where: { companyId, invoiceNumber },
+    });
+    const blocked = existing
+      .filter((ap) => ap.status === 'paid' || Number(ap.paidAmount) > 0)
+      .map((ap) => ap.apNumber);
+    if (blocked.length > 0) {
+      throw new BadRequestException(
+        `No se puede regenerar las obligaciones de nómina ${period}: ` +
+          `las CxP ${blocked.join(', ')} ya tienen pagos aplicados.`,
+      );
+    }
+
+    for (const ap of existing) {
+      const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
+        companyId,
+        `AP-${ap.id}`,
+      );
+      for (const voucher of vouchers) {
+        if (voucher.status === 'cancelled') continue;
+        await this.voucherService.updateVoucherStatus(
+          companyId,
+          voucher.id,
+          'cancelled',
+          manager,
+        );
+      }
+    }
     await manager.getRepository(AccountPayable).delete({ companyId, invoiceNumber });
 
     for (const obligation of obligations) {

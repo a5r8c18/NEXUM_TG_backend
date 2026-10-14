@@ -25,7 +25,11 @@ describe('PayrollService.process() — partida doble por concepto', () => {
   let service: PayrollService;
   let payrollRepo: jest.Mocked<Repository<Payroll>>;
   let employeeRepo: { findBy: jest.Mock };
-  let voucherService: { createVoucherFromModule: jest.Mock };
+  let voucherService: {
+    createVoucherFromModule: jest.Mock;
+    findVouchersBySourceDocumentId: jest.Mock;
+    updateVoucherStatus: jest.Mock;
+  };
   let financeService: { createPayable: jest.Mock };
   let accountMappingService: { getAccountForMapping: jest.Mock };
   let dataSource: { transaction: jest.Mock; query: jest.Mock };
@@ -116,6 +120,8 @@ describe('PayrollService.process() — partida doble por concepto', () => {
             return Promise.resolve({ id: 'v-x' });
           },
         ),
+      findVouchersBySourceDocumentId: jest.fn().mockResolvedValue([]),
+      updateVoucherStatus: jest.fn().mockResolvedValue(undefined),
     };
 
     financeService = {

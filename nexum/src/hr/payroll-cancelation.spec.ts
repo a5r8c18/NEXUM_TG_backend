@@ -20,6 +20,7 @@ describe('PayrollService.cancel() transaccional', () => {
   let payrollRepo: jest.Mocked<Repository<Payroll>>;
   let voucherService: jest.Mocked<VoucherService>;
   let financeService: jest.Mocked<FinanceService>;
+  let accountMappingService: { getMultipleMappings: jest.Mock };
   let dataSource: { transaction: jest.Mock };
 
   function paidPayrollFixture(): Payroll {
@@ -48,9 +49,12 @@ describe('PayrollService.cancel() transaccional', () => {
       if (args?.where?.paymentNumber) return Promise.resolve(null);
       return Promise.resolve({ ...payroll });
     });
+    const find = jest.fn().mockResolvedValue([]);
+    const deleteFn = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
     const query = jest.fn().mockResolvedValue(undefined);
     return {
-      getRepository: jest.fn().mockReturnValue({ findOne, save }),
+      getRepository: jest.fn().mockReturnValue({ findOne, find, delete: deleteFn, remove, save }),
       query,
     } as any;
   }
@@ -63,6 +67,7 @@ describe('PayrollService.cancel() transaccional', () => {
     voucherService = {
       findVouchersBySourceDocumentId: jest.fn().mockResolvedValue([]),
       updateVoucherStatus: jest.fn().mockResolvedValue(undefined),
+      createVoucherFromModule: jest.fn().mockResolvedValue(undefined),
     } as any;
 
     financeService = {
@@ -70,6 +75,11 @@ describe('PayrollService.cancel() transaccional', () => {
         .fn()
         .mockResolvedValue({ cancelled: 0, blocked: [] }),
       reverseBankTransaction: jest.fn().mockResolvedValue({ id: 'rev-tx-uuid' } as any),
+      createPayable: jest.fn().mockResolvedValue({ id: 'ap-1' } as any),
+    } as any;
+
+    accountMappingService = {
+      getMultipleMappings: jest.fn().mockResolvedValue({}),
     } as any;
 
     dataSource = { transaction: jest.fn() } as any;
@@ -84,7 +94,7 @@ describe('PayrollService.cancel() transaccional', () => {
         { provide: getRepositoryToken(LeaveRequest), useValue: {} },
         { provide: getRepositoryToken(Payment), useValue: {} },
         { provide: VoucherService, useValue: voucherService },
-        { provide: AccountMappingService, useValue: {} },
+        { provide: AccountMappingService, useValue: accountMappingService },
         { provide: FinanceService, useValue: financeService },
         { provide: DataSource, useValue: dataSource },
       ],
@@ -118,7 +128,7 @@ describe('PayrollService.cancel() transaccional', () => {
     );
     expect(financeService.cancelPayablesByInvoiceNumber).toHaveBeenCalledWith(
       10,
-      'IMP-2026-07-1',
+      'IMP-2026-07',
       'Anulada por cancelación de nómina 2026-07',
       manager,
     );
@@ -242,10 +252,17 @@ describe('PayrollService.cancel() transaccional', () => {
       status: 'completed',
     });
     const paymentSave = jest.fn().mockResolvedValue(undefined);
+    const defaultRepo = {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue({ ...paidPayroll }),
+      save: jest.fn(),
+      delete: jest.fn().mockResolvedValue(undefined),
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
     manager.getRepository.mockImplementation((entity: any) =>
       entity === Payment
-        ? { findOne: paymentFindOne, save: paymentSave }
-        : { findOne: jest.fn().mockResolvedValue({ ...paidPayroll }), save: jest.fn() },
+        ? { ...defaultRepo, findOne: paymentFindOne, save: paymentSave }
+        : defaultRepo,
     );
     dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
 
