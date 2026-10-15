@@ -233,6 +233,15 @@ export class FinanceController {
     return this.financeService.findCashMovements(getCompanyId(req), cashRegisterId, { fromDate, toDate, movementType });
   }
 
+  @Post('cash-registers/:cashRegisterId/movements')
+  createCashMovement(
+    @Req() req: Request,
+    @Param('cashRegisterId') cashRegisterId: string,
+    @Body() body: any,
+  ) {
+    return this.financeService.createCashMovement(getCompanyId(req), { ...body, cashRegisterId });
+  }
+
   // ── Conciliación Bancaria ──
 
   @Get('reconciliations')

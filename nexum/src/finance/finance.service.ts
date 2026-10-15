@@ -536,9 +536,22 @@ export class FinanceService {
   async createBankTransaction(companyId: number, data: any, manager?: EntityManager) {
     const ba = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
 
+    const transactionNumber =
+      data.transactionNumber ||
+      (await this.sequenceService.nextFormatted(
+        companyId,
+        'bank-transaction',
+        'TXB',
+        { manager },
+      ));
+
     const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
     const tx = txRepo.create({
       ...pick(data, BANK_TRANSACTION_FIELDS),
+      transactionNumber,
+      transactionDate: data.transactionDate || new Date().toISOString().split('T')[0],
+      currency: data.currency || 'CUP',
+      exchangeRate: data.exchangeRate ?? 1,
       companyId,
       bankAccountId: ba.id,
     });
@@ -1259,6 +1272,52 @@ export class FinanceService {
     if (filters?.movementType) qb.andWhere('cm.movement_type = :type', { type: filters.movementType });
 
     return qb.getMany();
+  }
+
+  async createCashMovement(companyId: number, data: any, manager?: EntityManager) {
+    const crRepo = manager ? manager.getRepository(CashRegister) : this.cashRegisterRepo;
+    const cr = await crRepo.findOne({ where: { id: data.cashRegisterId, companyId } });
+    if (!cr) throw new NotFoundException(`Caja ${data.cashRegisterId} no encontrada`);
+    if (cr.status !== 'open') {
+      throw new BadRequestException(`La caja ${cr.registerCode} no está abierta`);
+    }
+
+    const movementType = data.movementType;
+    const amount = Number(data.amount);
+    if (!['income', 'expense'].includes(movementType)) {
+      throw new BadRequestException('Tipo de movimiento inválido; use income o expense');
+    }
+    if (movementType === 'expense' && Number(cr.currentBalance) < amount) {
+      throw new BadRequestException(`Saldo insuficiente en caja ${cr.registerCode}. Disponible: $${cr.currentBalance}`);
+    }
+
+    const movementNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'cash-movement',
+      'CAJ',
+      { manager },
+    );
+
+    const delta = movementType === 'income' ? amount : -amount;
+    cr.currentBalance = Number(cr.currentBalance) + delta;
+    await crRepo.save(cr);
+
+    const cmRepo = manager ? manager.getRepository(CashMovement) : this.cashMovementRepo;
+    const cm = cmRepo.create({
+      movementNumber,
+      movementDate: data.movementDate || new Date(),
+      movementType,
+      amount,
+      balanceAfter: Number(cr.currentBalance),
+      description: data.description,
+      concept: data.concept || null,
+      counterpartyName: data.counterpartyName || null,
+      documentType: movementType === 'income' ? 'recibo_cobro' : 'vale_caja',
+      cashRegisterId: cr.id,
+      companyId,
+    });
+    const saved = await cmRepo.save(cm);
+    return { cashMovement: saved, cashRegister: cr };
   }
 
   async getCashStatistics(companyId: number) {
