@@ -1787,6 +1787,8 @@ export class PayrollService {
     const employerSSByCostCenter = new Map<string, number>();
     const laborForceTaxByCostCenter = new Map<string, number>();
 
+    // Se acumula en milésimas de centavo para evitar errores de punto
+    // flotante al multiplicar por 12.5 %, 1.5 % y 5 %.
     let employerSSBudgetTotal = 0;
     let subsidyProvisionTotal = 0;
     let laborForceTaxTotal = 0;
@@ -1801,27 +1803,33 @@ export class PayrollService {
       const costCenterId = item.costCenterId || undefined;
 
       if (chargesEmployerTaxes) {
-        const retentionBase = round2(gross + Number(item.vacationProvision || 0));
-        const ssBudget = retentionBase * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE;
-        const ssProvision = retentionBase * SUBSIDY_RETENTION_RATE;
-        const employerSS = ssBudget + ssProvision;
-        if (employerSS > 0) {
-          employerSSBudgetTotal += ssBudget;
-          subsidyProvisionTotal += ssProvision;
+        const retentionBaseCents = Math.round(
+          (gross + Number(item.vacationProvision || 0)) * 100,
+        );
+        const ssBudgetMilliCents =
+          retentionBaseCents * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE * 1000;
+        const ssProvisionMilliCents =
+          retentionBaseCents * SUBSIDY_RETENTION_RATE * 1000;
+        const employerSSMilliCents =
+          ssBudgetMilliCents + ssProvisionMilliCents;
+        if (employerSSMilliCents > 0) {
+          employerSSBudgetTotal += ssBudgetMilliCents;
+          subsidyProvisionTotal += ssProvisionMilliCents;
           const ccKey = costCenterId || '';
           employerSSByCostCenter.set(
             ccKey,
-            (employerSSByCostCenter.get(ccKey) || 0) + employerSS,
+            (employerSSByCostCenter.get(ccKey) || 0) + employerSSMilliCents,
           );
         }
 
-        const laborForceTax = retentionBase * LABOR_FORCE_TAX_RATE;
-        if (laborForceTax > 0) {
-          laborForceTaxTotal += laborForceTax;
+        const laborForceTaxMilliCents =
+          retentionBaseCents * LABOR_FORCE_TAX_RATE * 1000;
+        if (laborForceTaxMilliCents > 0) {
+          laborForceTaxTotal += laborForceTaxMilliCents;
           const ccKey = costCenterId || '';
           laborForceTaxByCostCenter.set(
             ccKey,
-            (laborForceTaxByCostCenter.get(ccKey) || 0) + laborForceTax,
+            (laborForceTaxByCostCenter.get(ccKey) || 0) + laborForceTaxMilliCents,
           );
         }
       }
@@ -1918,6 +1926,19 @@ export class PayrollService {
       }
     }
 
+    const toDollars = (milliCents: number) =>
+      Math.round(milliCents / 1000) / 100;
+
+    const employerSSBudgetTotal = round2(
+      toDollars(totals.employerSSBudgetTotal),
+    );
+    const subsidyProvisionTotal = round2(
+      toDollars(totals.subsidyProvisionTotal),
+    );
+    const laborForceTaxTotal = round2(
+      toDollars(totals.laborForceTaxTotal),
+    );
+
     const taxLines: any[] = [];
     const transitAccount = accounts.taxTransitAccount || '699';
     const taxExpenseAccount = accounts.employerSSExpenseAccount || '855';
@@ -1927,34 +1948,31 @@ export class PayrollService {
     // 0050 Provisión para el pago de subsidios.
     const taxSub = (code: string) => `${taxExpenseAccount}-${code}`;
 
-    if (round2(totals.employerSSBudgetTotal) > 0) {
+    if (employerSSBudgetTotal > 0) {
       taxLines.push({
         accountCode: taxExpenseAccount,
         subaccountCode: taxSub('0030'),
-        debit: round2(totals.employerSSBudgetTotal),
+        debit: employerSSBudgetTotal,
         credit: 0,
         description: `Aporte patronal a la Seguridad Social 12,5 % ${period}`,
       });
     }
 
-    if (round2(totals.subsidyProvisionTotal) > 0) {
+    if (subsidyProvisionTotal > 0) {
       taxLines.push({
         accountCode: taxExpenseAccount,
         subaccountCode: taxSub('0050'),
-        debit: round2(totals.subsidyProvisionTotal),
+        debit: subsidyProvisionTotal,
         credit: 0,
         description: `Provisión para el pago de subsidios 1,5 % ${period}`,
       });
     }
 
-    const laborForceTax = Array.from(
-      totals.laborForceTaxByCostCenter.values(),
-    ).reduce((s, v) => s + v, 0);
-    if (round2(laborForceTax) > 0) {
+    if (laborForceTaxTotal > 0) {
       taxLines.push({
         accountCode: taxExpenseAccount,
         subaccountCode: taxSub('0040'),
-        debit: round2(laborForceTax),
+        debit: laborForceTaxTotal,
         credit: 0,
         description: `Impuesto por Utilización de la Fuerza de Trabajo ${period}`,
       });
@@ -1982,12 +2000,12 @@ export class PayrollService {
 
     const budgetObligations = [
       {
-        amount: round2(totals.employerSSBudgetTotal),
+        amount: employerSSBudgetTotal,
         accountCode: accounts.employerSocialSecurityAccount || '440-0008',
         description: 'Contribución a la Seguridad Social — aporte patronal 12,5 %',
       },
       {
-        amount: round2(totals.laborForceTaxTotal),
+        amount: laborForceTaxTotal,
         accountCode: accounts.laborForceTaxAccount || '440-0007',
         description: 'Impuesto por la Utilización de la Fuerza de Trabajo 5 %',
       },
@@ -2027,12 +2045,12 @@ export class PayrollService {
       });
     }
 
-    if (round2(totals.subsidyProvisionTotal) > 0) {
+    if (subsidyProvisionTotal > 0) {
       taxLines.push({
         accountCode: accounts.subsidyProvisionAccount || '500',
         subaccountCode: accounts.subsidyProvisionAccount || '500',
         debit: 0,
-        credit: round2(totals.subsidyProvisionTotal),
+        credit: subsidyProvisionTotal,
         description: `Provisión para prestaciones de seguridad social a corto plazo 1,5 % ${period}`,
       });
     }
