@@ -1806,10 +1806,10 @@ export class PayrollService {
         const retentionBaseCents = Math.round(
           (gross + Number(item.vacationProvision || 0)) * 100,
         );
-        const ssBudgetMilliCents =
-          retentionBaseCents * EMPLOYER_SOCIAL_SECURITY_BUDGET_RATE * 1000;
-        const ssProvisionMilliCents =
-          retentionBaseCents * SUBSIDY_RETENTION_RATE * 1000;
+        // Aritmética entera en milésimas de centavo para evitar errores
+        // de punto flotante con 12,5 %, 1,5 % y 5 %.
+        const ssBudgetMilliCents = retentionBaseCents * 125;
+        const ssProvisionMilliCents = retentionBaseCents * 15;
         const employerSSMilliCents =
           ssBudgetMilliCents + ssProvisionMilliCents;
         if (employerSSMilliCents > 0) {
@@ -1822,8 +1822,7 @@ export class PayrollService {
           );
         }
 
-        const laborForceTaxMilliCents =
-          retentionBaseCents * LABOR_FORCE_TAX_RATE * 1000;
+        const laborForceTaxMilliCents = retentionBaseCents * 50;
         if (laborForceTaxMilliCents > 0) {
           laborForceTaxTotal += laborForceTaxMilliCents;
           const ccKey = costCenterId || '';
@@ -1887,10 +1886,13 @@ export class PayrollService {
       ...otherPayrolls.filter((p) => p.id !== currentPayroll.id),
     ];
 
+    // Se redondea cada nómina individualmente y luego se suman los centavos,
+    // para que el total del período coincida con la suma de los importes
+    // redondeados que se muestran en cada nómina.
+    let employerSSBudgetCents = 0;
+    let subsidyProvisionCents = 0;
+    let laborForceTaxCents = 0;
     const totals = {
-      employerSSBudgetTotal: 0,
-      subsidyProvisionTotal: 0,
-      laborForceTaxTotal: 0,
       totalSocialSecurity: 0,
       totalIncomeTax: 0,
       totalOtherRetention: 0,
@@ -1903,9 +1905,10 @@ export class PayrollService {
     for (const payroll of payrolls) {
       const t = this.calculatePayrollTaxes(payroll);
 
-      totals.employerSSBudgetTotal += t.employerSSBudgetTotal;
-      totals.subsidyProvisionTotal += t.subsidyProvisionTotal;
-      totals.laborForceTaxTotal += t.laborForceTaxTotal;
+      employerSSBudgetCents += Math.round(t.employerSSBudgetTotal / 1000);
+      subsidyProvisionCents += Math.round(t.subsidyProvisionTotal / 1000);
+      laborForceTaxCents += Math.round(t.laborForceTaxTotal / 1000);
+
       totals.totalSocialSecurity += t.totalSocialSecurity;
       totals.totalIncomeTax += t.totalIncomeTax;
       totals.totalOtherRetention += t.totalOtherRetention;
@@ -1915,29 +1918,20 @@ export class PayrollService {
       for (const [k, v] of t.employerSSByCostCenter.entries()) {
         totals.employerSSByCostCenter.set(
           k,
-          (totals.employerSSByCostCenter.get(k) || 0) + v,
+          (totals.employerSSByCostCenter.get(k) || 0) + Math.round(v / 1000),
         );
       }
       for (const [k, v] of t.laborForceTaxByCostCenter.entries()) {
         totals.laborForceTaxByCostCenter.set(
           k,
-          (totals.laborForceTaxByCostCenter.get(k) || 0) + v,
+          (totals.laborForceTaxByCostCenter.get(k) || 0) + Math.round(v / 1000),
         );
       }
     }
 
-    const toDollars = (milliCents: number) =>
-      Math.round(milliCents / 1000) / 100;
-
-    const employerSSBudgetTotal = round2(
-      toDollars(totals.employerSSBudgetTotal),
-    );
-    const subsidyProvisionTotal = round2(
-      toDollars(totals.subsidyProvisionTotal),
-    );
-    const laborForceTaxTotal = round2(
-      toDollars(totals.laborForceTaxTotal),
-    );
+    const employerSSBudgetTotal = round2(employerSSBudgetCents / 100);
+    const subsidyProvisionTotal = round2(subsidyProvisionCents / 100);
+    const laborForceTaxTotal = round2(laborForceTaxCents / 100);
 
     const taxLines: any[] = [];
     const transitAccount = accounts.taxTransitAccount || '699';
