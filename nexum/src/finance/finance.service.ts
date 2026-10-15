@@ -1026,7 +1026,7 @@ export class FinanceService {
       );
       this.logger.log(`Voucher generado para Payment ${payment.paymentNumber}`);
     } catch (error) {
-      this.logger.error(`Error generando voucher para Payment ${payment.paymentNumber}: ${error.message}`);
+      this.logger.error(`Error generando voucher para Payment ${payment.paymentNumber}: ${error instanceof Error ? error.message : String(error)}`);
       // El voucher borrador del pago es obligatorio; si no se puede generar,
       // la operación no debe quedar registrada sin él.
       throw error;
