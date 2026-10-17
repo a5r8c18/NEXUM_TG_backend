@@ -42,6 +42,7 @@ const PAYABLE_UPDATE_FIELDS = PAYABLE_FIELDS.filter(
 
 const BANK_ACCOUNT_FIELDS = [
   'accountNumber', 'accountName', 'bankName', 'bankCode', 'accountType',
+  'fondo', 'accountingAccount',
   'currency', 'balance', 'overdraftLimit', 'creditLimit', 'interestRate',
   'openingDate', 'holderName', 'holderDocument', 'contactPhone',
   'contactEmail', 'branchName', 'branchAddress', 'isDefault', 'notes',
@@ -49,6 +50,7 @@ const BANK_ACCOUNT_FIELDS = [
 
 const BANK_ACCOUNT_UPDATE_FIELDS = [
   'accountNumber', 'accountName', 'bankName', 'bankCode', 'accountType',
+  'fondo', 'accountingAccount',
   'currency', 'overdraftLimit', 'creditLimit', 'interestRate', 'openingDate',
   'closingDate', 'status', 'isDefault', 'holderName', 'holderDocument',
   'contactPhone', 'contactEmail', 'branchName', 'branchAddress', 'notes',
@@ -445,7 +447,17 @@ export class FinanceService {
     if (filters?.status) qb.andWhere('ba.status = :status', { status: filters.status });
     if (filters?.accountType) qb.andWhere('ba.account_type = :type', { type: filters.accountType });
 
-    return qb.getMany();
+    const banks = await qb.getMany();
+    // Cuenta contable del fondo según el tipo: corriente/gastos → Efectivo en
+    // Banco; MLC (tarjeta) → Efectivo en Banco - operaciones con tarjeta.
+    const bankAccountCode = await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_BANK);
+    const cardAccountCode = await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_CARD);
+    for (const ba of banks) {
+      ba.accountingAccount = ba.accountingAccount || (ba.accountType === 'mlc'
+        ? (cardAccountCode || bankAccountCode)
+        : bankAccountCode);
+    }
+    return banks;
   }
 
   async findOneBankAccount(companyId: number, id: string, manager?: EntityManager) {
@@ -1368,8 +1380,15 @@ export class FinanceService {
     const adjustedBook = bookBalance - bankCharges + interestEarned;
     const difference = Math.abs(adjustedStatement - adjustedBook);
 
+    const statementNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'bank-statement',
+      'EC',
+    );
+
     const reconciliation = this.reconciliationRepo.create({
       companyId,
+      statementNumber,
       bankAccountId: data.bankAccountId,
       reconciliationDate: data.reconciliationDate,
       statementBalance,
@@ -1383,7 +1402,7 @@ export class FinanceService {
       interestEarned,
       notes: data.notes,
       reconciledBy: data.reconciledBy || 'Sistema',
-      status: difference < 0.01 ? 'completed' : 'draft',
+      status: difference < 0.01 ? 'reconciled' : 'difference',
     });
 
     return this.reconciliationRepo.save(reconciliation);
@@ -1394,6 +1413,7 @@ export class FinanceService {
     if (bankAccountId) where.bankAccountId = bankAccountId;
     return this.reconciliationRepo.find({
       where,
+      relations: ['bankAccount', 'company'],
       order: { reconciliationDate: 'DESC' },
     });
   }
@@ -1406,12 +1426,7 @@ export class FinanceService {
 
   async completeReconciliation(companyId: number, id: string) {
     const rec = await this.getReconciliation(companyId, id);
-    if (rec.difference > 0.01) {
-      throw new BadRequestException(
-        `La conciliación tiene una diferencia de ${rec.difference.toFixed(2)}. Ajuste los valores antes de completar.`,
-      );
-    }
-    rec.status = 'completed';
+    rec.status = rec.difference > 0.01 ? 'corrected' : 'reconciled';
     return this.reconciliationRepo.save(rec);
   }
 }

@@ -24,6 +24,10 @@ export class BankTransaction {
   @Column({ name: 'transaction_type', type: 'varchar', length: 20 })
   transactionType: 'debit' | 'credit' | 'transfer_in' | 'transfer_out' | 'fee' | 'interest' | 'penalty';
 
+  /** Estado de la operación: borrador, editado o confirmado. */
+  @Column({ name: 'operation_status', type: 'varchar', length: 15, default: 'confirmed' })
+  operationStatus: 'draft' | 'edited' | 'confirmed';
+
   @Column({ name: 'amount', type: 'decimal', precision: 12, scale: 2 })
   amount: number;
 

@@ -9,7 +9,7 @@ import {
 import { Company } from './company.entity';
 import { BankAccount } from './bank-account.entity';
 
-export type ReconciliationStatus = 'draft' | 'completed';
+export type ReconciliationStatus = 'reconciled' | 'difference' | 'corrected';
 
 @Entity('bank_reconciliations')
 export class BankReconciliation {
@@ -22,6 +22,10 @@ export class BankReconciliation {
   @ManyToOne(() => Company)
   @JoinColumn({ name: 'company_id' })
   company: Company;
+
+  /** Número consecutivo del estado de cuenta. */
+  @Column({ name: 'statement_number', type: 'varchar', length: 30, nullable: true })
+  statementNumber: string | null;
 
   @Column({ name: 'bank_account_id', type: 'uuid' })
   bankAccountId: string;
@@ -48,7 +52,7 @@ export class BankReconciliation {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   difference: number;
 
-  @Column({ type: 'varchar', length: 20, default: 'draft' })
+  @Column({ type: 'varchar', length: 20, default: 'difference' })
   status: ReconciliationStatus;
 
   @Column({ name: 'deposits_in_transit', type: 'decimal', precision: 15, scale: 2, default: 0 })

@@ -32,6 +32,12 @@ export class BankAccount {
   @Column({ name: 'account_type', type: 'varchar', length: 20 })
   accountType: 'checking' | 'expenses' | 'mlc';
 
+  @Column({ name: 'fondo', type: 'varchar', length: 100, nullable: true })
+  fondo: string | null;
+
+  @Column({ name: 'accounting_account', type: 'varchar', length: 50, nullable: true })
+  accountingAccount: string | null;
+
   @Column({ name: 'currency', type: 'varchar', length: 3, default: 'CUP' })
   currency: string;
 
