@@ -171,7 +171,7 @@ export class FixedAssetsService {
       });
       if (supplier) {
         supplierName = supplier.businessName;
-        supplierNit = supplier.nit;
+        supplierNit = supplier.nit || '';
       } else {
         accountingWarning = `Proveedor ${data.supplierId} no encontrado; se usará proveedor genérico.`;
       }
@@ -1192,7 +1192,7 @@ export class FixedAssetsService {
           });
           if (supplier) {
             supplierName = supplier.businessName;
-            supplierNit = supplier.nit;
+            supplierNit = supplier.nit || '';
           }
         }
         const dueDate = new Date(data.improvementDate);

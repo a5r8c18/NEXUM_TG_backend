@@ -375,7 +375,7 @@ export class InvoicesService {
         const costLines: any[] = [];
 
         const costOfSalesAccount =
-          (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_EXIT)) || '810';
+          (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_EXIT)) || '814';
         const inventoryAccount =
           (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY)) || '189';
 

@@ -16,14 +16,20 @@ export class Supplier {
   @Column({ name: 'supplier_code', type: 'varchar', length: 20, unique: true })
   supplierCode: string;
 
+  @Column({ name: 'reeup_code', type: 'varchar', length: 20, nullable: true })
+  reeupCode: string | null;
+
+  @Column({ name: 'ircc', type: 'varchar', length: 50, nullable: true })
+  ircc: string | null;
+
   @Column({ name: 'business_name', type: 'varchar', length: 200 })
   businessName: string;
 
   @Column({ name: 'trade_name', type: 'varchar', length: 200, nullable: true })
   tradeName: string | null;
 
-  @Column({ name: 'nit', type: 'varchar', length: 20, unique: true })
-  nit: string;
+  @Column({ name: 'nit', type: 'varchar', length: 20, nullable: true })
+  nit: string | null;
 
   @Column({ name: 'tax_id', type: 'varchar', length: 50, nullable: true })
   taxId: string | null;

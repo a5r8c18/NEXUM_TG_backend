@@ -12,6 +12,7 @@ import { CashRegister } from '../entities/cash-register.entity';
 import { CashMovement } from '../entities/cash-movement.entity';
 import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { Invoice } from '../entities/invoice.entity';
+import { Customer } from '../entities/customer.entity';
 import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
@@ -26,6 +27,7 @@ import { AccountingModule } from '../accounting/accounting.module';
       CashMovement,
       BankReconciliation,
       Invoice,
+      Customer,
     ]),
     AuthModule,
     forwardRef(() => AccountingModule),

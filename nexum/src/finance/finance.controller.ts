@@ -4,6 +4,7 @@ import {
   Post,
   Put,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -131,6 +132,21 @@ export class FinanceController {
   }
 
   // ── Transacciones Bancarias ──
+  @Get('bank-transactions')
+  findAllBankTransactions(@Req() req: Request, @Query('type') type?: string) {
+    return this.financeService.findAllBankTransactions(getCompanyId(req), type);
+  }
+
+  @Patch('bank-transactions/:id')
+  updateBankTransaction(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.updateBankTransaction(getCompanyId(req), id, body);
+  }
+
+  @Delete('bank-transactions/:id')
+  deleteBankTransaction(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.deleteBankTransaction(getCompanyId(req), id);
+  }
+
   @Get('banks/:bankAccountId/transactions')
   findBankTransactions(
     @Req() req: Request,
@@ -240,6 +256,27 @@ export class FinanceController {
     @Body() body: any,
   ) {
     return this.financeService.createCashMovement(getCompanyId(req), { ...body, cashRegisterId });
+  }
+
+  // ── Clientes / Entidades ──
+  @Get('customers')
+  findCustomers(@Req() req: Request) {
+    return this.financeService.findCustomers(getCompanyId(req));
+  }
+
+  @Post('customers')
+  createCustomer(@Req() req: Request, @Body() body: any) {
+    return this.financeService.createCustomer(getCompanyId(req), body);
+  }
+
+  @Put('customers/:id')
+  updateCustomer(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.updateCustomer(getCompanyId(req), id, body);
+  }
+
+  @Delete('customers/:id')
+  deleteCustomer(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.deleteCustomer(getCompanyId(req), id);
   }
 
   // ── Conciliación Bancaria ──

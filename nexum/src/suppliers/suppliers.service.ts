@@ -36,7 +36,20 @@ export class SuppliersService {
     return supplier;
   }
 
+  /** Genera el código consecutivo PRV-000001, PRV-000002… */
+  private async nextSupplierCode(): Promise<string> {
+    const rows: { supplier_code: string }[] = await this.supplierRepo.query(
+      `SELECT supplier_code FROM suppliers WHERE supplier_code ~ '^PRV-[0-9]+$'
+       ORDER BY LENGTH(supplier_code) DESC, supplier_code DESC LIMIT 1`,
+    );
+    const last = rows[0] ? parseInt(rows[0].supplier_code.split('-')[1], 10) : 0;
+    return `PRV-${String(last + 1).padStart(6, '0')}`;
+  }
+
   async create(companyId: number, data: any) {
+    if (!data.supplierCode) {
+      data.supplierCode = await this.nextSupplierCode();
+    }
     const supplier = this.supplierRepo.create({ ...data, companyId });
     return this.supplierRepo.save(supplier);
   }

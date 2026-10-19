@@ -48,6 +48,7 @@ import { PurchaseProduct } from './entities/purchase-product.entity';
 import { Movement } from './entities/movement.entity';
 import { MovementItem } from './entities/movement-item.entity';
 import { Invoice } from './entities/invoice.entity';
+import { Customer } from './entities/customer.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
 import { FixedAsset } from './entities/fixed-asset.entity';
 import { ReceptionReport } from './entities/reception-report.entity';
@@ -131,6 +132,7 @@ import { DocumentSequence } from './entities/document-sequence.entity';
         entities: [
           Company,
           User,
+          Customer,
           Warehouse,
           Inventory,
           Purchase,

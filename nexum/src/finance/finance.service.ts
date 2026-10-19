@@ -10,6 +10,7 @@ import { Payment } from '../entities/payment.entity';
 import { CashRegister } from '../entities/cash-register.entity';
 import { CashMovement } from '../entities/cash-movement.entity';
 import { BankReconciliation } from '../entities/bank-reconciliation.entity';
+import { Customer } from '../entities/customer.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -59,7 +60,7 @@ const BANK_ACCOUNT_UPDATE_FIELDS = [
 const BANK_TRANSACTION_FIELDS = [
   'transactionNumber', 'transactionDate', 'transactionType', 'amount',
   'currency', 'exchangeRate', 'description', 'referenceNumber',
-  'counterpartyName', 'category',
+  'counterpartyName', 'counterpartyAccount', 'category', 'transactionCode', 'notes',
 ] as const;
 
 const PAYMENT_FIELDS = [
@@ -105,6 +106,8 @@ export class FinanceService {
     private readonly cashMovementRepo: Repository<CashMovement>,
     @InjectRepository(BankReconciliation)
     private readonly reconciliationRepo: Repository<BankReconciliation>,
+    @InjectRepository(Customer)
+    private readonly customerRepo: Repository<Customer>,
     @InjectRepository(Invoice)
     private readonly invoiceRepo: Repository<Invoice>,
     private readonly voucherService: VoucherService,
@@ -516,6 +519,18 @@ export class FinanceService {
     return qb.getMany();
   }
 
+  /** Todas las transacciones bancarias de la empresa (con datos de la cuenta). */
+  async findAllBankTransactions(companyId: number, type?: string) {
+    const qb = this.txRepo
+      .createQueryBuilder('tx')
+      .innerJoin('tx.bankAccount', 'ba')
+      .addSelect(['ba.accountNumber', 'ba.bankName'])
+      .where('ba.company_id = :companyId', { companyId })
+      .orderBy('tx.transaction_date', 'DESC');
+    if (type) qb.andWhere('tx.transaction_type = :type', { type });
+    return qb.getMany();
+  }
+
   /**
    * Aplica una variación al saldo bancario en una única sentencia SQL.
    * Evita las condiciones de carrera del patrón leer → sumar → guardar.
@@ -548,12 +563,21 @@ export class FinanceService {
   async createBankTransaction(companyId: number, data: any, manager?: EntityManager) {
     const ba = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
 
+    // Número compuesto por las siglas del tipo de comprobante + consecutivo.
+    const VOUCHER_PREFIXES: Record<string, string> = {
+      'Carga Inicial': 'CI',
+      'Transferencia Electrónica Recibida': 'TER',
+      'Otros cobros': 'OC',
+      'Transferencia Electrónica Emitida': 'TEE',
+      'Otros pagos': 'OP',
+    };
+    const prefix = VOUCHER_PREFIXES[data.transactionCode] || 'TXB';
     const transactionNumber =
       data.transactionNumber ||
       (await this.sequenceService.nextFormatted(
         companyId,
-        'bank-transaction',
-        'TXB',
+        `bank-transaction-${prefix}`,
+        prefix,
         { manager },
       ));
 
@@ -561,6 +585,7 @@ export class FinanceService {
     const tx = txRepo.create({
       ...pick(data, BANK_TRANSACTION_FIELDS),
       transactionNumber,
+      description: data.description || data.transactionCode || data.transactionType,
       transactionDate: data.transactionDate || new Date().toISOString().split('T')[0],
       currency: data.currency || 'CUP',
       exchangeRate: data.exchangeRate ?? 1,
@@ -580,6 +605,42 @@ export class FinanceService {
     );
 
     return saved;
+  }
+
+  /** Actualiza una transacción bancaria y reajusta el saldo de la cuenta. */
+  async updateBankTransaction(companyId: number, id: string, data: any) {
+    const tx = await this.txRepo.findOneBy({ id, companyId });
+    if (!tx) throw new NotFoundException('Transacción no encontrada');
+
+    const oldDelta = tx.transactionType === 'credit' ? Number(tx.amount) : -Number(tx.amount);
+    const newAmount = data.amount != null ? Number(data.amount) : Number(tx.amount);
+    const newDelta = tx.transactionType === 'credit' ? newAmount : -newAmount;
+
+    if (newDelta !== oldDelta) {
+      await this.applyBankBalanceDelta(companyId, tx.bankAccountId, newDelta - oldDelta);
+    }
+
+    Object.assign(
+      tx,
+      pick(data, [
+        'transactionDate', 'transactionCode', 'referenceNumber',
+        'counterpartyAccount', 'notes', 'description',
+      ] as const),
+    );
+    tx.amount = newAmount;
+    tx.operationStatus = 'edited';
+    return this.txRepo.save(tx);
+  }
+
+  /** Elimina una transacción bancaria revirtiendo su efecto en el saldo. */
+  async deleteBankTransaction(companyId: number, id: string) {
+    const tx = await this.txRepo.findOneBy({ id, companyId });
+    if (!tx) throw new NotFoundException('Transacción no encontrada');
+
+    const delta = tx.transactionType === 'credit' ? -Number(tx.amount) : Number(tx.amount);
+    await this.applyBankBalanceDelta(companyId, tx.bankAccountId, delta);
+    await this.txRepo.remove(tx);
+    return { deleted: true };
   }
 
   /**
@@ -1359,6 +1420,63 @@ export class FinanceService {
       payments: payStats,
       cash: cashStats,
     };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── CLIENTES / ENTIDADES ──
+  // ══════════════════════════════════════════════════════════
+
+  async findCustomers(companyId: number) {
+    return this.customerRepo.find({
+      where: { companyId, isActive: true },
+      order: { name: 'ASC' },
+    });
+  }
+
+  /** Genera el código consecutivo CLE-000001, CLE-000002… */
+  private async nextCustomerCode(): Promise<string> {
+    const rows: { code: string }[] = await this.customerRepo.query(
+      `SELECT code FROM customers WHERE code ~ '^CLE-[0-9]+$'
+       ORDER BY LENGTH(code) DESC, code DESC LIMIT 1`,
+    );
+    const last = rows[0] ? parseInt(rows[0].code.split('-')[1], 10) : 0;
+    return `CLE-${String(last + 1).padStart(6, '0')}`;
+  }
+
+  async createCustomer(companyId: number, data: any) {
+    if (!data.name?.trim()) throw new BadRequestException('El nombre del cliente es obligatorio');
+    const customer = this.customerRepo.create({
+      companyId,
+      code: data.code || (await this.nextCustomerCode()),
+      reeupCode: data.reeupCode || null,
+      name: data.name.trim(),
+      abbreviation: data.abbreviation || null,
+      taxId: data.taxId || null,
+      phone: data.phone || null,
+      email: data.email || null,
+      ircc: data.ircc || null,
+      province: data.province || null,
+      country: data.country || 'Cuba',
+      address: data.address || null,
+    });
+    return this.customerRepo.save(customer);
+  }
+
+  async updateCustomer(companyId: number, id: string, data: any) {
+    const customer = await this.customerRepo.findOneBy({ id, companyId });
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+    Object.assign(
+      customer,
+      pick(data, ['name', 'reeupCode', 'abbreviation', 'taxId', 'phone', 'email', 'ircc', 'province', 'country', 'address', 'isActive'] as const),
+    );
+    return this.customerRepo.save(customer);
+  }
+
+  async deleteCustomer(companyId: number, id: string) {
+    const customer = await this.customerRepo.findOneBy({ id, companyId });
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+    customer.isActive = false;
+    return this.customerRepo.save(customer);
   }
 
   // ══════════════════════════════════════════════════════════
