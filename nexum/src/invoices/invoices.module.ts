@@ -13,10 +13,11 @@ import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
 import { AccountReceivable } from '../entities/account-receivable.entity';
 import { Company } from '../entities/company.entity';
+import { DeliveryReport } from '../entities/delivery-report.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Invoice, InvoiceItem, Movement, AccountReceivable, Company]),
+    TypeOrmModule.forFeature([Invoice, InvoiceItem, Movement, AccountReceivable, Company, DeliveryReport]),
     InventoryWarehouseModule,
     ProductsModule,
     AuthModule,

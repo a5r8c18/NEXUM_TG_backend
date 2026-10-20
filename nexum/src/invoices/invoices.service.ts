@@ -16,7 +16,9 @@ import { MappingType } from '../entities/account-mapping.entity';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
+import { DeliveryReport } from '../entities/delivery-report.entity';
 import { AccountReceivable } from '../entities/account-receivable.entity';
+import { Customer } from '../entities/customer.entity';
 import { Company } from '../entities/company.entity';
 import { PaginationService } from '../common/pagination/pagination.service';
 import { DocumentSequenceService } from '../common/sequence/document-sequence.service';
@@ -239,6 +241,10 @@ export class InvoicesService {
     // venta agota las existencias, el promedio ponderado posterior sería 0 y el
     // costo de ventas quedaría subvalorado (NCC 3).
     const itemCosts = new Map<string, { unitCost: number; totalCost: number }>();
+    // Líneas del vale de venta (solo ítems con producto del inventario)
+    const valeProducts: any[] = [];
+    let valeWarehouseId: string | null = null;
+    let valeWarehouseName: string | null = null;
 
     for (const item of data.items) {
       const ii = await manager.getRepository(InvoiceItem).save(
@@ -308,10 +314,47 @@ export class InvoicesService {
               userName: data.createdByName || 'System',
             }),
           );
+
+          valeProducts.push({
+            code: item.productCode,
+            name: product?.productName || item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          });
+          if (!valeWarehouseId) {
+            valeWarehouseId = inventory.warehouseId;
+            valeWarehouseName = inventory.warehouseName || inventory.warehouseId;
+          }
         } catch (error) {
           this.logger.error(`Error creando movimiento para factura ${invoice.invoiceNumber}: ${error.message}`);
           // stock already validated above
         }
+      }
+    }
+
+    // Vale de Venta (VV): documento de inventario por la salida de mercancías
+    if (valeProducts.length) {
+      try {
+        await manager.getRepository(DeliveryReport).save(
+          manager.getRepository(DeliveryReport).create({
+            companyId,
+            reportNumber: `VV-${invoice.invoiceNumber}`,
+            reportDate: new Date(invoice.date),
+            entityName: invoice.customerName,
+            entityNit: invoice.customerId || null,
+            warehouseId: valeWarehouseId,
+            warehouseName: valeWarehouseName,
+            authorizationDocument: invoice.invoiceNumber,
+            products: JSON.stringify(valeProducts),
+            totalAmount: Number(invoice.total),
+            reportType: 'SC-2-08',
+            observations: `Venta según factura ${invoice.invoiceNumber}`,
+            status: 'delivered',
+            createdByName: data.createdByName || 'System',
+          }),
+        );
+      } catch (error) {
+        this.logger.error(`Error creando vale de venta para factura ${invoice.invoiceNumber}: ${error.message}`);
       }
     }
 
@@ -432,6 +475,15 @@ export class InvoicesService {
       { year: invoiceYear, padding: 4, includeYear: true, manager },
     );
 
+    // NIT del cliente: imprescindible para el submayor por tercero
+    let customerNit: string | null = null;
+    if (invoice.customerId) {
+      const customer = await manager.getRepository(Customer).findOne({
+        where: { id: invoice.customerId, companyId },
+      });
+      customerNit = customer?.taxId || null;
+    }
+
     const accountReceivable = await manager.getRepository(AccountReceivable).save(
       this.arRepo.create({
         arNumber,
@@ -442,8 +494,7 @@ export class InvoicesService {
         customerAddress: invoice.customerAddress || null,
         customerPhone: invoice.customerPhone || null,
         customerEmail: null,
-        // NIT del cliente: imprescindible para el submayor por tercero
-        customerNit: invoice.customerId || null,
+        customerNit,
         originalAmount: Number(invoice.total),
         balanceAmount: Number(invoice.total),
         paidAmount: 0,
@@ -743,7 +794,7 @@ export class InvoicesService {
     const receivableAccount =
       (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
     const costOfSalesAccount =
-      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_EXIT)) || '810';
+      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_EXIT)) || '814';
     const inventoryAccount =
       (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_ENTRY)) || '189';
 

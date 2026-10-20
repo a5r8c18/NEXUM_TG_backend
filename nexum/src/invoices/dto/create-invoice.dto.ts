@@ -14,9 +14,9 @@ import {
 import { Type } from 'class-transformer';
 
 export class InvoiceItemDto {
+  @IsOptional()
   @IsString({ message: 'El código de producto debe ser texto' })
-  @IsNotEmpty({ message: 'El código de producto es obligatorio' })
-  productCode: string;
+  productCode?: string;
 
   @IsString({ message: 'La descripción debe ser texto' })
   @IsNotEmpty({ message: 'La descripción es obligatoria' })
@@ -37,9 +37,9 @@ export class InvoiceItemDto {
 }
 
 export class CreateInvoiceDto {
+  @IsOptional()
   @IsString({ message: 'El número de factura debe ser texto' })
-  @IsNotEmpty({ message: 'El número de factura es obligatorio' })
-  invoiceNumber: string;
+  invoiceNumber?: string;
 
   @IsString({ message: 'El nombre del cliente debe ser texto' })
   @IsNotEmpty({ message: 'El nombre del cliente es obligatorio' })
