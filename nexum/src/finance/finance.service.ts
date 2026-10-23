@@ -205,13 +205,50 @@ export class FinanceService {
   }
 
   async findOneReceivable(companyId: number, id: string) {
-    const ar = await this.arRepo.findOne({
-      where: { id, companyId },
-      relations: ['payments', 'invoice'],
-    });
-    if (!ar) throw new NotFoundException(`CxC ${id} no encontrada`);
-    return ar;
+  const ar = await this.arRepo.findOne({
+    where: { id, companyId },
+    relations: ['payments', 'invoice'],
+  });
+  if (!ar) throw new NotFoundException(`CxC ${id} no encontrada`);
+
+  // La factura genera dos comprobantes:
+  //   - Venta:  sourceModule='invoices',  sourceDocumentId=invoiceId
+  //   - Costo:  sourceModule='inventory', sourceDocumentId=`${invoiceId}-cost`
+  //            (a partir de este refactor el costo se contabiliza desde Inventario)
+  //
+  // Buscamos también el costo en 'invoices' para no perder los comprobantes de
+  // facturas emitidas antes del refactor (datos históricos).
+  let vouchers: any[] = [];
+  if (ar.invoiceId) {
+    const [sales, costInventory, costInvoices] = await Promise.all([
+      this.voucherService.findVouchersBySourceDocumentId(
+        companyId,
+        ar.invoiceId,
+        'invoices',
+      ),
+      this.voucherService.findVouchersBySourceDocumentId(
+        companyId,
+        `${ar.invoiceId}-cost`,
+        'inventory',
+      ),
+      this.voucherService.findVouchersBySourceDocumentId(
+        companyId,
+        `${ar.invoiceId}-cost`,
+        'invoices',
+      ),
+    ]);
+    const seen = new Set<string>();
+    vouchers = [...sales, ...costInventory, ...costInvoices]
+      .filter((v) => {
+        if (seen.has(v.id)) return false;
+        seen.add(v.id);
+        return true;
+      })
+      .sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1));
   }
+
+  return { ...ar, vouchers };
+}
 
   async createReceivable(companyId: number, data: any) {
     const arNumber = await this.sequenceService.nextFormatted(
@@ -284,12 +321,42 @@ export class FinanceService {
     });
     if (!ap) throw new NotFoundException(`CxP ${id} no encontrada`);
 
-    // Comprobante(s) contable(s) con que nació la obligación (transitoria →
-    // pasivo), para visualizar las cuentas y subcuentas afectadas.
-    const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
-      companyId,
-      `AP-${ap.id}`,
-    );
+    // Los comprobantes contables de una CxP pueden venir de dos flujos distintos:
+    //
+    //   1. Obligaciones nacidas en Finanzas (nómina, tributos, retenciones…):
+    //      createPayable() genera el voucher con sourceModule='finance' y
+    //      sourceDocumentId=`AP-${ap.id}`.
+    //
+    //   2. Obligaciones nacidas en Compras/Inventario: el voucher se generó al
+    //      registrar la compra con sourceModule='inventory' y
+    //      sourceDocumentId=ap.purchaseId. Si la compra no llegó facturada,
+    //      habrá DOS vouchers (recepción 189/699 y factura 699/410); si llegó
+    //      facturada, uno solo (189/410). En ambos casos el detalle debe verlos
+    //      todos para reconstruir el ciclo contable de la obligación.
+    const vouchersByObligation =
+      await this.voucherService.findVouchersBySourceDocumentId(
+        companyId,
+        `AP-${ap.id}`,
+      );
+    const vouchersByPurchase = ap.purchaseId
+      ? await this.voucherService.findVouchersBySourceDocumentId(
+          companyId,
+          ap.purchaseId,
+          'inventory',
+        )
+      : [];
+
+    // Deduplicar por id (por si un flujo llegara a generar un voucher visible
+    // por ambos caminos) y ordenar cronológicamente.
+    const seen = new Set<string>();
+    const vouchers = [...vouchersByObligation, ...vouchersByPurchase]
+      .filter((v) => {
+        if (seen.has(v.id)) return false;
+        seen.add(v.id);
+        return true;
+      })
+      .sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1));
+
     return { ...ap, vouchers };
   }
 

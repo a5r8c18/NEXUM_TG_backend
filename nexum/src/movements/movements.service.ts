@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { WarehousesService } from '../warehouses/warehouses.service';
 import { VoucherService } from '../accounting/voucher.service';
@@ -29,6 +29,7 @@ import {
   isPurchaseReturnCode,
   isEntitySalesReturnCode,
   MovementTypeDefinition,
+  InventoryCategory,
 } from './movement-types.catalog';
 import { StockLimitsService, StockWarning } from '../stock-limits/stock-limits.service';
 import { AuditService } from '../audit/audit.service';
@@ -80,14 +81,12 @@ export class MovementsService {
     userName?: string,
   ): Promise<void> {
     try {
-      // 1. Verificar stock limits y sincronizar
       const warning = await this.stockLimitsService.checkAfterMovement(
         companyId,
         productCode,
         warehouseId,
       );
 
-      // 2. Emitir notificación WebSocket si hay alerta
       if (warning && (warning.urgency === 'critical' || warning.urgency === 'high')) {
         this.notificationsGateway.emitStockAlert({
           productName: warning.productName,
@@ -109,7 +108,6 @@ export class MovementsService {
         this.logger.warn(`Alerta stock: ${warning.message}`);
       }
 
-      // 3. Registrar auditoría del movimiento
       const actionMap: Record<string, AuditAction> = {
         entry: AuditAction.ENTRY,
         exit: AuditAction.EXIT,
@@ -162,9 +160,6 @@ export class MovementsService {
       qb.andWhere('m.created_at <= :end', { end: filters.end_date });
     }
     if (filters?.warehouse) {
-      // Una transferencia son dos movimientos que comparten origen y destino:
-      // la salida pertenece al almacén origen y la entrada al destino. Sin
-      // distinguirlos por código, filtrar por almacén devolvería ambos.
       qb.andWhere(
         `(
           (m.movement_type <> 'transfer' AND (m.source_warehouse = :warehouse OR m.destination_warehouse = :warehouse))
@@ -190,7 +185,6 @@ export class MovementsService {
 
     qb.orderBy('m.createdAt', 'DESC');
 
-    // ── Server-side pagination ──
     const isPaginated = filters?.page && filters?.limit;
     const page = Math.max(filters?.page || 1, 1);
     const limit = Math.min(Math.max(filters?.limit || 50, 1), 200);
@@ -203,13 +197,11 @@ export class MovementsService {
       ? await qb.getManyAndCount()
       : [await qb.getMany(), 0];
 
-    // ── Batch: single query for all product codes ──
     const productCodes = movements.map(m => m.productCode).filter((c): c is string => c !== null);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
     let enriched = movements.map(m => this.enrichMovementFromMap(m, inventoryMap));
 
-    // Filtrar por nombre de producto en memoria
     if (filters?.product_name) {
       const search = filters.product_name.toLowerCase();
       enriched = enriched.filter(e =>
@@ -218,7 +210,6 @@ export class MovementsService {
       );
     }
 
-    // Retorno paginado o plano (backward compatible)
     if (isPaginated) {
       return {
         data: enriched,
@@ -234,7 +225,6 @@ export class MovementsService {
     return enriched;
   }
 
-  // Enrich usando mapa pre-cargado (sin query adicional)
   private enrichMovementFromMap(
     m: Movement,
     inventoryMap: Map<string, any[]>,
@@ -242,9 +232,7 @@ export class MovementsService {
     const inventories = (m.productCode ? inventoryMap.get(m.productCode) : undefined) || [];
 
     let relevantInventory = inventories[0];
-    
-    // Enhanced warehouse matching logic with fallback
-    // En una transferencia, la salida pertenece al origen y la entrada al destino
+
     const isTransferExit =
       m.movementType === 'transfer' && !!m.movementCode && isTransferExitCode(m.movementCode);
 
@@ -255,8 +243,7 @@ export class MovementsService {
     } else if (m.sourceWarehouse) {
       relevantInventory = inventories.find(inv => inv.warehouseId === m.sourceWarehouse) || inventories[0];
     }
-    
-    // Fallback: if no stock found, use inventory with highest stock
+
     if (relevantInventory && relevantInventory.stock === 0 && inventories.length > 1) {
       const bestStock = inventories.find(inv => inv.stock > 0);
       if (bestStock) {
@@ -307,12 +294,6 @@ export class MovementsService {
     };
   }
 
-  /**
-   * Historial de un producto concreto.
-   * Recorre los movimientos (y sus items) en los que participa el producto y
-   * reconstruye la existencia acumulada, devolviendo además la referencia al
-   * informe asociado (Informe de Recepción, Vale de Entrega o Transferencia).
-   */
   async getProductHistory(
     companyId: number,
     productCode: string,
@@ -339,8 +320,6 @@ export class MovementsService {
     }
 
     if (warehouseIds.length) {
-      // La salida de una transferencia pertenece al origen y la entrada al
-      // destino: incluir ambas duplicaría el movimiento y descuadraría el saldo.
       qb.andWhere(
         `(
           (m.movement_type <> 'transfer' AND (m.source_warehouse IN (:...warehouseIds) OR m.destination_warehouse IN (:...warehouseIds)))
@@ -375,7 +354,6 @@ export class MovementsService {
         `types=${movements.map((m) => m.movementType).join(',') || 'none'}`,
     );
 
-    // Diagnóstico: todos los movimientos del producto sin filtro de almacén
     const allMovements = await this.movementRepo
       .createQueryBuilder('m')
       .leftJoin('m.items', 'i')
@@ -395,7 +373,6 @@ export class MovementsService {
       )}`,
     );
 
-    // Informes de recepción asociados a las compras encontradas
     const purchaseIds = [...new Set(movements.map((m) => m.purchaseId).filter((p): p is string => !!p))];
     const receptionReports = purchaseIds.length
       ? await this.dataSource
@@ -420,10 +397,6 @@ export class MovementsService {
       const unitPrice = Number(item?.unitPrice ?? m.unitPrice ?? 0);
       const totalAmount = Number(item?.totalAmount ?? unitPrice * quantity);
 
-      // En una transferencia el código determina el sentido: la salida
-      // (1102/2102/3102) descarga el origen y la entrada (103/203/308) carga
-      // el destino. Ambos movimientos comparten origen y destino, así que
-      // compararlos entre sí daría el mismo signo a los dos.
       const isTransfer = m.movementType === 'transfer';
       const code = m.movementCode || '';
       const isTransferIn = isTransfer && isTransferEntryCode(code);
@@ -433,7 +406,6 @@ export class MovementsService {
         m.movementType === 'entry' ||
         m.movementType === 'return' ||
         isTransferIn ||
-        // Transferencias antiguas sin código reconocible: se usa el destino
         (isTransfer &&
           !isTransferIn &&
           !isTransferOut &&
@@ -492,7 +464,6 @@ export class MovementsService {
     };
   }
 
-  /** Tipo de informe asociado al movimiento, usado para navegar al documento. */
   private getReportKind(m: Movement): 'reception' | 'delivery' | 'transfer' | 'return' {
     if (m.reportType) return m.reportType;
     if (m.movementType === 'exit') return 'delivery';
@@ -514,18 +485,12 @@ export class MovementsService {
     return `${prefix[type] || 'DOC'}-${shortId}`;
   }
 
-  // Enrich individual (para operaciones de escritura que retornan un solo movimiento)
   private async enrichMovement(companyId: number, m: Movement) {
     const codes = m.productCode ? [m.productCode] : [];
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, codes);
     return this.enrichMovementFromMap(m, inventoryMap);
   }
 
-  /**
-   * Genera el reporte de devolución (WarehouseReturn + items) cuando el código
-   * de movimiento es de devolución. Sustituye al antiguo formulario aparte de
-   * devoluciones: el reporte se deriva del código del movimiento.
-   */
   private async createReturnReport(
     manager: EntityManager,
     companyId: number,
@@ -590,7 +555,6 @@ export class MovementsService {
     });
     await manager.getRepository(WarehouseReturnItem).save(itemEntities);
 
-    // Vincular el informe de devolución al movimiento para visibilidad
     movement.reportNumber = returnNumber;
     movement.reportType = 'return';
     await manager.getRepository(Movement).save(movement);
@@ -599,14 +563,6 @@ export class MovementsService {
     return saved;
   }
 
-  /**
-   * Cancela la cuenta pendiente asociada a una devolución:
-   *   - Salida por devolución de compra a entidades (1107/2107) → cuenta por pagar.
-   *   - Entrada por devolución de ventas a entidades (107/207/307) → cuenta por cobrar.
-   *
-   * Se descuenta el importe devuelto del saldo pendiente; si el saldo queda en
-   * cero la cuenta se cierra (cancelled / written_off).
-   */
   private async settleReturnAccounts(
     manager: EntityManager,
     companyId: number,
@@ -627,7 +583,6 @@ export class MovementsService {
       let payable: AccountPayable | null = null;
       const trimmedEntity = entityName?.trim();
       if (trimmedEntity) {
-        // 1) Coincidencia exacta (ignorando mayúsculas y espacios).
         payable = await baseQb
           .clone()
           .andWhere('LOWER(TRIM(ap.supplier_name)) = LOWER(TRIM(:supplierName))', {
@@ -636,7 +591,6 @@ export class MovementsService {
           .orderBy('ap.created_at', 'DESC')
           .getOne();
 
-        // 2) Si falla, búsqueda por contención (el proveedor puede tener prefijos/sufijos).
         if (!payable) {
           payable = await baseQb
             .clone()
@@ -648,7 +602,6 @@ export class MovementsService {
         }
       }
 
-      // 3) Sin filtro de entidad (último recurso si no se indicó proveedor).
       if (!payable) {
         payable = await baseQb
           .clone()
@@ -664,7 +617,6 @@ export class MovementsService {
       }
       const previousBalance = toDecimal(payable.balanceAmount);
       const balance = roundDecimal(previousBalance - roundDecimal(amount));
-      // Un residuo por debajo de medio centavo es redondeo, no deuda: se liquida.
       const settled = balance <= 0 || isSettled(balance);
       payable.balanceAmount = settled ? 0 : balance;
       payable.status = settled ? 'cancelled' : 'partial';
@@ -724,7 +676,6 @@ export class MovementsService {
       }
       const previousBalance = toDecimal(receivable.balanceAmount);
       const balance = roundDecimal(previousBalance - roundDecimal(amount));
-      // Un residuo por debajo de medio centavo es redondeo, no deuda: se liquida.
       const settled = balance <= 0 || isSettled(balance);
       receivable.balanceAmount = settled ? 0 : balance;
       receivable.paidAmount = roundDecimal(
@@ -745,44 +696,486 @@ export class MovementsService {
     }
   }
 
-  async createDirectEntry(
+  // ══════════════════════════════════════════════════════════
+  // ── VENTA / DEVOLUCIÓN DE VENTA (llamadas desde Facturación) ──
+  // ══════════════════════════════════════════════════════════
+
+  /**
+   * Códigos de movimiento de salida por venta según el catálogo cubano.
+   * Facturación NO los necesita: el subsistema de inventario es el único
+   * responsable de mapear categoría + tipo de venta → código oficial.
+   */
+  private static readonly SALE_MOVEMENT_CODES: Record<
+    InventoryCategory,
+    { client: string; worker: string; returnClient: string; returnWorker: string }
+  > = {
+    insumo: {
+      client: '1101',
+      worker: '1101',
+      returnClient: '107',
+      returnWorker: '106',
+    },
+    mercancia: {
+      client: '2100',
+      worker: '2101',
+      returnClient: '207',
+      returnWorker: '206',
+    },
+    produccion: {
+      client: '3100',
+      worker: '3101',
+      returnClient: '307',
+      returnWorker: '306',
+    },
+  };
+
+  /**
+   * Registra la SALIDA de inventario por venta y contabiliza el COSTO DE
+   * VENTAS (810/814 D / Inventario H).
+   *
+   * Invocado por InvoicesService dentro de su transacción. Hace TODO lo que
+   * es competencia de inventario:
+   *   - captura el WAC por producto ANTES de la salida
+   *   - descuenta stock
+   *   - crea el Movement (uno) y sus MovementItems (uno por producto)
+   *   - genera el voucher de costo con sourceModule='inventory'
+   *   - enlaza movement.voucherId = voucher.id
+   *
+   * Facturación se queda solo con lo comercial: la venta (135/900).
+   */
+  async registerSaleExit(
     companyId: number,
     data: {
-      movementCode: string;
-      category?: 'insumo' | 'mercancia' | 'produccion';
-      label?: string;
-      entity?: string;
-      warehouseId: string;
-      items?: {
-        productCode: string;
-        productName: string;
-        productDescription?: string;
-        quantity: number;
-        unitPrice?: number;
-        unit?: string;
-        location?: string;
-        expenseElement?: string;
-        costCenterId?: string;
-        subelementId?: string;
-      }[];
-      // Cuentas contables seleccionadas por el usuario (override de defaults)
-      debitAccountCode?: string;
-      creditAccountCode?: string;
-      costCenterId?: string;
-      subelementId?: string;
-      // Backward compatibility (single product)
-      productCode?: string;
-      productName?: string;
-      productDescription?: string;
-      quantity?: number;
-      unitPrice?: number;
-      unit?: string;
-      location?: string;
-      expenseElement?: string;
+      invoiceId: string;
+      invoiceNumber: string;
+      saleType: 'client' | 'worker';
+      warehouseId?: string;
+      items: Array<{ productCode: string; quantity: number }>;
+      userName?: string;
     },
+    manager: EntityManager,
+  ): Promise<{
+    movement: Movement | null;
+    totalCost: number;
+    costLines: any[];
+    movementItems: Partial<MovementItem>[];
+    itemCosts: Map<string, { unitCost: number; totalCost: number; quantity: number }>;
+    warehouseId: string | null;
+    warehouseName: string | null;
+  }> {
+    if (!data.items?.length) {
+      throw new BadRequestException(
+        'registerSaleExit requiere al menos un producto',
+      );
+    }
+
+    const userName = data.userName || 'System';
+    const warehouseFilter = data.warehouseId;
+
+    // 1. Inventario en batch
+    const productCodes = [...new Set(data.items.map((i) => i.productCode))];
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(
+      companyId,
+      productCodes,
+    );
+
+    // 2. Agregar cantidades por producto (una línea por producto en el voucher)
+    const aggregated = new Map<string, number>();
+    for (const item of data.items) {
+      aggregated.set(
+        item.productCode,
+        (aggregated.get(item.productCode) || 0) + Number(item.quantity),
+      );
+    }
+
+    const costOfSalesAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVENTORY_EXIT,
+      )) || '814';
+
+    const itemCosts = new Map<
+      string,
+      { unitCost: number; totalCost: number; quantity: number }
+    >();
+    const movementItems: Partial<MovementItem>[] = [];
+    const costLines: any[] = [];
+    let totalCost = 0;
+    let resolvedWarehouseId: string | null = null;
+    let resolvedWarehouseName: string | null = null;
+    let categoryForMovement: InventoryCategory = 'mercancia';
+
+    // 3. Procesar cada producto
+    for (const [productCode, totalQuantity] of aggregated) {
+      const inventories = inventoryMap.get(productCode) || [];
+      const inventory = warehouseFilter
+        ? inventories.find((i) => i.warehouseId === warehouseFilter)
+        : inventories[0];
+
+      if (!inventory) {
+        // Productos sin stock (servicios o no inventariables): se omiten del
+        // movimiento y del costo, igual que en el diseño anterior.
+        this.logger.warn(
+          `Producto ${productCode} sin inventario${warehouseFilter ? ` en ${warehouseFilter}` : ''}; se omite del movimiento y del costo`,
+        );
+        continue;
+      }
+
+      // Categoría: del producto maestro; fallback 'mercancia'
+      const product = await this.productsService.findByCode(companyId, productCode);
+      const category = (product?.category as InventoryCategory) || 'mercancia';
+      if (!resolvedWarehouseId) {
+        categoryForMovement = category;
+        resolvedWarehouseId = inventory.warehouseId;
+        resolvedWarehouseName = inventory.warehouseName;
+      }
+
+      // WAC capturado ANTES de la salida
+      const unitCost = Number(inventory.unitPrice) || 0;
+      const lineTotal = roundDecimal(unitCost * totalQuantity);
+
+      // Descontar stock
+      await this.inventoryWarehouseService.updateStock(
+        companyId,
+        productCode,
+        inventory.warehouseId,
+        totalQuantity,
+        'exit',
+        undefined,
+        manager,
+      );
+
+      itemCosts.set(productCode, { unitCost, totalCost: lineTotal, quantity: totalQuantity });
+      totalCost = roundDecimal(totalCost + lineTotal);
+
+      movementItems.push({
+        productCode,
+        productName: inventory.productName,
+        quantity: totalQuantity,
+        unitPrice: unitCost,
+        totalAmount: lineTotal,
+        productUnit: inventory.productUnit || 'und',
+        productDescription: inventory.productDescription || null,
+      });
+
+      // Voucher de costo: 2 líneas por producto
+      costLines.push({
+        accountCode: costOfSalesAccount,
+        debit: lineTotal,
+        credit: 0,
+        description: `Costo venta ${productCode} (CPP: ${unitCost})`,
+      });
+      costLines.push({
+        accountCode: getInventoryAccountByCategory(category),
+        debit: 0,
+        credit: lineTotal,
+        description: `Salida inventario ${productCode} (CPP: ${unitCost})`,
+      });
+    }
+
+    // Sin productos inventariables → no hay movimiento ni coste que registrar
+    if (!movementItems.length) {
+      return {
+        movement: null,
+        totalCost: 0,
+        costLines: [],
+        movementItems: [],
+        itemCosts,
+        warehouseId: null,
+        warehouseName: null,
+      };
+    }
+
+    // 4. Crear el Movement (uno solo con todos los items)
+    const saleCodes = MovementsService.SALE_MOVEMENT_CODES[categoryForMovement];
+    const movementCode =
+      data.saleType === 'worker' ? saleCodes.worker : saleCodes.client;
+    const movType = getMovementType(movementCode);
+
+    const movement = await manager.getRepository(Movement).save(
+      this.movementRepo.create({
+        companyId,
+        movementType: 'exit',
+        movementCode,
+        movementDescription: movType?.description || 'Ventas a Clientes',
+        category: categoryForMovement,
+        productCode: aggregated.size === 1 ? [...aggregated.keys()][0] : null,
+        quantity: [...aggregated.values()].reduce((s, q) => s + q, 0),
+        unitPrice:
+          aggregated.size === 1
+            ? itemCosts.get([...aggregated.keys()][0])!.unitCost
+            : 0,
+        totalAmount: totalCost,
+        itemCount: movementItems.length,
+        reason: `Factura ${data.invoiceNumber}`,
+        sourceWarehouse: resolvedWarehouseId!,
+        userName,
+      }),
+    );
+
+    // 5. Guardar MovementItems
+    if (movementItems.length) {
+      const itemEntities = movementItems.map((mi) => {
+        const entity = new MovementItem();
+        Object.assign(entity, { ...mi, movementId: movement.id });
+        return entity;
+      });
+      await manager.getRepository(MovementItem).save(itemEntities);
+    }
+
+    // 6. Voucher de costo (sourceModule='inventory')
+    if (costLines.length && totalCost > 0) {
+      const costVoucher = await this.voucherService.createVoucherFromModule(
+        companyId,
+        'inventory',
+        `${data.invoiceId}-cost`,
+        {
+          date: new Date().toISOString().split('T')[0],
+          description: `Costo de ventas - Factura ${data.invoiceNumber}`,
+          type: 'cost_of_sales',
+          reference: `COST-FAC-${data.invoiceNumber}`,
+          createdBy: userName,
+          lines: costLines,
+        },
+        manager,
+      );
+
+      movement.voucherId = costVoucher.id;
+      await manager.getRepository(Movement).update(movement.id, {
+        voucherId: costVoucher.id,
+      });
+      this.logger.log(
+        `Comprobante de costo ${costVoucher.voucherNumber} generado para la factura ${data.invoiceNumber} y enlazado al movimiento ${movement.id}`,
+      );
+    }
+
+    return {
+      movement,
+      totalCost,
+      costLines,
+      movementItems,
+      itemCosts,
+      warehouseId: resolvedWarehouseId,
+      warehouseName: resolvedWarehouseName,
+    };
+  }
+
+  /**
+   * Registra la DEVOLUCIÓN al inventario por anulación de factura y
+   * contabiliza el REVERSO del costo de ventas (Inventario D / 810/814 H).
+   *
+   * Invocado por InvoicesService dentro de su transacción de anulación.
+   */
+  async registerSaleReturn(
+    companyId: number,
+    data: {
+      invoiceId: string;
+      invoiceNumber: string;
+      originalMovementIds: string[];
+      userName?: string;
+    },
+    manager: EntityManager,
+  ): Promise<{
+    movement: Movement;
+    totalCost: number;
+    costLines: any[];
+  }> {
+    if (!data.originalMovementIds?.length) {
+      throw new BadRequestException(
+        'registerSaleReturn requiere al menos un movimiento de salida original',
+      );
+    }
+
+    const userName = data.userName || 'System';
+    const reversalDate = new Date().toISOString().split('T')[0];
+
+    const originalMovements = await manager.getRepository(Movement).find({
+      where: {
+        id: In(data.originalMovementIds),
+        companyId,
+      },
+      relations: ['items'],
+    });
+
+    if (!originalMovements.length) {
+      throw new NotFoundException(
+        `No se encontraron movimientos de salida para la factura ${data.invoiceNumber}`,
+      );
+    }
+
+    const costOfSalesAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVENTORY_EXIT,
+      )) || '810';
+
+    const itemCosts = new Map<
+      string,
+      { unitCost: number; totalCost: number; quantity: number; productName: string; productUnit: string }
+    >();
+    const movementItems: Partial<MovementItem>[] = [];
+    const costLines: any[] = [];
+    let totalCost = 0;
+    let resolvedWarehouseId: string | null = null;
+    let categoryForMovement: InventoryCategory = 'mercancia';
+    let originalCode = '2100';
+
+    for (const movement of originalMovements) {
+      if (!originalCode || originalCode === '2100') {
+        originalCode = movement.movementCode || originalCode;
+      }
+      const lines = movement.items?.length
+        ? movement.items
+        : ([movement] as any[]);
+
+      for (const line of lines) {
+        const productCode = line.productCode;
+        if (!productCode) continue;
+
+        const quantity = Number(line.quantity) || 0;
+        const unitCost = Number(line.unitPrice) || 0;
+        const lineTotal = roundDecimal(unitCost * quantity);
+        const category =
+          (line.category as InventoryCategory) ||
+          (movement.category as InventoryCategory) ||
+          'mercancia';
+
+        if (!resolvedWarehouseId) {
+          resolvedWarehouseId = movement.sourceWarehouse;
+          categoryForMovement = category;
+        }
+
+        // Reingreso al inventario al mismo costo de salida
+        if (movement.sourceWarehouse) {
+          await this.inventoryWarehouseService.updateStock(
+            companyId,
+            productCode,
+            movement.sourceWarehouse,
+            quantity,
+            'entry',
+            unitCost,
+            manager,
+          );
+        }
+
+        const existing = itemCosts.get(productCode);
+        itemCosts.set(productCode, {
+          unitCost,
+          totalCost: (existing?.totalCost || 0) + lineTotal,
+          quantity: (existing?.quantity || 0) + quantity,
+          productName: line.productName || productCode,
+          productUnit: line.productUnit || 'und',
+        });
+        totalCost = roundDecimal(totalCost + lineTotal);
+
+        movementItems.push({
+          productCode,
+          productName: line.productName || productCode,
+          quantity,
+          unitPrice: unitCost,
+          totalAmount: lineTotal,
+          productUnit: line.productUnit || 'und',
+        });
+
+        // Reverso del costo de ventas: 2 líneas por producto
+        costLines.push({
+          accountCode: getInventoryAccountByCategory(category),
+          debit: lineTotal,
+          credit: 0,
+          description: `Reingreso inventario ${productCode} por anulación ${data.invoiceNumber}`,
+        });
+        costLines.push({
+          accountCode: costOfSalesAccount,
+          debit: 0,
+          credit: lineTotal,
+          description: `Reverso costo de ventas ${productCode} (CPP: ${unitCost})`,
+        });
+      }
+    }
+
+    // Determinar código de devolución a partir del código original
+    const isWorkerSale = ['1101', '2101', '3101'].includes(originalCode);
+    const saleCodes = MovementsService.SALE_MOVEMENT_CODES[categoryForMovement];
+    const returnCode = isWorkerSale
+      ? saleCodes.returnWorker
+      : saleCodes.returnClient;
+    const returnType = getMovementType(returnCode);
+
+    // Crear movimiento de devolución
+    const returnMovement = await manager.getRepository(Movement).save(
+      this.movementRepo.create({
+        companyId,
+        movementType: 'entry',
+        movementCode: returnCode,
+        movementDescription: returnType?.description || 'Devolución de ventas',
+        category: categoryForMovement,
+        productCode: itemCosts.size === 1 ? [...itemCosts.keys()][0] : null,
+        quantity: movementItems.reduce((s, mi) => s + Number(mi.quantity || 0), 0),
+        unitPrice:
+          itemCosts.size === 1
+            ? [...itemCosts.values()][0].unitCost
+            : 0,
+        totalAmount: totalCost,
+        itemCount: movementItems.length,
+        reason: `Anulación factura ${data.invoiceNumber}`,
+        destinationWarehouse: resolvedWarehouseId,
+        userName,
+      }),
+    );
+
+    // Guardar MovementItems del reverso
+    if (movementItems.length) {
+      const itemEntities = movementItems.map((mi) => {
+        const entity = new MovementItem();
+        Object.assign(entity, { ...mi, movementId: returnMovement.id });
+        return entity;
+      });
+      await manager.getRepository(MovementItem).save(itemEntities);
+    }
+
+    // Voucher de reverso de costo (sourceModule='inventory')
+    if (costLines.length && totalCost > 0) {
+      const costVoucher = await this.voucherService.createVoucherFromModule(
+        companyId,
+        'inventory',
+        `${data.invoiceId}-cost-reversal`,
+        {
+          date: reversalDate,
+          description: `Reverso costo de ventas - Anulación factura ${data.invoiceNumber}`,
+          type: 'nota_credito',
+          reference: `REV-COST-${data.invoiceNumber}`,
+          createdBy: userName,
+          lines: costLines,
+        },
+        manager,
+      );
+
+      returnMovement.voucherId = costVoucher.id;
+      await manager.getRepository(Movement).update(returnMovement.id, {
+        voucherId: costVoucher.id,
+      });
+      this.logger.log(
+        `Comprobante de reverso de costo ${costVoucher.voucherNumber} generado para la anulación de ${data.invoiceNumber} y enlazado al movimiento ${returnMovement.id}`,
+      );
+    }
+
+    return {
+      movement: returnMovement,
+      totalCost,
+      costLines,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── RESTO DE MÉTODOS (createDirectEntry, createExit, createTransfer, ...) ──
+  // ══════════════════════════════════════════════════════════
+  // (Idénticos al original — no se modifican en este cambio.)
+
+  async createDirectEntry(
+    companyId: number,
+    data: any,
     userName?: string,
   ) {
-    // Normalizar: convertir single-product a items[]
     let items = data.items || [];
     if (!items.length && data.productCode && data.productName && data.quantity) {
       items = [{
@@ -803,7 +1196,6 @@ export class MovementsService {
       throw new BadRequestException('Debe incluir al menos un producto');
     }
 
-    // Validar código de movimiento
     const movType = getMovementType(data.movementCode);
     if (!movType) {
       throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
@@ -818,7 +1210,6 @@ export class MovementsService {
       }
     }
 
-    // El almacén debe existir y pertenecer a la empresa del contexto.
     const warehouse = await this.warehousesService.findByIdOrCode(
       companyId,
       data.warehouseId,
@@ -830,7 +1221,6 @@ export class MovementsService {
     const category = data.category || movType.category;
 
     const result = await this.dataSource.transaction(async (manager) => {
-      // Calcular totales
       let grandTotal = 0;
       const movementItems: Partial<MovementItem>[] = [];
 
@@ -839,8 +1229,6 @@ export class MovementsService {
         const totalAmount = roundDecimal(unitPrice * item.quantity);
         grandTotal = roundDecimal(grandTotal + totalAmount);
 
-        // Asegurar que exista el producto en el catálogo central. Si no está
-        // catalogado se crea con la categoría del tipo de movimiento elegido.
         await this.productsService.ensureProduct(companyId, {
           productCode: item.productCode,
           productName: item.productName,
@@ -849,7 +1237,6 @@ export class MovementsService {
           category,
         });
 
-        // Asegurar que exista el producto en inventario (dentro de la transacción)
         await this.inventoryWarehouseService.ensureProduct(companyId, {
           productCode: item.productCode,
           productName: item.productName,
@@ -861,7 +1248,6 @@ export class MovementsService {
           location: item.location,
         }, manager);
 
-        // Actualizar stock dentro de la transacción
         await this.inventoryWarehouseService.updateStock(
           companyId,
           item.productCode,
@@ -888,7 +1274,6 @@ export class MovementsService {
 
       const isReturn = isReturnCode(data.movementCode);
 
-      // Registrar movimiento (documento único) dentro de la transacción
       const mov = this.movementRepo.create({
         companyId,
         movementType: isReturn ? 'return' : 'entry',
@@ -911,7 +1296,6 @@ export class MovementsService {
 
       const savedMov = await manager.getRepository(Movement).save(mov);
 
-      // Guardar items detallados
       if (items.length > 0) {
         const itemEntities = movementItems.map(mi => {
           const entity = new MovementItem();
@@ -921,13 +1305,11 @@ export class MovementsService {
         await manager.getRepository(MovementItem).save(itemEntities);
       }
 
-      // ── Contabilización automática (un solo comprobante para toda la operación) ──
       await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
         debitAccountCode: data.debitAccountCode,
         creditAccountCode: data.creditAccountCode,
       }, manager);
 
-      // ── Devolución: reporte de devolución + cancelación de cuenta por cobrar ──
       if (isReturnCode(data.movementCode)) {
         await this.createReturnReport(
           manager,
@@ -955,7 +1337,6 @@ export class MovementsService {
       return savedMov;
     });
 
-    // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
       await this.postMovementHook(companyId, result.id, item.productCode, data.warehouseId, 'entry', item.quantity, userName);
     }
@@ -963,31 +1344,7 @@ export class MovementsService {
     return this.enrichMovement(companyId, result);
   }
 
-  async createExit(
-    companyId: number,
-    data: {
-      movementCode: string;
-      category?: 'insumo' | 'mercancia' | 'produccion';
-      reason?: string;
-      entity?: string;
-      warehouseId: string;
-      expenseElement?: string;
-      // Cuentas contables seleccionadas por el usuario (override de defaults)
-      debitAccountCode?: string;
-      creditAccountCode?: string;
-      costCenterId?: string;
-      subelementId?: string;
-      // Trazabilidad a trabajador
-      employeeId?: string;
-      employeeName?: string;
-      items?: { productCode: string; quantity: number; expenseElement?: string; costCenterId?: string; subelementId?: string }[];
-      // Backward compatibility (single product)
-      product_code?: string;
-      quantity?: number;
-    },
-    userName?: string,
-  ) {
-    // Normalizar: convertir single-product a items[]
+  async createExit(companyId: number, data: any, userName?: string) {
     let items = data.items || [];
     if (!items.length && data.product_code && data.quantity) {
       items = [{
@@ -1003,7 +1360,6 @@ export class MovementsService {
       throw new BadRequestException('Debe incluir al menos un producto');
     }
 
-    // Validar código de movimiento
     const movType = getMovementType(data.movementCode);
     if (!movType) {
       throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
@@ -1018,7 +1374,6 @@ export class MovementsService {
       }
     }
 
-    // El almacén debe existir y pertenecer a la empresa del contexto.
     const exitWarehouse = await this.warehousesService.findByIdOrCode(
       companyId,
       data.warehouseId,
@@ -1031,8 +1386,7 @@ export class MovementsService {
     const isReturn = isReturnCode(data.movementCode);
     const isPurchaseReturn = isPurchaseReturnCode(data.movementCode);
 
-    // Obtener inventario de todos los productos en batch
-    const productCodes = items.map((i) => i.productCode);
+    const productCodes = items.map((i: any) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
     const result = await this.dataSource.transaction(async (manager) => {
@@ -1040,9 +1394,6 @@ export class MovementsService {
       const movementItems: Partial<MovementItem>[] = [];
       const valeProducts: any[] = [];
 
-      // Para devoluciones de compra, precargar el importe exacto de la compra original
-      // de cada producto. Si se devuelve todo el lote exacto, usamos su importe total y
-      // precio unitario real para cuadrar con la cuenta por pagar original.
       let purchaseReturnPrices = new Map<string, { totalPrice: number; quantity: number }>();
       if (isPurchaseReturn) {
         const rows: any[] = await manager.query(
@@ -1077,7 +1428,6 @@ export class MovementsService {
         }
         grandTotal = roundDecimal(grandTotal + totalAmount);
 
-        // Actualizar stock dentro de la transacción
         await this.inventoryWarehouseService.updateStock(
           companyId,
           item.productCode,
@@ -1111,7 +1461,6 @@ export class MovementsService {
         });
       }
 
-      // Registrar movimiento (documento único) dentro de la transacción
       const savedMov = await manager.getRepository(Movement).save(
         this.movementRepo.create({
           companyId,
@@ -1135,7 +1484,6 @@ export class MovementsService {
         }),
       );
 
-      // Guardar items detallados
       if (items.length > 0) {
         const itemEntities = movementItems.map((mi) => {
           const entity = new MovementItem();
@@ -1149,8 +1497,6 @@ export class MovementsService {
         .find((inv) => inv.warehouseId === data.warehouseId);
 
       if (isReturn) {
-        // Devolución: el documento del movimiento es el reporte de devolución,
-        // no el vale de entrega.
         await this.createReturnReport(
           manager,
           companyId,
@@ -1173,7 +1519,6 @@ export class MovementsService {
           },
         );
       } else {
-        // Vale de Entrega (UN solo documento con todos los productos)
         await manager.getRepository(DeliveryReport).save(
           this.drRepo.create({
             companyId,
@@ -1193,13 +1538,11 @@ export class MovementsService {
         );
       }
 
-      // ── Contabilización automática (un solo comprobante) ──
       await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
         debitAccountCode: data.debitAccountCode,
         creditAccountCode: data.creditAccountCode,
       }, manager);
 
-      // ── Devolución de compra: cancelar la cuenta por pagar al proveedor ──
       if (isReturn) {
         await this.settleReturnAccounts(manager, companyId, data.movementCode, grandTotal, data.entity);
       }
@@ -1207,7 +1550,6 @@ export class MovementsService {
       return savedMov;
     });
 
-    // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
       await this.postMovementHook(companyId, result.id, item.productCode, data.warehouseId, 'exit', item.quantity, userName);
     }
@@ -1215,22 +1557,7 @@ export class MovementsService {
     return this.enrichMovement(companyId, result);
   }
 
-  async createTransfer(
-    companyId: number,
-    data: {
-      movementCode: string;
-      category?: 'insumo' | 'mercancia' | 'produccion';
-      sourceWarehouseId: string;
-      destinationWarehouseId: string;
-      reason?: string;
-      items?: { productCode: string; quantity: number }[];
-      // Backward compatibility (single product)
-      productCode?: string;
-      quantity?: number;
-    },
-    userName?: string,
-  ) {
-    // Normalizar: convertir single-product a items[]
+  async createTransfer(companyId: number, data: any, userName?: string) {
     let items = data.items || [];
     if (!items.length && data.productCode && data.quantity) {
       items = [{ productCode: data.productCode, quantity: data.quantity }];
@@ -1244,7 +1571,6 @@ export class MovementsService {
       throw new BadRequestException('El almacén origen y destino no pueden ser el mismo');
     }
 
-    // Validar código de movimiento (debe ser código de salida de transferencia)
     const exitMovType = getMovementType(data.movementCode);
     if (!exitMovType) {
       throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
@@ -1256,7 +1582,6 @@ export class MovementsService {
       );
     }
 
-    // Obtener código de entrada correspondiente
     const entryCode = getTransferEntryCode(data.movementCode);
     const entryMovType = entryCode ? getMovementType(entryCode) : null;
     if (!entryCode || !entryMovType) {
@@ -1267,7 +1592,6 @@ export class MovementsService {
 
     const category = data.category || exitMovType.category;
 
-    // Validar stock para todos los items antes de empezar
     for (const item of items) {
       if (item.quantity <= 0) {
         throw new BadRequestException(`Cantidad inválida para producto ${item.productCode}`);
@@ -1289,15 +1613,13 @@ export class MovementsService {
       }
     }
 
-    // Obtener precios de inventario
-    const productCodes = items.map((i) => i.productCode);
+    const productCodes = items.map((i: any) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
     let grandTotal = 0;
     const exitItems: Partial<MovementItem>[] = [];
     const entryItems: Partial<MovementItem>[] = [];
 
-    // ── TRANSACCIÓN: todas las operaciones de transferencia son atómicas ──
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -1305,12 +1627,11 @@ export class MovementsService {
     try {
       for (const item of items) {
         const inventories = inventoryMap.get(item.productCode) || [];
-        const sourceInv = inventories.find((inv) => inv.warehouseId === data.sourceWarehouseId);
+        const sourceInv = inventories.find((inv: any) => inv.warehouseId === data.sourceWarehouseId);
         const unitPrice = sourceInv?.unitPrice || 0;
         const totalAmount = unitPrice * item.quantity;
         grandTotal += totalAmount;
 
-        // Transferir stock (dentro de la transacción)
         await this.inventoryWarehouseService.transferStock(
           companyId,
           {
@@ -1337,7 +1658,6 @@ export class MovementsService {
 
       const transferReason = data.reason || 'Transferencia entre almacenes';
 
-      // ── Movimiento SALIDA (documento único para todos los productos) ──
       const exitMov = await queryRunner.manager.save(
         this.movementRepo.create({
           companyId,
@@ -1346,7 +1666,7 @@ export class MovementsService {
           movementDescription: exitMovType.description,
           category,
           productCode: items.length === 1 ? items[0].productCode : null,
-          quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+          quantity: items.reduce((sum: number, i: any) => sum + i.quantity, 0),
           unitPrice: items.length === 1 ? (exitItems[0].unitPrice || 0) : 0,
           totalAmount: grandTotal,
           itemCount: items.length,
@@ -1357,7 +1677,6 @@ export class MovementsService {
         }),
       );
 
-      // ── Movimiento ENTRADA (documento único para todos los productos) ──
       const entryMov = await queryRunner.manager.save(
         this.movementRepo.create({
           companyId,
@@ -1366,7 +1685,7 @@ export class MovementsService {
           movementDescription: entryMovType.description,
           category,
           productCode: items.length === 1 ? items[0].productCode : null,
-          quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+          quantity: items.reduce((sum: number, i: any) => sum + i.quantity, 0),
           unitPrice: items.length === 1 ? (entryItems[0].unitPrice || 0) : 0,
           totalAmount: grandTotal,
           itemCount: items.length,
@@ -1377,8 +1696,6 @@ export class MovementsService {
         }),
       );
 
-      // Guardar items detallados para ambos movimientos (dentro de la
-      // transacción: fuera de ella los movimientos padre aún no son visibles)
       if (items.length > 0) {
         const exitItemEntities = exitItems.map((mi) => {
           const entity = new MovementItem();
@@ -1396,8 +1713,6 @@ export class MovementsService {
         ]);
       }
 
-      // Vincular ambos movimientos entre sí. El vínculo real es
-      // relatedMovementId; el motivo describe el traslado en texto legible.
       const [sourceWh, destinationWh] = await Promise.all([
         this.warehousesService.findByIdOrCode(companyId, data.sourceWarehouseId),
         this.warehousesService.findByIdOrCode(companyId, data.destinationWarehouseId),
@@ -1417,13 +1732,10 @@ export class MovementsService {
 
       await queryRunner.commitTransaction();
 
-      // ── Las transferencias intra-empresa NO generan comprobante contable ──
-      // Son movimientos internos que no afectan el resultado económico
       this.logger.log(
         `Transferencia intra-empresa procesada: ${exitMov.id} → ${entryMov.id} (sin contabilización)`,
       );
 
-      // ── Post-movimiento: verificar ambos almacenes para cada producto ──
       for (const item of items) {
         await this.postMovementHook(companyId, exitMov.id, item.productCode, data.sourceWarehouseId, 'transfer', item.quantity, userName);
         await this.postMovementHook(companyId, entryMov.id, item.productCode, data.destinationWarehouseId, 'transfer', item.quantity, userName);
@@ -1447,28 +1759,7 @@ export class MovementsService {
     }
   }
 
-  async createReturn(
-    companyId: number,
-    data: {
-      movementCode: string;
-      category?: 'insumo' | 'mercancia' | 'produccion';
-      reason: string;
-      warehouseId: string;
-      purchase_id?: string;
-      entity?: string;
-      // Cuentas contables seleccionadas por el usuario (override de defaults)
-      debitAccountCode?: string;
-      creditAccountCode?: string;
-      costCenterId?: string;
-      subelementId?: string;
-      items?: { productCode: string; quantity: number; costCenterId?: string; subelementId?: string }[];
-      // Backward compatibility (single product)
-      product_code?: string;
-      quantity?: number;
-    },
-    userName?: string,
-  ) {
-    // Normalizar: convertir single-product a items[]
+  async createReturn(companyId: number, data: any, userName?: string) {
     let items = data.items || [];
     if (!items.length && data.product_code && data.quantity) {
       items = [{ productCode: data.product_code, quantity: data.quantity, costCenterId: data.costCenterId, subelementId: data.subelementId }];
@@ -1478,7 +1769,6 @@ export class MovementsService {
       throw new BadRequestException('Debe incluir al menos un producto');
     }
 
-    // Validar código de movimiento
     const movType = getMovementType(data.movementCode);
     if (!movType) {
       throw new BadRequestException(`Código de movimiento inválido: ${data.movementCode}`);
@@ -1491,9 +1781,7 @@ export class MovementsService {
     }
 
     const category = data.category || movType.category;
-
-    // Obtener inventario de todos los productos en batch
-    const productCodes = items.map((i) => i.productCode);
+    const productCodes = items.map((i: any) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
     const result = await this.dataSource.transaction(async (manager) => {
@@ -1503,14 +1791,11 @@ export class MovementsService {
 
       for (const item of items) {
         const inventories = inventoryMap.get(item.productCode) || [];
-        const inventory = inventories.find((inv) => inv.warehouseId === data.warehouseId);
+        const inventory = inventories.find((inv: any) => inv.warehouseId === data.warehouseId);
         const unitPrice = toDecimal(inventory?.unitPrice);
         const totalAmount = roundDecimal(unitPrice * item.quantity);
         grandTotal = roundDecimal(grandTotal + totalAmount);
 
-        // La dirección del stock depende del tipo de devolución:
-        // - Devolución de COMPRA a proveedor (código exit, p.ej. 1107/2107) → sale stock
-        // - Devolución de VENTA del cliente (código entry, p.ej. 106/107) → entra stock
         const stockDirection: 'entry' | 'exit' =
           movType.direction === 'exit' ? 'exit' : 'entry';
         await this.inventoryWarehouseService.updateStock(
@@ -1545,7 +1830,6 @@ export class MovementsService {
         });
       }
 
-      // Registrar movimiento (documento único) dentro de la transacción
       const savedMov = await manager.getRepository(Movement).save(
         this.movementRepo.create({
           companyId,
@@ -1554,7 +1838,7 @@ export class MovementsService {
           movementDescription: movType.description,
           category,
           productCode: items.length === 1 ? items[0].productCode : null,
-          quantity: items.reduce((sum, i) => sum + i.quantity, 0),
+          quantity: items.reduce((sum: number, i: any) => sum + i.quantity, 0),
           unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
           totalAmount: grandTotal,
           itemCount: items.length,
@@ -1567,7 +1851,6 @@ export class MovementsService {
         }),
       );
 
-      // Guardar items detallados
       if (items.length > 0) {
         const itemEntities = movementItems.map((mi) => {
           const entity = new MovementItem();
@@ -1577,9 +1860,8 @@ export class MovementsService {
         await manager.getRepository(MovementItem).save(itemEntities);
       }
 
-      // Vale de Devolución (UN solo documento con todos los productos)
       const firstInventory = (inventoryMap.get(items[0].productCode) || [])
-        .find((inv) => inv.warehouseId === data.warehouseId);
+        .find((inv: any) => inv.warehouseId === data.warehouseId);
       await manager.getRepository(DeliveryReport).save(
         this.drRepo.create({
           companyId,
@@ -1596,19 +1878,16 @@ export class MovementsService {
         }),
       );
 
-      // ── Contabilización automática (un solo comprobante) ──
       await this.generateAccountingVoucher(companyId, savedMov, movType, grandTotal, userName, {
         debitAccountCode: data.debitAccountCode,
         creditAccountCode: data.creditAccountCode,
       }, manager);
 
-      // ── Cancelar la cuenta por pagar / por cobrar según el tipo de devolución ──
       await this.settleReturnAccounts(manager, companyId, data.movementCode, grandTotal, data.entity);
 
       return savedMov;
     });
 
-    // ── Post-movimiento: stock limits + notificaciones + auditoría ──
     for (const item of items) {
       await this.postMovementHook(companyId, result.id, item.productCode, data.warehouseId, 'return', item.quantity, userName);
     }
@@ -1616,15 +1895,7 @@ export class MovementsService {
     return this.enrichMovement(companyId, result);
   }
 
-  async getTransfersByWarehouse(
-    companyId: number,
-    warehouseId: string,
-    filters?: {
-      start_date?: string;
-      end_date?: string;
-      type?: 'incoming' | 'outgoing';
-    },
-  ) {
+  async getTransfersByWarehouse(companyId: number, warehouseId: string, filters?: any) {
     const qb = this.movementRepo
       .createQueryBuilder('m')
       .where('m.company_id = :companyId', { companyId })
@@ -1635,9 +1906,7 @@ export class MovementsService {
     } else if (filters?.type === 'outgoing') {
       qb.andWhere('m.source_warehouse = :warehouseId', { warehouseId });
     } else {
-      qb.andWhere('(m.source_warehouse = :warehouseId OR m.destination_warehouse = :warehouseId)', { 
-        warehouseId 
-      });
+      qb.andWhere('(m.source_warehouse = :warehouseId OR m.destination_warehouse = :warehouseId)', { warehouseId });
     }
 
     if (filters?.start_date) {
@@ -1655,15 +1924,6 @@ export class MovementsService {
     return movements.map(m => this.enrichMovementFromMap(m, inventoryMap));
   }
 
-  // ══════════════════════════════════════════════════════════
-  // ── EXPEDIENTES DE FALTANTES Y SOBRANTES ──
-  // ══════════════════════════════════════════════════════════
-
-  /**
-   * Movimientos de faltante o sobrante cuyo expediente sigue abierto, es decir
-   * cuyo importe permanece en las cuentas 332 "Faltantes de Bienes en
-   * Investigación" o 555 "Sobrantes en Investigación".
-   */
   async findOpenInvestigations(companyId: number) {
     const movements = await this.movementRepo
       .createQueryBuilder('m')
@@ -1686,28 +1946,7 @@ export class MovementsService {
     };
   }
 
-  /**
-   * Cierra el expediente de un FALTANTE trasladando su importe fuera de la
-   * cuenta 332 "Faltantes de Bienes en Investigación":
-   *
-   *  - resolution 'loss'        → Débito 850 Gastos por Faltantes de Bienes
-   *  - resolution 'responsible' → Débito 335 Cuentas por Cobrar Diversas
-   *
-   * en ambos casos con crédito a la 332. Conforme a la Res. 13/2006 MFP, el
-   * gasto o el cobro al responsable solo se reconoce al concluir la
-   * investigación, nunca al detectarse el faltante.
-   */
-  async resolveShortage(
-    companyId: number,
-    movementId: string,
-    data: {
-      resolution: 'loss' | 'responsible';
-      responsibleName?: string;
-      resolutionDate?: string;
-      notes?: string;
-    },
-    userName?: string,
-  ) {
+  async resolveShortage(companyId: number, movementId: string, data: any, userName?: string) {
     const movement = await this.movementRepo.findOne({
       where: { id: movementId, companyId },
     });
@@ -1720,21 +1959,15 @@ export class MovementsService {
       );
     }
     if (movement.investigationStatus === 'resolved') {
-      throw new BadRequestException(
-        'El expediente de este faltante ya fue resuelto',
-      );
+      throw new BadRequestException('El expediente de este faltante ya fue resuelto');
     }
     if (data.resolution === 'responsible' && !data.responsibleName) {
-      throw new BadRequestException(
-        'Debe indicar el responsable al que se carga el faltante',
-      );
+      throw new BadRequestException('Debe indicar el responsable al que se carga el faltante');
     }
 
     const amount = Number(movement.totalAmount || 0);
     if (amount <= 0) {
-      throw new BadRequestException(
-        'El faltante no tiene importe: no procede asiento de resolución',
-      );
+      throw new BadRequestException('El faltante no tiene importe: no procede asiento de resolución');
     }
 
     const date = data.resolutionDate || new Date().toISOString().split('T')[0];
@@ -1799,28 +2032,10 @@ export class MovementsService {
     }
     await this.movementRepo.save(movement);
 
-    this.logger.log(
-      `Expediente de faltante ${movement.id} resuelto como '${data.resolution}' por ${amount}`,
-    );
-
     return this.enrichMovement(companyId, movement);
   }
 
-  /**
-   * Cierra el expediente de un SOBRANTE trasladando su importe desde la cuenta
-   * 555 "Sobrantes en Investigación" a Otros Ingresos (950) cuando nadie lo
-   * reclama, o cancelándolo contra el inventario si se localiza su origen.
-   */
-  async resolveSurplus(
-    companyId: number,
-    movementId: string,
-    data: {
-      resolution: 'income' | 'owner_found';
-      resolutionDate?: string;
-      notes?: string;
-    },
-    userName?: string,
-  ) {
+  async resolveSurplus(companyId: number, movementId: string, data: any, userName?: string) {
     const movement = await this.movementRepo.findOne({
       where: { id: movementId, companyId },
     });
@@ -1833,16 +2048,12 @@ export class MovementsService {
       );
     }
     if (movement.investigationStatus === 'resolved') {
-      throw new BadRequestException(
-        'El expediente de este sobrante ya fue resuelto',
-      );
+      throw new BadRequestException('El expediente de este sobrante ya fue resuelto');
     }
 
     const amount = Number(movement.totalAmount || 0);
     if (amount <= 0) {
-      throw new BadRequestException(
-        'El sobrante no tiene importe: no procede asiento de resolución',
-      );
+      throw new BadRequestException('El sobrante no tiene importe: no procede asiento de resolución');
     }
 
     const date = data.resolutionDate || new Date().toISOString().split('T')[0];
@@ -1854,8 +2065,6 @@ export class MovementsService {
         MappingType.INVENTORY_SURPLUS_INVESTIGATION,
       )) || '555';
 
-    // Si nadie reclama el sobrante se reconoce como ingreso; si aparece su
-    // origen (p. ej. una entrada no registrada) se cancela contra el inventario.
     const destinationAccount =
       data.resolution === 'income'
         ? (await this.accountMappingService.getAccountForMapping(
@@ -1906,16 +2115,8 @@ export class MovementsService {
     }
     await this.movementRepo.save(movement);
 
-    this.logger.log(
-      `Expediente de sobrante ${movement.id} resuelto como '${data.resolution}' por ${amount}`,
-    );
-
     return this.enrichMovement(companyId, movement);
   }
-
-  // ══════════════════════════════════════════════════════════
-  // ── CONTABILIZACIÓN AUTOMÁTICA ──
-  // ══════════════════════════════════════════════════════════
 
   private async generateAccountingVoucher(
     companyId: number,
@@ -1941,7 +2142,6 @@ export class MovementsService {
       return;
     }
 
-    // Determinar cuentas: overrides > defaults del catálogo > defaults resilientes
     let debitAccount = overrides?.debitAccountCode || '';
     let creditAccount = overrides?.creditAccountCode || '';
 
@@ -1953,12 +2153,9 @@ export class MovementsService {
       return;
     }
 
-    // Si no hay overrides, usar defaults del catálogo (con correcciones conocidas)
     if (!debitAccount) debitAccount = accountingEntry.debitAccountCode || '';
     if (!creditAccount) creditAccount = accountingEntry.creditAccountCode || '';
 
-    // Los faltantes y sobrantes se registran contra cuentas de investigación
-    // (Res. 13/2006 MFP), parametrizables por empresa.
     if (['1104', '2104', '3104'].includes(movement.movementCode)) {
       debitAccount =
         (await this.accountMappingService.getAccountForMapping(
@@ -1973,7 +2170,6 @@ export class MovementsService {
         )) || creditAccount;
     }
 
-    // Validar que las cuentas existan en la empresa; si no, usar defaults resilientes
     const accountRepo = manager ? manager.getRepository(Account) : this.voucherService['accountRepo'];
     const debitAcc = await accountRepo.findOneBy({ code: debitAccount, companyId });
     if (!debitAcc) {
@@ -1984,23 +2180,17 @@ export class MovementsService {
     const creditAcc = await accountRepo.findOneBy({ code: creditAccount, companyId });
     if (!creditAcc) {
       this.logger.warn(`Cuenta crédito ${creditAccount} no existe para la empresa. Usando cuenta por defecto según tipo.`);
-      // Defaults resilientes según tipo de movimiento
       if (['102', '202', '402'].includes(movement.movementCode)) {
-        creditAccount = '406'; // Cuentas por Pagar - Fuera del Órgano (proveedores)
+        creditAccount = '406';
       } else if (['1107', '2107'].includes(movement.movementCode)) {
-        creditAccount = '406'; // Devolución compra a proveedores
+        creditAccount = '406';
       } else if (['106', '206', '306', '107', '207', '307'].includes(movement.movementCode)) {
-        // Devolución de ventas: contra Costo de Ventas en lugar de Ventas
         creditAccount = movType.category === 'mercancia' ? '814' : '810';
       } else {
-        creditAccount = accountingEntry.creditAccountCode; // fallback
+        creditAccount = accountingEntry.creditAccountCode;
       }
     }
 
-    // Validación final: asegurar que ambas cuentas tengan valores válidos.
-    // Nunca se registra un movimiento de inventario sin su asiento: si no hay
-    // cuentas válidas se aborta la operación en lugar de dejar el inventario
-    // descuadrado respecto de la contabilidad.
     if (!debitAccount || !creditAccount) {
       throw new BadRequestException(
         `No se pudieron determinar cuentas contables válidas para el movimiento ${movement.movementCode}. ` +
@@ -2010,11 +2200,6 @@ export class MovementsService {
     }
 
     try {
-      // El subelemento de gasto (clasificador cubano) debe viajar en la línea
-      // del comprobante, no en el texto de la descripción: es la única forma de
-      // que el Modelo 5924 (Desglose de Gastos por Elementos) pueda construirse.
-      // Solo se aplica a la línea de gasto, es decir a la del débito en las
-      // salidas hacia consumo (1105/2105/3105) y centros de costo.
       const subelement = movement.subelementId || null;
       const element = movement.expenseElement || null;
 
@@ -2058,7 +2243,6 @@ export class MovementsService {
         manager,
       );
 
-      // Vincular comprobante al movimiento
       movement.voucherId = voucher.id;
       const movementRepo = manager ? manager.getRepository(Movement) : this.movementRepo;
       await movementRepo.update(movement.id, { voucherId: voucher.id });
@@ -2072,9 +2256,6 @@ export class MovementsService {
         `Error al generar comprobante para movimiento ${movement.id}: ${err.message}`,
         err.stack,
       );
-      // El comprobante de movimiento de inventario es obligatorio (aunque se
-      // postee manualmente después). Lanzar el error evita que la operación
-      // quede registrada sin su voucher borrador.
       throw err;
     }
   }

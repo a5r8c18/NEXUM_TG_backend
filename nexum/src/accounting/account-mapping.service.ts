@@ -22,6 +22,10 @@ export class AccountMappingService {
   // Default account mappings — Nomenclador Cubano Resolución 2016.
   // Las cuentas de contrapartida deben ser subcuentas analíticas (allowsMovements=true)
   // porque los asientos no pueden registrarse en cuentas agrupadoras.
+  //
+  // NOTA: la 699 es la ÚNICA cuenta transitoria del sistema automatizado.
+  // Todo tránsito entre subsistemas (inventario → finanzas, nómina → finanzas,
+  // etc.) debe pasar por ella y liquidarse al reconocer la obligación definitiva.
   private readonly defaultMappings: Record<MappingType, string> = {
     [MappingType.INVOICE_SALE]: '900',   // Ventas
     [MappingType.INVOICE_RECEIVABLE]: '135-0020', // Cuentas por Cobrar - Fuera del Órgano (clientes externos)
@@ -30,7 +34,7 @@ export class AccountMappingService {
     [MappingType.INVENTORY_ENTRY]: '189',   // Mercancías para la Venta
     [MappingType.INVENTORY_EXIT]: '810',    // Costo de Ventas de la Producción (mercancías: 814)
     [MappingType.INVENTORY_RETURN]: '189',  // Mercancías (reverso)
-    [MappingType.INVENTORY_TRANSIT]: '434', // Materiales Recibidos de Forma Anticipada
+    [MappingType.INVENTORY_TRANSIT]: '699', // Transitoria del Sistema Automatizado
     [MappingType.FIXED_ASSET_ACQUISITION]: '240', // Activos Fijos Tangibles
     [MappingType.FIXED_ASSET_DEPRECIATION]: '822', // Gastos Generales y de Administración (gasto de depreciación)
     [MappingType.FIXED_ASSET_DEPRECIATION_PRODUCTION]: '700-0020', // Gastos del Período — Producción en Proceso

@@ -4,6 +4,7 @@ import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
 import { InventoryWarehouseModule } from '../inventory-warehouse/inventory-warehouse.module';
 import { ProductsModule } from '../products/products.module';
+import { MovementsModule } from '../movements/movements.module';
 import { AuthModule } from '../auth/auth.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { PaginationModule } from '../common/pagination/pagination.module';
@@ -20,6 +21,7 @@ import { DeliveryReport } from '../entities/delivery-report.entity';
     TypeOrmModule.forFeature([Invoice, InvoiceItem, Movement, AccountReceivable, Company, DeliveryReport]),
     InventoryWarehouseModule,
     ProductsModule,
+    MovementsModule,
     AuthModule,
     forwardRef(() => AccountingModule),
     forwardRef(() => FinanceModule),

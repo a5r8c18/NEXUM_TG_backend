@@ -29,6 +29,7 @@ export type SourceModule =
   | 'invoices'
   | 'fixed-assets'
   | 'hr'
+  | 'finance'
   | 'manual';
 
 @Entity('vouchers')

@@ -307,7 +307,7 @@ export class PurchasesService {
 
         if (arrivesInvoiced) {
           // Opción C: la compra llega CON factura → asiento contable directo
-          // Débito 189 (Inventario) / Crédito 405-410 (Cuentas por Pagar). La 699 no interviene.
+          // Débito 189 (Inventario) / Crédito 410 (Cuentas por Pagar). La 699 no interviene.
           const payableAccount = data.creditAccountCode
             ? data.creditAccountCode
             : (await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER)) || '410';
@@ -344,7 +344,7 @@ export class PurchasesService {
           );
           this.logger.log(`Comprobante directo (facturado) generado para compra ${purchase.id}: ${inventoryAccount} / ${payableAccount}`);
         } else {
-          // Recepción SIN factura → cuenta transitoria (GRNI: mercancía recibida no facturada)
+          // Recepción SIN factura → cuenta transitoria del sistema (699).
           // Débito 189 (Inventario) / Crédito 699 (Transitoria). Se liquida al registrar la factura.
           const transitAccount = data.creditAccountCode
             ? data.creditAccountCode
@@ -421,7 +421,7 @@ export class PurchasesService {
 
   /**
    * Registra la factura del proveedor para una compra existente.
-   * Genera el asiento contable: Débito 434 (Materiales Recibidos de Forma Anticipada) / Crédito 410 (Proveedores)
+   * Genera el asiento contable: Débito 699 (Transitoria del Sistema) / Crédito 410 (Proveedores)
    */
   async registerSupplierInvoice(
     companyId: number,
@@ -429,7 +429,7 @@ export class PurchasesService {
     data: {
       invoiceNumber: string;
       invoiceDate: string;
-      debitAccountCode?: string;  // Override: cuenta transitoria (default 434)
+      debitAccountCode?: string;  // Override: cuenta transitoria (default 699)
       creditAccountCode?: string; // Override: cuenta proveedor (default 410)
     },
     userName?: string,
@@ -459,10 +459,10 @@ export class PurchasesService {
     // Calcular total de la compra
     const purchaseTotal = purchase.products.reduce((sum, pp) => sum + Number(pp.totalPrice), 0);
 
-    // Generar asiento contable: liquida cuenta transitoria, crea CxP
+    // Generar asiento contable: liquida la transitoria 699, crea CxP en 410.
     const debitAccount = data.debitAccountCode
       ? data.debitAccountCode
-      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '434';
+      : await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVENTORY_TRANSIT) || '699';
     const creditAccount = data.creditAccountCode
       ? data.creditAccountCode
       : await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER) || '410';
@@ -482,7 +482,7 @@ export class PurchasesService {
             accountCode: debitAccount,
             debit: purchaseTotal,
             credit: 0,
-            description: `Liquida mercancías en tránsito - ${data.invoiceNumber}`,
+            description: `Liquida transitoria por mercancía recibida - ${data.invoiceNumber}`,
           },
           {
             accountCode: creditAccount,
