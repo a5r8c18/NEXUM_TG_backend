@@ -106,6 +106,47 @@ export class InvoicesService {
     return { invoice };
   }
 
+  /**
+   * Detalle de una factura con su comprobante contable de VENTA.
+   *
+   * SOLO se incluye el comprobante de VENTA (sourceModule='invoices',
+   * sourceDocumentId=id): 699 D / 900 H + 440-0001 H.
+   *
+   * NO se incluye el comprobante de COSTO (810/814 D / 188/189 H):
+   * es un evento de inventario y no forma parte del detalle de la factura.
+   *
+   * Se añade `customerNit` (customers.tax_id) al objeto factura para que el
+   * PDF y el modal muestren el NIT real del cliente.
+   */
+  async findOneWithVouchers(companyId: number, id: string) {
+    const invoice = await this.invoiceRepo.findOne({
+      where: { id, companyId },
+      relations: ['items'],
+    });
+    if (!invoice) throw new NotFoundException(`Factura #${id} no encontrada`);
+
+    // Solo el comprobante de VENTA.
+    const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
+      companyId,
+      id,
+      'invoices',
+    );
+
+    // NIT del cliente registrado en la BD (customers.tax_id).
+    let customerNit: string | null = null;
+    if (invoice.customerId) {
+      const customer = await this.invoiceRepo.manager.getRepository(Customer).findOne({
+        where: { id: invoice.customerId, companyId },
+      });
+      customerNit = customer?.taxId || null;
+    }
+
+    return {
+      invoice: { ...invoice, customerNit },
+      vouchers: vouchers.sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1)),
+    };
+  }
+
   async create(
     companyId: number,
     data: {
@@ -215,10 +256,6 @@ export class InvoicesService {
       }
 
       // ── Salida de inventario + costo de ventas (delegado a Inventario) ──
-      // Facturación NO descuenta stock ni contabiliza el costo: esa
-      // responsabilidad es del subsistema de inventario, que captura el WAC
-      // antes de la salida, crea el Movement y genera el voucher de costo
-      // (810/814 D / Inventario H) con sourceModule='inventory'.
       const saleItems = data.items
         .filter(i => i.productCode)
         .map(i => ({ productCode: i.productCode as string, quantity: i.quantity }));
@@ -236,19 +273,15 @@ export class InvoicesService {
         manager,
       );
 
-      // Vale de Venta (SC-2-08) — documento del subsistema de inventario
+      // ── Vale de Salida SC-2-08 (a costo, WAC) ──
       if (saleExit.movementItems.length && saleExit.warehouseId) {
-        const salePriceByProduct = new Map<string, number>();
-        for (const item of data.items) {
-          if (item.productCode) {
-            salePriceByProduct.set(item.productCode, item.unitPrice);
-          }
-        }
         const valeProducts = saleExit.movementItems.map((mi) => ({
           code: mi.productCode,
-          name: mi.productName,
+          description: mi.productName,
           quantity: mi.quantity,
-          unitPrice: salePriceByProduct.get(mi.productCode as string) || 0,
+          unit: mi.productUnit || 'und',
+          unitPrice: mi.unitPrice,
+          amount: mi.totalAmount,
         }));
 
         try {
@@ -263,36 +296,48 @@ export class InvoicesService {
               warehouseName: saleExit.warehouseName,
               authorizationDocument: invoice.invoiceNumber,
               products: JSON.stringify(valeProducts),
-              totalAmount: Number(invoice.total),
+              totalAmount: saleExit.totalCost,
               reportType: 'SC-2-08',
-              observations: `Venta según factura ${invoice.invoiceNumber}`,
+              observations: `Venta según factura ${invoice.invoiceNumber} (valorado a costo)`,
               status: 'delivered',
               createdByName: data.createdByName || 'System',
             }),
           );
         } catch (error) {
           this.logger.error(
-            `Error creando vale de venta para factura ${invoice.invoiceNumber}: ${error.message}`,
+            `Error creando vale de salida para factura ${invoice.invoiceNumber}: ${error.message}`,
           );
         }
       }
 
       invoice.items = items;
 
-      // ── Contabilización de la VENTA (ingreso) ──
-      // Facturación solo genera el asiento comercial: 135 D / 900 H + 440-0001 H.
-      // El costo de ventas ya lo contabilizó Inventario.
+      // ── Contabilización de la VENTA (ingreso) contra transitoria 699 ──
       const invoiceTotal = Number(invoice.total || 0);
+      let transitAccount = '699';
+      let receivableAccount = '135';
+
       if (invoiceTotal > 0) {
         try {
-          const receivableAccount =
-            (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
+          transitAccount =
+            (await this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.INVENTORY_TRANSIT,
+            )) || '699';
+          receivableAccount =
+            (await this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.INVOICE_RECEIVABLE,
+            )) || '135';
           const salesAccount =
-            (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE)) || '900';
+            (await this.accountMappingService.getAccountForMapping(
+              companyId,
+              MappingType.INVOICE_SALE,
+            )) || '900';
 
           const salesLines: any[] = [
             {
-              accountCode: receivableAccount,
+              accountCode: transitAccount,
               debit: invoiceTotal,
               credit: 0,
               description: `Cobro pendiente ${invoice.invoiceNumber}`,
@@ -378,6 +423,45 @@ export class InvoicesService {
       );
 
       this.logger.log(`CxC creada para factura ${invoice.invoiceNumber}: ${arNumber}`);
+
+      // ── Comprobante de la OBLIGACIÓN (Finanzas): 135 D / 699 H ──
+      if (invoiceTotal > 0) {
+        try {
+          await this.voucherService.createVoucherFromModule(
+            companyId,
+            'finance',
+            `AR-${accountReceivable.id}`,
+            {
+              date: invoice.date || new Date().toISOString().split('T')[0],
+              description: `Reconocimiento CxC ${arNumber} - Factura ${invoice.invoiceNumber}`,
+              type: 'otro',
+              reference: invoice.invoiceNumber,
+              createdBy: data.createdByName || 'Sistema',
+              lines: [
+                {
+                  accountCode: receivableAccount,
+                  debit: invoiceTotal,
+                  credit: 0,
+                  description: `CxC ${arNumber} - ${invoice.customerName}`,
+                  reference: customerNit || invoice.customerId || invoice.customerName,
+                },
+                {
+                  accountCode: transitAccount,
+                  debit: 0,
+                  credit: invoiceTotal,
+                  description: `Liquidación transitoria venta ${invoice.invoiceNumber}`,
+                },
+              ],
+            },
+            manager,
+          );
+        } catch (error) {
+          this.logger.error(
+            `Error contabilización CxC ${accountReceivable.id}: ${error.message}`,
+          );
+          throw error;
+        }
+      }
 
       return { invoice };
     });
@@ -466,12 +550,10 @@ export class InvoicesService {
       );
     }
 
-    // ── COBRO (delegado a Finanzas) ──
     if (status === 'paid') {
       return this.registerCollection(companyId, invoice, options);
     }
 
-    // ── ANULACIÓN ──
     if (status === 'cancelled') {
       await this.dataSource.transaction(async (manager) => {
         await this.reverseInvoice(companyId, invoice, options, manager);
@@ -554,7 +636,7 @@ export class InvoicesService {
       );
     }
 
-    // ── 1. Devolución al inventario + reverso del costo (delegado a Inventario) ──
+    // ── 1. Devolución al inventario + reverso del costo (Inventario) ──
     const originalMovements = await mgr.getRepository(Movement).find({
       where: {
         companyId,
@@ -576,16 +658,39 @@ export class InvoicesService {
       );
     }
 
-    // ── 2. Reverso del asiento de VENTA (135 H / 900 D + 440-0001 D) ──
+    // ── 2. Detectar flujo: nuevo (con 699) o viejo (con 135) ──
+    const arVouchers = ar
+      ? await this.voucherService.findVouchersBySourceDocumentId(
+          companyId,
+          `AR-${ar.id}`,
+          'finance',
+        )
+      : [];
+    const isNewFlow = arVouchers.length > 0;
+
+    const transitAccount =
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVENTORY_TRANSIT,
+      )) || '699';
     const salesAccount =
-      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_SALE)) || '900';
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVOICE_SALE,
+      )) || '900';
     const receivableAccount =
-      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) || '135';
+      (await this.accountMappingService.getAccountForMapping(
+        companyId,
+        MappingType.INVOICE_RECEIVABLE,
+      )) || '135';
+
+    const salesReversalCreditAccount = isNewFlow ? transitAccount : receivableAccount;
 
     const total = Number(invoice.total || 0);
     const taxAmount = Number(invoice.taxAmount || 0);
     const taxable = Math.round((total - taxAmount) * 100) / 100;
 
+    // ── 3. Reverso del asiento de VENTA ──
     if (total > 0) {
       try {
         const reversalLines: any[] = [
@@ -607,10 +712,10 @@ export class InvoicesService {
         }
 
         reversalLines.push({
-          accountCode: receivableAccount,
+          accountCode: salesReversalCreditAccount,
           debit: 0,
           credit: total,
-          description: `Reverso CxC ${invoice.invoiceNumber}`,
+          description: `Reverso ${isNewFlow ? 'transitoria' : 'CxC'} ${invoice.invoiceNumber}`,
           reference: invoice.customerId || invoice.customerName,
         });
 
@@ -634,7 +739,44 @@ export class InvoicesService {
       }
     }
 
-    // ── 3. Cancelación de la cuenta por cobrar ──
+    // ── 4. Reverso del voucher de la OBLIGACIÓN (solo flujo nuevo) ──
+    if (isNewFlow && ar && total > 0) {
+      try {
+        await this.voucherService.createVoucherFromModule(
+          companyId,
+          'finance',
+          `AR-${ar.id}-reversal`,
+          {
+            date: reversalDate,
+            description: `Reverso CxC ${ar.arNumber} - Anulación factura ${invoice.invoiceNumber}`,
+            type: 'nota_credito',
+            reference: invoice.invoiceNumber,
+            createdBy: options?.performedBy || 'Sistema',
+            lines: [
+              {
+                accountCode: transitAccount,
+                debit: total,
+                credit: 0,
+                description: `Reverso transitoria CxC ${ar.arNumber}`,
+              },
+              {
+                accountCode: receivableAccount,
+                debit: 0,
+                credit: total,
+                description: `Cancelación CxC ${ar.arNumber}`,
+                reference: invoice.customerId || invoice.customerName,
+              },
+            ],
+          },
+          manager,
+        );
+      } catch (error) {
+        this.logger.error(`Error contabilización reverso CxC ${ar.id}: ${error.message}`);
+        throw error;
+      }
+    }
+
+    // ── 5. Cancelación de la cuenta por cobrar ──
     if (ar && ar.status !== 'written_off') {
       ar.balanceAmount = 0;
       ar.status = 'written_off';

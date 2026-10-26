@@ -94,6 +94,10 @@ export class BankTransaction {
   @Column({ name: 'company_id', type: 'integer' })
   companyId: number;
 
+    /** Código del concepto de contrapartida elegido (FK lógica a counterpart_concepts.code). */
+@Column({ name: 'counterpart_concept_code', type: 'varchar', length: 10, nullable: true })
+counterpartConceptCode: string | null;
+
   @ManyToOne(() => Company)
   @JoinColumn({ name: 'company_id' })
   company: Company;

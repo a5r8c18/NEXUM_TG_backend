@@ -11,6 +11,7 @@ import { CashRegister } from '../entities/cash-register.entity';
 import { CashMovement } from '../entities/cash-movement.entity';
 import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { Customer } from '../entities/customer.entity';
+import { CounterpartConcept } from '../entities/counterpart-concept.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -110,6 +111,8 @@ export class FinanceService {
     private readonly customerRepo: Repository<Customer>,
     @InjectRepository(Invoice)
     private readonly invoiceRepo: Repository<Invoice>,
+    @InjectRepository(CounterpartConcept)
+    private readonly counterpartConceptRepo: Repository<CounterpartConcept>,
     private readonly voucherService: VoucherService,
     private readonly accountMappingService: AccountMappingService,
     private readonly sequenceService: DocumentSequenceService,
@@ -204,51 +207,39 @@ export class FinanceService {
     return qb.getMany();
   }
 
+  /**
+   * Detalle de una CxC con el comprobante contable de la OBLIGACIÓN.
+   *
+   * Solo se carga el asiento propio de la CxC (sourceModule='finance',
+   * sourceDocumentId=`AR-${id}`): 135 D / 699 H. Es el asiento que reconoce
+   * la obligación en Finanzas y cierra el puente con la transitoria que abrió
+   * Facturación.
+   *
+   * NO se cargan:
+   *   - El comprobante de VENTA de la factura (699 D / 900 H + IVA), porque
+   *     es un asiento de Facturación.
+   *   - El comprobante de COSTO de venta (810/814 D / 188/189 H), porque es
+   *     un evento de Inventario.
+   */
   async findOneReceivable(companyId: number, id: string) {
-  const ar = await this.arRepo.findOne({
-    where: { id, companyId },
-    relations: ['payments', 'invoice'],
-  });
-  if (!ar) throw new NotFoundException(`CxC ${id} no encontrada`);
+    const ar = await this.arRepo.findOne({
+      where: { id, companyId },
+      relations: ['payments', 'invoice'],
+    });
+    if (!ar) throw new NotFoundException(`CxC ${id} no encontrada`);
 
-  // La factura genera dos comprobantes:
-  //   - Venta:  sourceModule='invoices',  sourceDocumentId=invoiceId
-  //   - Costo:  sourceModule='inventory', sourceDocumentId=`${invoiceId}-cost`
-  //            (a partir de este refactor el costo se contabiliza desde Inventario)
-  //
-  // Buscamos también el costo en 'invoices' para no perder los comprobantes de
-  // facturas emitidas antes del refactor (datos históricos).
-  let vouchers: any[] = [];
-  if (ar.invoiceId) {
-    const [sales, costInventory, costInvoices] = await Promise.all([
-      this.voucherService.findVouchersBySourceDocumentId(
-        companyId,
-        ar.invoiceId,
-        'invoices',
-      ),
-      this.voucherService.findVouchersBySourceDocumentId(
-        companyId,
-        `${ar.invoiceId}-cost`,
-        'inventory',
-      ),
-      this.voucherService.findVouchersBySourceDocumentId(
-        companyId,
-        `${ar.invoiceId}-cost`,
-        'invoices',
-      ),
-    ]);
-    const seen = new Set<string>();
-    vouchers = [...sales, ...costInventory, ...costInvoices]
-      .filter((v) => {
-        if (seen.has(v.id)) return false;
-        seen.add(v.id);
-        return true;
-      })
-      .sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1));
+    // Solo el comprobante de la obligación.
+    const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
+      companyId,
+      `AR-${ar.id}`,
+      'finance',
+    );
+
+    return {
+      ...ar,
+      vouchers: vouchers.sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1)),
+    };
   }
-
-  return { ...ar, vouchers };
-}
 
   async createReceivable(companyId: number, data: any) {
     const arNumber = await this.sequenceService.nextFormatted(
@@ -630,6 +621,24 @@ export class FinanceService {
   async createBankTransaction(companyId: number, data: any, manager?: EntityManager) {
     const ba = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
 
+    // Validar el concepto de contrapartida
+    const conceptCode: string | undefined = data.counterpartConceptCode;
+    if (!conceptCode) {
+      throw new BadRequestException('Debe seleccionar un concepto de contrapartida');
+    }
+    const concept = await this.findOneCounterpartConcept(conceptCode);
+    if (!concept) {
+      throw new BadRequestException(
+        `El concepto de contrapartida "${conceptCode}" no existe o no está activo`,
+      );
+    }
+    const expectedDirection = data.transactionType === 'credit' ? 'income' : 'expense';
+    if (concept.direction !== 'both' && concept.direction !== expectedDirection) {
+      throw new BadRequestException(
+        `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
+      );
+    }
+
     // Número compuesto por las siglas del tipo de comprobante + consecutivo.
     const VOUCHER_PREFIXES: Record<string, string> = {
       'Carga Inicial': 'CI',
@@ -651,6 +660,8 @@ export class FinanceService {
     const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
     const tx = txRepo.create({
       ...pick(data, BANK_TRANSACTION_FIELDS),
+      counterpartConceptCode: concept.code,
+      counterpartyAccount: data.counterpartyAccount ?? null,
       transactionNumber,
       description: data.description || data.transactionCode || data.transactionType,
       transactionDate: data.transactionDate || new Date().toISOString().split('T')[0],
@@ -671,13 +682,39 @@ export class FinanceService {
       manager,
     );
 
+    // NOTA: la generación del asiento contable queda pendiente de decisión
+    // (ver pregunta #7 del diseño). Cuando se decida, se genera aquí con
+    // `concept` como contrapartida.
     return saved;
   }
 
-  /** Actualiza una transacción bancaria y reajusta el saldo de la cuenta. */
+  /**
+   * Actualiza una transacción bancaria y reajusta el saldo de la cuenta.
+   *
+   * El concepto y el nombre de la contrapartida SÍ pueden cambiarse; cuando se
+   * modifica el concepto se revalida contra el catálogo y contra el
+   * transactionType de la transacción, igual que en createBankTransaction.
+   */
   async updateBankTransaction(companyId: number, id: string, data: any) {
     const tx = await this.txRepo.findOneBy({ id, companyId });
     if (!tx) throw new NotFoundException('Transacción no encontrada');
+
+    // Si cambian el concepto, validar contra el catálogo y la dirección.
+    if (data.counterpartConceptCode && data.counterpartConceptCode !== tx.counterpartConceptCode) {
+      const concept = await this.findOneCounterpartConcept(data.counterpartConceptCode);
+      if (!concept) {
+        throw new BadRequestException(
+          `El concepto de contrapartida "${data.counterpartConceptCode}" no existe o no está activo`,
+        );
+      }
+      const expectedDirection = tx.transactionType === 'credit' ? 'income' : 'expense';
+      if (concept.direction !== 'both' && concept.direction !== expectedDirection) {
+        throw new BadRequestException(
+          `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
+        );
+      }
+      tx.counterpartConceptCode = concept.code;
+    }
 
     const oldDelta = tx.transactionType === 'credit' ? Number(tx.amount) : -Number(tx.amount);
     const newAmount = data.amount != null ? Number(data.amount) : Number(tx.amount);
@@ -691,7 +728,7 @@ export class FinanceService {
       tx,
       pick(data, [
         'transactionDate', 'transactionCode', 'referenceNumber',
-        'counterpartyAccount', 'notes', 'description',
+        'counterpartyAccount', 'counterpartyName', 'notes', 'description',
       ] as const),
     );
     tx.amount = newAmount;
@@ -762,6 +799,8 @@ export class FinanceService {
       description: description || `Reverso de ${original.transactionNumber}`,
       referenceNumber: `REV-${original.referenceNumber || original.transactionNumber}`,
       category: original.category,
+      counterpartConceptCode: original.counterpartConceptCode,
+      counterpartyName: original.counterpartyName,
       parentTransactionId: original.id,
     });
     const saved = await txRepo.save(reversal);
@@ -1613,5 +1652,28 @@ export class FinanceService {
     const rec = await this.getReconciliation(companyId, id);
     rec.status = rec.difference > 0.01 ? 'corrected' : 'reconciled';
     return this.reconciliationRepo.save(rec);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── CONCEPTOS DE CONTRAPARTIDA ──
+  // ══════════════════════════════════════════════════════════
+
+  async findCounterpartConcepts(
+    direction?: 'income' | 'expense',
+  ): Promise<CounterpartConcept[]> {
+    const qb = this.counterpartConceptRepo
+      .createQueryBuilder('cc')
+      .where('cc.is_active = :active', { active: true })
+      .orderBy('cc.sort_order', 'ASC')
+      .addOrderBy('cc.code', 'ASC');
+
+    if (direction) {
+      qb.andWhere('cc.direction IN (:...dirs)', { dirs: [direction, 'both'] });
+    }
+    return qb.getMany();
+  }
+
+  async findOneCounterpartConcept(code: string): Promise<CounterpartConcept | null> {
+    return this.counterpartConceptRepo.findOneBy({ code, isActive: true });
   }
 }

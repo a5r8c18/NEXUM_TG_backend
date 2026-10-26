@@ -121,6 +121,13 @@ export class FinanceController {
     return this.financeService.findOneBankAccount(getCompanyId(req), id);
   }
 
+  @Get('counterpart-concepts')
+findCounterpartConcepts(
+  @Query('direction') direction?: 'income' | 'expense',
+) {
+  return this.financeService.findCounterpartConcepts(direction);
+}
+
   @Post('banks')
   createBank(@Req() req: Request, @Body() body: any) {
     return this.financeService.createBankAccount(getCompanyId(req), body);

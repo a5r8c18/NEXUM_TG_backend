@@ -201,6 +201,38 @@ export interface AccountingEntry {
   description: string;
 }
 
+/**
+ * Devuelve la cuenta contable de INVENTARIO según la categoría.
+ * Nomenclador cubano 2016:
+ *   183 = Materias Primas y Materiales (Insumo)
+ *   189 = Mercancías para la Venta (Mercancía)
+ *   188 = Producción Terminada (Producción)
+ */
+export function getInventoryAccountByCategory(category: InventoryCategory): string {
+  switch (category) {
+    case 'insumo':     return '183';
+    case 'mercancia':  return '189';
+    case 'produccion': return '188';
+  }
+}
+
+/**
+ * Devuelve la cuenta contable de COSTO DE VENTAS según la categoría del
+ * inventario vendido. Nomenclador cubano 2016:
+ *   810 = Costo de Ventas de la Producción   → producción terminada (188)
+ *   814 = Costo de Ventas de Mercancías      → mercancía para la venta (189)
+ *   Insumo (183): no tiene cuenta propia de costo de venta porque no se
+ *   vende habitualmente; si se vende, se trata como producción (810) y el
+ *   contador puede sobreescribirlo por mapeo de empresa.
+ */
+export function getCostOfSalesAccountByCategory(category: InventoryCategory): string {
+  switch (category) {
+    case 'mercancia':  return '814';
+    case 'produccion': return '810';
+    case 'insumo':     return '810';
+  }
+}
+
 export function getAccountingEntryForMovement(code: string): AccountingEntry | null {
   const type = MOVEMENT_TYPE_MAP[code];
   if (!type) return null;
@@ -246,22 +278,25 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
     };
   }
 
-  // Devolución de ventas a trabajadores (106, 206, 306): Débito Inventario / Crédito Ventas
+  // Devolución de ventas a trabajadores (106, 206, 306): Débito Inventario / Crédito Costo Venta
+  // El reverso del costo se hace contra la cuenta de costo de venta que se usó
+  // al emitir la factura, no contra ventas: así el gasto y su reverso quedan en
+  // la misma cuenta y no inflan el resultado del período.
   if (['106', '206', '306'].includes(code)) {
     const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
       debitAccountCode: inventoryAccount,
-      creditAccountCode: '900',  // Ventas (reverso)
+      creditAccountCode: getCostOfSalesAccountByCategory(type.category),
       description: type.description,
     };
   }
 
-  // Devolución de ventas a entidades (107, 207, 307): Débito Inventario / Crédito Ventas
+  // Devolución de ventas a entidades (107, 207, 307): Débito Inventario / Crédito Costo Venta
   if (['107', '207', '307'].includes(code)) {
     const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
       debitAccountCode: inventoryAccount,
-      creditAccountCode: '900',  // Ventas (reverso)
+      creditAccountCode: getCostOfSalesAccountByCategory(type.category),
       description: type.description,
     };
   }
@@ -315,22 +350,23 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
   }
 
   // ── SALIDAS ──
-  // Ventas a clientes (2100, 3100): Débito Costo de Ventas / Crédito Inventario
+  // Ventas a clientes (2100, 3100):
+  //   DEBE Costo de Ventas de la categoría (810 prod, 814 mercancía)
+  //   HABER Inventario de la categoría (188 prod, 189 mercancía)
   if (['2100', '3100'].includes(code)) {
-    const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
-      debitAccountCode: '810',  // Costo de Ventas de Mercancías
-      creditAccountCode: inventoryAccount,
+      debitAccountCode: getCostOfSalesAccountByCategory(type.category),
+      creditAccountCode: getInventoryAccountByCategory(type.category),
       description: type.description,
     };
   }
 
-  // Venta a trabajadores (1101, 2101, 3101): Débito Costo Venta / Crédito Inventario
+  // Venta a trabajadores (1101, 2101, 3101): igual que ventas a clientes,
+  //   DEBE Costo de Ventas de la categoría / HABER Inventario de la categoría
   if (['1101', '2101', '3101'].includes(code)) {
-    const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
-      debitAccountCode: '810',  // Costo de Ventas
-      creditAccountCode: inventoryAccount,
+      debitAccountCode: getCostOfSalesAccountByCategory(type.category),
+      creditAccountCode: getInventoryAccountByCategory(type.category),
       description: type.description,
     };
   }
@@ -355,7 +391,7 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
   if (['1104', '2104', '3104'].includes(code)) {
     const inventoryAccount = getInventoryAccountByCategory(type.category);
     return {
-      debitAccountCode: '332',  // Faltantes de Bienes en Investigación
+      debitAccountCode: '332',
       creditAccountCode: inventoryAccount,
       description: type.description,
     };
@@ -393,7 +429,7 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
   // Salida prod terminados (2108, 2109): Débito Costo Ventas / Crédito Prod Terminada
   if (['2108', '2109'].includes(code)) {
     return {
-      debitAccountCode: '810',  // Costo de Ventas
+      debitAccountCode: getCostOfSalesAccountByCategory(type.category),
       creditAccountCode: '188',  // Producción Terminada
       description: type.description,
     };
@@ -413,8 +449,8 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
   // Ajuste disminución (3109): Débito Producción en Proceso / Crédito Inventario
   if (code === '3109') {
     return {
-      debitAccountCode: '700',  // Producción en Proceso
-      creditAccountCode: '188',  // Producción Terminada
+      debitAccountCode: '700',
+      creditAccountCode: '188',
       description: type.description,
     };
   }
@@ -429,51 +465,22 @@ export function getAccountingEntryForMovement(code: string): AccountingEntry | n
  *   - Entrada al almacén destino (código de entrada)
  */
 const TRANSFER_EXIT_TO_ENTRY: Record<string, string> = {
-  '1102': '103',   // Insumo: Transferencia enviada → Transferencia recibida
-  '2102': '203',   // Mercancía: Transferencia enviada → Transferencia recibida
-  '3102': '308',   // Producción: Transferencia enviada → Entrada de centro de costo (no hay código de transferencia recibida para producción)
+  '1102': '103',
+  '2102': '203',
+  '3102': '308',
 };
 
-/**
- * Dado un código de salida de transferencia, retorna el código de entrada correspondiente.
- */
 export function getTransferEntryCode(exitCode: string): string | null {
   return TRANSFER_EXIT_TO_ENTRY[exitCode] || null;
 }
 
-/**
- * Verifica si un código corresponde a una transferencia enviada.
- */
 export function isTransferExitCode(code: string): boolean {
   return ['1102', '2102', '3102'].includes(code);
 }
 
-/** Códigos de salida de transferencia (pertenecen al almacén origen). */
 export const TRANSFER_EXIT_CODES = Object.keys(TRANSFER_EXIT_TO_ENTRY);
-
-/** Códigos de entrada de transferencia (pertenecen al almacén destino). */
 export const TRANSFER_ENTRY_CODES = Object.values(TRANSFER_EXIT_TO_ENTRY);
 
-/**
- * Verifica si un código corresponde a una transferencia recibida.
- * Los dos movimientos de una transferencia comparten almacén origen y destino,
- * por lo que el código es lo único que indica a qué almacén pertenece cada uno.
- */
 export function isTransferEntryCode(code: string): boolean {
   return TRANSFER_ENTRY_CODES.includes(code);
-}
-
-/**
- * Devuelve la cuenta contable de inventario según la categoría.
- * Nomenclador cubano 2016:
- *   183 = Materias Primas y Materiales (Insumo)
- *   189 = Mercancías para la Venta (Mercancía)
- *   188 = Producción Terminada (Producción)
- */
-export function getInventoryAccountByCategory(category: InventoryCategory): string {
-  switch (category) {
-    case 'insumo':     return '183';
-    case 'mercancia':  return '189';
-    case 'produccion': return '188';
-  }
 }

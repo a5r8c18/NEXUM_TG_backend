@@ -14,11 +14,13 @@ import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { Invoice } from '../entities/invoice.entity';
 import { Customer } from '../entities/customer.entity';
 import { AccountingModule } from '../accounting/accounting.module';
+import { CounterpartConcept } from '../entities/counterpart-concept.entity';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       AccountReceivable,
+      CounterpartConcept,
       AccountPayable,
       BankAccount,
       BankTransaction,

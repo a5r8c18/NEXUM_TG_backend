@@ -56,45 +56,18 @@ export class InvoicesController {
     return this.invoicesService.getStatistics(companyId);
   }
 
+  /**
+   * Detalle de la factura con sus comprobantes contables.
+   *
+   * El PDF se genera en el cliente (HTML + window.print), así que este
+   * endpoint solo devuelve datos. Los comprobantes incluidos son:
+   *   - Venta: 699 D / 900 H + 440-0001 H  (sourceModule='invoices')
+   *   - Costo: 810/814 D / 188/189 H        (sourceModule='inventory')
+   */
   @Get(':id')
   findOne(@Req() req: Request, @Param('id') id: string) {
     const companyId = getCompanyId(req);
-    return this.invoicesService.findOne(companyId, id);
-  }
-
-  @Get(':id/pdf')
-  downloadPdf(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
-    const companyId = getCompanyId(req);
-    const invoice = this.invoicesService.findOne(companyId, id);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=factura-${id}.pdf`,
-    );
-    res.send(Buffer.from(`PDF placeholder for invoice ${id}`));
-  }
-
-  @Get(':id/excel')
-  downloadExcel(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
-    const companyId = getCompanyId(req);
-    const invoice = this.invoicesService.findOne(companyId, id);
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=factura-${id}.xlsx`,
-    );
-    res.send(Buffer.from(`Excel placeholder for invoice ${id}`));
+    return this.invoicesService.findOneWithVouchers(companyId, id);
   }
 
   @Post()

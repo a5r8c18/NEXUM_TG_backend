@@ -40,6 +40,7 @@ import { BudgetModule } from './budget/budget.module';
 import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
 
 import { Company } from './entities/company.entity';
+import { CounterpartConcept } from './entities/counterpart-concept.entity';
 import { User } from './entities/user.entity';
 import { Warehouse } from './entities/warehouse.entity';
 import { Inventory } from './entities/inventory.entity';
@@ -158,6 +159,7 @@ import { DocumentSequence } from './entities/document-sequence.entity';
           CostCenter,
           FiscalYear,
           AccountingPeriod,
+          CounterpartConcept,
           Department,
           JobPosition,
           Employee,

@@ -25,6 +25,7 @@ import {
   TRANSFER_EXIT_CODES,
   TRANSFER_ENTRY_CODES,
   getInventoryAccountByCategory,
+  getCostOfSalesAccountByCategory,
   isReturnCode,
   isPurchaseReturnCode,
   isEntitySalesReturnCode,
@@ -48,6 +49,35 @@ const SURPLUS_CODES = ['105', '205', '305'];
 export class MovementsService {
   private readonly logger = new Logger(MovementsService.name);
 
+  /**
+   * Códigos de movimiento de salida por venta según el catálogo cubano.
+   * Facturación NO necesita estos códigos: el subsistema de inventario es el
+   * único responsable de mapear categoría + tipo de venta → código oficial.
+   */
+  private static readonly SALE_MOVEMENT_CODES: Record<
+    InventoryCategory,
+    { client: string; worker: string; returnClient: string; returnWorker: string }
+  > = {
+    insumo: {
+      client: '1101',
+      worker: '1101',
+      returnClient: '107',
+      returnWorker: '106',
+    },
+    mercancia: {
+      client: '2100',
+      worker: '2101',
+      returnClient: '207',
+      returnWorker: '206',
+    },
+    produccion: {
+      client: '3100',
+      worker: '3101',
+      returnClient: '307',
+      returnWorker: '306',
+    },
+  };
+
   constructor(
     private readonly inventoryWarehouseService: InventoryWarehouseService,
     private readonly warehousesService: WarehousesService,
@@ -70,7 +100,10 @@ export class MovementsService {
     private readonly accountMappingService: AccountMappingService,
   ) {}
 
-  // ── Post-movimiento: verificar stock limits + notificar + auditar ──
+  // ══════════════════════════════════════════════════════════
+  // ── HOOK POST-MOVIMIENTO (stock limits + audit) ──
+  // ══════════════════════════════════════════════════════════
+
   private async postMovementHook(
     companyId: number,
     movementId: string,
@@ -134,6 +167,10 @@ export class MovementsService {
       this.logger.error(`Error en post-movement hook: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+
+  // ══════════════════════════════════════════════════════════
+  // ── LISTADO / HISTORIAL ──
+  // ══════════════════════════════════════════════════════════
 
   async findAll(
     companyId: number,
@@ -491,6 +528,10 @@ export class MovementsService {
     return this.enrichMovementFromMap(m, inventoryMap);
   }
 
+  // ══════════════════════════════════════════════════════════
+  // ── REPORTES DE DEVOLUCIÓN ──
+  // ══════════════════════════════════════════════════════════
+
   private async createReturnReport(
     manager: EntityManager,
     companyId: number,
@@ -697,51 +738,22 @@ export class MovementsService {
   }
 
   // ══════════════════════════════════════════════════════════
-  // ── VENTA / DEVOLUCIÓN DE VENTA (llamadas desde Facturación) ──
+  // ── VENTA / DEVOLUCIÓN DE VENTA (invocados por Facturación) ──
   // ══════════════════════════════════════════════════════════
 
   /**
-   * Códigos de movimiento de salida por venta según el catálogo cubano.
-   * Facturación NO los necesita: el subsistema de inventario es el único
-   * responsable de mapear categoría + tipo de venta → código oficial.
-   */
-  private static readonly SALE_MOVEMENT_CODES: Record<
-    InventoryCategory,
-    { client: string; worker: string; returnClient: string; returnWorker: string }
-  > = {
-    insumo: {
-      client: '1101',
-      worker: '1101',
-      returnClient: '107',
-      returnWorker: '106',
-    },
-    mercancia: {
-      client: '2100',
-      worker: '2101',
-      returnClient: '207',
-      returnWorker: '206',
-    },
-    produccion: {
-      client: '3100',
-      worker: '3101',
-      returnClient: '307',
-      returnWorker: '306',
-    },
-  };
-
-  /**
-   * Registra la SALIDA de inventario por venta y contabiliza el COSTO DE
-   * VENTAS (810/814 D / Inventario H).
+   * Registra la SALIDA de inventario por venta y contabiliza el COSTO DE VENTAS.
    *
-   * Invocado por InvoicesService dentro de su transacción. Hace TODO lo que
-   * es competencia de inventario:
-   *   - captura el WAC por producto ANTES de la salida
-   *   - descuenta stock
-   *   - crea el Movement (uno) y sus MovementItems (uno por producto)
-   *   - genera el voucher de costo con sourceModule='inventory'
-   *   - enlaza movement.voucherId = voucher.id
+   * Contabilización agrupada por CATEGORÍA (no por producto):
+   *   - Producción terminada (188) → 810 Costo de Ventas de la Producción
+   *   - Mercancía para la venta (189) → 814 Costo de Ventas de Mercancías
+   *   - Insumo (183) → 810 (fallback)
    *
-   * Facturación se queda solo con lo comercial: la venta (135/900).
+   * Movimientos: UNO por cada categoría presente en la factura. Si una factura
+   * mezcla mercancía y producción, se generan 2 Movement con sus códigos
+   * respectivos (2100/3100 o 2101/3101) y sus propios MovementItems. El
+   * comprobante de costo sigue siendo UNO solo (agrupado por categoría) y se
+   * enlaza a todos los movements.
    */
   async registerSaleExit(
     companyId: number,
@@ -755,8 +767,10 @@ export class MovementsService {
     },
     manager: EntityManager,
   ): Promise<{
-    movement: Movement | null;
+    movements: Movement[];
+    primaryMovement: Movement | null;
     totalCost: number;
+    costByCategory: Map<InventoryCategory, number>;
     costLines: any[];
     movementItems: Partial<MovementItem>[];
     itemCosts: Map<string, { unitCost: number; totalCost: number; quantity: number }>;
@@ -764,22 +778,16 @@ export class MovementsService {
     warehouseName: string | null;
   }> {
     if (!data.items?.length) {
-      throw new BadRequestException(
-        'registerSaleExit requiere al menos un producto',
-      );
+      throw new BadRequestException('registerSaleExit requiere al menos un producto');
     }
 
     const userName = data.userName || 'System';
     const warehouseFilter = data.warehouseId;
 
-    // 1. Inventario en batch
     const productCodes = [...new Set(data.items.map((i) => i.productCode))];
-    const inventoryMap = await this.inventoryWarehouseService.findByCodes(
-      companyId,
-      productCodes,
-    );
+    const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
-    // 2. Agregar cantidades por producto (una línea por producto en el voucher)
+    // Agregar cantidades por producto
     const aggregated = new Map<string, number>();
     for (const item of data.items) {
       aggregated.set(
@@ -788,24 +796,27 @@ export class MovementsService {
       );
     }
 
-    const costOfSalesAccount =
-      (await this.accountMappingService.getAccountForMapping(
-        companyId,
-        MappingType.INVENTORY_EXIT,
-      )) || '814';
-
-    const itemCosts = new Map<
-      string,
-      { unitCost: number; totalCost: number; quantity: number }
-    >();
-    const movementItems: Partial<MovementItem>[] = [];
-    const costLines: any[] = [];
+    const itemCosts = new Map<string, { unitCost: number; totalCost: number; quantity: number }>();
+    const costByCategory = new Map<InventoryCategory, number>();
+    const allMovementItems: Partial<MovementItem>[] = [];
     let totalCost = 0;
     let resolvedWarehouseId: string | null = null;
     let resolvedWarehouseName: string | null = null;
-    let categoryForMovement: InventoryCategory = 'mercancia';
 
-    // 3. Procesar cada producto
+    // Agrupar items por categoría (para crear 1 movement por categoría)
+    const itemsByCategory = new Map<
+      InventoryCategory,
+      Array<{
+        productCode: string;
+        productName: string;
+        productUnit: string;
+        productDescription: string | null;
+        quantity: number;
+        unitCost: number;
+        lineTotal: number;
+      }>
+    >();
+
     for (const [productCode, totalQuantity] of aggregated) {
       const inventories = inventoryMap.get(productCode) || [];
       const inventory = warehouseFilter
@@ -813,28 +824,24 @@ export class MovementsService {
         : inventories[0];
 
       if (!inventory) {
-        // Productos sin stock (servicios o no inventariables): se omiten del
-        // movimiento y del costo, igual que en el diseño anterior.
         this.logger.warn(
           `Producto ${productCode} sin inventario${warehouseFilter ? ` en ${warehouseFilter}` : ''}; se omite del movimiento y del costo`,
         );
         continue;
       }
 
-      // Categoría: del producto maestro; fallback 'mercancia'
       const product = await this.productsService.findByCode(companyId, productCode);
-      const category = (product?.category as InventoryCategory) || 'mercancia';
+      const category: InventoryCategory = (product?.category as InventoryCategory) || 'mercancia';
+
       if (!resolvedWarehouseId) {
-        categoryForMovement = category;
         resolvedWarehouseId = inventory.warehouseId;
         resolvedWarehouseName = inventory.warehouseName;
       }
 
-      // WAC capturado ANTES de la salida
       const unitCost = Number(inventory.unitPrice) || 0;
       const lineTotal = roundDecimal(unitCost * totalQuantity);
 
-      // Descontar stock
+      // Descontar stock (una vez por producto)
       await this.inventoryWarehouseService.updateStock(
         companyId,
         productCode,
@@ -848,7 +855,12 @@ export class MovementsService {
       itemCosts.set(productCode, { unitCost, totalCost: lineTotal, quantity: totalQuantity });
       totalCost = roundDecimal(totalCost + lineTotal);
 
-      movementItems.push({
+      costByCategory.set(
+        category,
+        roundDecimal((costByCategory.get(category) || 0) + lineTotal),
+      );
+
+      allMovementItems.push({
         productCode,
         productName: inventory.productName,
         quantity: totalQuantity,
@@ -858,26 +870,24 @@ export class MovementsService {
         productDescription: inventory.productDescription || null,
       });
 
-      // Voucher de costo: 2 líneas por producto
-      costLines.push({
-        accountCode: costOfSalesAccount,
-        debit: lineTotal,
-        credit: 0,
-        description: `Costo venta ${productCode} (CPP: ${unitCost})`,
-      });
-      costLines.push({
-        accountCode: getInventoryAccountByCategory(category),
-        debit: 0,
-        credit: lineTotal,
-        description: `Salida inventario ${productCode} (CPP: ${unitCost})`,
+      if (!itemsByCategory.has(category)) itemsByCategory.set(category, []);
+      itemsByCategory.get(category)!.push({
+        productCode,
+        productName: inventory.productName,
+        productUnit: inventory.productUnit || 'und',
+        productDescription: inventory.productDescription || null,
+        quantity: totalQuantity,
+        unitCost,
+        lineTotal,
       });
     }
 
-    // Sin productos inventariables → no hay movimiento ni coste que registrar
-    if (!movementItems.length) {
+    if (!allMovementItems.length) {
       return {
-        movement: null,
+        movements: [],
+        primaryMovement: null,
         totalCost: 0,
+        costByCategory: new Map(),
         costLines: [],
         movementItems: [],
         itemCosts,
@@ -886,44 +896,73 @@ export class MovementsService {
       };
     }
 
-    // 4. Crear el Movement (uno solo con todos los items)
-    const saleCodes = MovementsService.SALE_MOVEMENT_CODES[categoryForMovement];
-    const movementCode =
-      data.saleType === 'worker' ? saleCodes.worker : saleCodes.client;
-    const movType = getMovementType(movementCode);
+    // Crear UN movement por categoría presente
+    const movements: Movement[] = [];
 
-    const movement = await manager.getRepository(Movement).save(
-      this.movementRepo.create({
-        companyId,
-        movementType: 'exit',
-        movementCode,
-        movementDescription: movType?.description || 'Ventas a Clientes',
-        category: categoryForMovement,
-        productCode: aggregated.size === 1 ? [...aggregated.keys()][0] : null,
-        quantity: [...aggregated.values()].reduce((s, q) => s + q, 0),
-        unitPrice:
-          aggregated.size === 1
-            ? itemCosts.get([...aggregated.keys()][0])!.unitCost
-            : 0,
-        totalAmount: totalCost,
-        itemCount: movementItems.length,
-        reason: `Factura ${data.invoiceNumber}`,
-        sourceWarehouse: resolvedWarehouseId!,
-        userName,
-      }),
-    );
+    for (const [category, categoryItems] of itemsByCategory) {
+      const saleCodes = MovementsService.SALE_MOVEMENT_CODES[category];
+      const movementCode = data.saleType === 'worker' ? saleCodes.worker : saleCodes.client;
+      const movType = getMovementType(movementCode);
 
-    // 5. Guardar MovementItems
-    if (movementItems.length) {
-      const itemEntities = movementItems.map((mi) => {
+      const categoryQuantity = categoryItems.reduce((s, i) => s + i.quantity, 0);
+      const categoryTotal = categoryItems.reduce((s, i) => s + i.lineTotal, 0);
+      const isSingle = categoryItems.length === 1;
+
+      const movement = await manager.getRepository(Movement).save(
+        this.movementRepo.create({
+          companyId,
+          movementType: 'exit',
+          movementCode,
+          movementDescription: movType?.description || 'Ventas a Clientes',
+          category,
+          productCode: isSingle ? categoryItems[0].productCode : null,
+          quantity: categoryQuantity,
+          unitPrice: isSingle ? categoryItems[0].unitCost : 0,
+          totalAmount: roundDecimal(categoryTotal),
+          itemCount: categoryItems.length,
+          reason: `Factura ${data.invoiceNumber}`,
+          sourceWarehouse: resolvedWarehouseId!,
+          userName,
+        }),
+      );
+
+      const itemEntities = categoryItems.map((ci) => {
         const entity = new MovementItem();
-        Object.assign(entity, { ...mi, movementId: movement.id });
+        Object.assign(entity, {
+          movementId: movement.id,
+          productCode: ci.productCode,
+          productName: ci.productName,
+          quantity: ci.quantity,
+          unitPrice: ci.unitCost,
+          totalAmount: ci.lineTotal,
+          productUnit: ci.productUnit,
+          productDescription: ci.productDescription,
+        });
         return entity;
       });
       await manager.getRepository(MovementItem).save(itemEntities);
+
+      movements.push(movement);
     }
 
-    // 6. Voucher de costo (sourceModule='inventory')
+    // Voucher de costo: UNO solo, agrupado por categoría (2 líneas por categoría)
+    const costLines: any[] = [];
+    for (const [category, categoryTotal] of costByCategory) {
+      if (categoryTotal <= 0) continue;
+      costLines.push({
+        accountCode: getCostOfSalesAccountByCategory(category),
+        debit: categoryTotal,
+        credit: 0,
+        description: `Costo de ventas ${category} - Factura ${data.invoiceNumber}`,
+      });
+      costLines.push({
+        accountCode: getInventoryAccountByCategory(category),
+        debit: 0,
+        credit: categoryTotal,
+        description: `Salida inventario ${category} - Factura ${data.invoiceNumber}`,
+      });
+    }
+
     if (costLines.length && totalCost > 0) {
       const costVoucher = await this.voucherService.createVoucherFromModule(
         companyId,
@@ -940,20 +979,25 @@ export class MovementsService {
         manager,
       );
 
-      movement.voucherId = costVoucher.id;
-      await manager.getRepository(Movement).update(movement.id, {
-        voucherId: costVoucher.id,
-      });
+      for (const movement of movements) {
+        movement.voucherId = costVoucher.id;
+        await manager.getRepository(Movement).update(movement.id, {
+          voucherId: costVoucher.id,
+        });
+      }
+
       this.logger.log(
-        `Comprobante de costo ${costVoucher.voucherNumber} generado para la factura ${data.invoiceNumber} y enlazado al movimiento ${movement.id}`,
+        `Comprobante de costo ${costVoucher.voucherNumber} (${costLines.length} líneas agrupadas) enlazado a ${movements.length} movement(s) de la factura ${data.invoiceNumber}`,
       );
     }
 
     return {
-      movement,
+      movements,
+      primaryMovement: movements[0] || null,
       totalCost,
+      costByCategory,
       costLines,
-      movementItems,
+      movementItems: allMovementItems,
       itemCosts,
       warehouseId: resolvedWarehouseId,
       warehouseName: resolvedWarehouseName,
@@ -962,9 +1006,11 @@ export class MovementsService {
 
   /**
    * Registra la DEVOLUCIÓN al inventario por anulación de factura y
-   * contabiliza el REVERSO del costo de ventas (Inventario D / 810/814 H).
+   * contabiliza el REVERSO del costo de ventas.
    *
-   * Invocado por InvoicesService dentro de su transacción de anulación.
+   * Movimientos: UNO por cada categoría presente en los movements originales.
+   * El voucher de reverso es UNO solo (agrupado por categoría) y se enlaza a
+   * todos los movements de devolución.
    */
   async registerSaleReturn(
     companyId: number,
@@ -976,8 +1022,10 @@ export class MovementsService {
     },
     manager: EntityManager,
   ): Promise<{
-    movement: Movement;
+    movements: Movement[];
+    primaryMovement: Movement | null;
     totalCost: number;
+    costByCategory: Map<InventoryCategory, number>;
     costLines: any[];
   }> {
     if (!data.originalMovementIds?.length) {
@@ -1003,30 +1051,40 @@ export class MovementsService {
       );
     }
 
-    const costOfSalesAccount =
-      (await this.accountMappingService.getAccountForMapping(
-        companyId,
-        MappingType.INVENTORY_EXIT,
-      )) || '810';
-
     const itemCosts = new Map<
       string,
-      { unitCost: number; totalCost: number; quantity: number; productName: string; productUnit: string }
+      { unitCost: number; totalCost: number; quantity: number }
     >();
-    const movementItems: Partial<MovementItem>[] = [];
-    const costLines: any[] = [];
+    const costByCategory = new Map<InventoryCategory, number>();
     let totalCost = 0;
     let resolvedWarehouseId: string | null = null;
-    let categoryForMovement: InventoryCategory = 'mercancia';
-    let originalCode = '2100';
+
+    // Agrupar items por categoría (1 movement de devolución por categoría)
+    const itemsByCategory = new Map<
+      InventoryCategory,
+      Array<{
+        productCode: string;
+        productName: string;
+        productUnit: string;
+        quantity: number;
+        unitCost: number;
+        lineTotal: number;
+      }>
+    >();
+
+    const originalCodesByCategory = new Map<InventoryCategory, string>();
 
     for (const movement of originalMovements) {
-      if (!originalCode || originalCode === '2100') {
-        originalCode = movement.movementCode || originalCode;
+      const movementCategory = (movement.category as InventoryCategory) || 'mercancia';
+      if (!originalCodesByCategory.has(movementCategory)) {
+        originalCodesByCategory.set(movementCategory, movement.movementCode || '2100');
       }
-      const lines = movement.items?.length
-        ? movement.items
-        : ([movement] as any[]);
+
+      if (!resolvedWarehouseId) {
+        resolvedWarehouseId = movement.sourceWarehouse;
+      }
+
+      const lines = movement.items?.length ? movement.items : ([movement] as any[]);
 
       for (const line of lines) {
         const productCode = line.productCode;
@@ -1035,17 +1093,15 @@ export class MovementsService {
         const quantity = Number(line.quantity) || 0;
         const unitCost = Number(line.unitPrice) || 0;
         const lineTotal = roundDecimal(unitCost * quantity);
-        const category =
+        const lineCategory: InventoryCategory =
           (line.category as InventoryCategory) ||
           (movement.category as InventoryCategory) ||
           'mercancia';
 
-        if (!resolvedWarehouseId) {
-          resolvedWarehouseId = movement.sourceWarehouse;
-          categoryForMovement = category;
+        if (!originalCodesByCategory.has(lineCategory)) {
+          originalCodesByCategory.set(lineCategory, movement.movementCode || '2100');
         }
 
-        // Reingreso al inventario al mismo costo de salida
         if (movement.sourceWarehouse) {
           await this.inventoryWarehouseService.updateStock(
             companyId,
@@ -1058,82 +1114,98 @@ export class MovementsService {
           );
         }
 
-        const existing = itemCosts.get(productCode);
         itemCosts.set(productCode, {
           unitCost,
-          totalCost: (existing?.totalCost || 0) + lineTotal,
-          quantity: (existing?.quantity || 0) + quantity,
-          productName: line.productName || productCode,
-          productUnit: line.productUnit || 'und',
+          totalCost: roundDecimal((itemCosts.get(productCode)?.totalCost || 0) + lineTotal),
+          quantity: (itemCosts.get(productCode)?.quantity || 0) + quantity,
         });
         totalCost = roundDecimal(totalCost + lineTotal);
 
-        movementItems.push({
+        costByCategory.set(
+          lineCategory,
+          roundDecimal((costByCategory.get(lineCategory) || 0) + lineTotal),
+        );
+
+        if (!itemsByCategory.has(lineCategory)) itemsByCategory.set(lineCategory, []);
+        itemsByCategory.get(lineCategory)!.push({
           productCode,
           productName: line.productName || productCode,
-          quantity,
-          unitPrice: unitCost,
-          totalAmount: lineTotal,
           productUnit: line.productUnit || 'und',
-        });
-
-        // Reverso del costo de ventas: 2 líneas por producto
-        costLines.push({
-          accountCode: getInventoryAccountByCategory(category),
-          debit: lineTotal,
-          credit: 0,
-          description: `Reingreso inventario ${productCode} por anulación ${data.invoiceNumber}`,
-        });
-        costLines.push({
-          accountCode: costOfSalesAccount,
-          debit: 0,
-          credit: lineTotal,
-          description: `Reverso costo de ventas ${productCode} (CPP: ${unitCost})`,
+          quantity,
+          unitCost,
+          lineTotal,
         });
       }
     }
 
-    // Determinar código de devolución a partir del código original
-    const isWorkerSale = ['1101', '2101', '3101'].includes(originalCode);
-    const saleCodes = MovementsService.SALE_MOVEMENT_CODES[categoryForMovement];
-    const returnCode = isWorkerSale
-      ? saleCodes.returnWorker
-      : saleCodes.returnClient;
-    const returnType = getMovementType(returnCode);
+    // Crear UN movement de devolución por categoría
+    const returnMovements: Movement[] = [];
 
-    // Crear movimiento de devolución
-    const returnMovement = await manager.getRepository(Movement).save(
-      this.movementRepo.create({
-        companyId,
-        movementType: 'entry',
-        movementCode: returnCode,
-        movementDescription: returnType?.description || 'Devolución de ventas',
-        category: categoryForMovement,
-        productCode: itemCosts.size === 1 ? [...itemCosts.keys()][0] : null,
-        quantity: movementItems.reduce((s, mi) => s + Number(mi.quantity || 0), 0),
-        unitPrice:
-          itemCosts.size === 1
-            ? [...itemCosts.values()][0].unitCost
-            : 0,
-        totalAmount: totalCost,
-        itemCount: movementItems.length,
-        reason: `Anulación factura ${data.invoiceNumber}`,
-        destinationWarehouse: resolvedWarehouseId,
-        userName,
-      }),
-    );
+    for (const [category, categoryItems] of itemsByCategory) {
+      const originalCode = originalCodesByCategory.get(category) || '2100';
+      const isWorkerSale = ['1101', '2101', '3101'].includes(originalCode);
+      const saleCodes = MovementsService.SALE_MOVEMENT_CODES[category];
+      const returnCode = isWorkerSale ? saleCodes.returnWorker : saleCodes.returnClient;
+      const returnType = getMovementType(returnCode);
 
-    // Guardar MovementItems del reverso
-    if (movementItems.length) {
-      const itemEntities = movementItems.map((mi) => {
+      const categoryQuantity = categoryItems.reduce((s, i) => s + i.quantity, 0);
+      const categoryTotal = categoryItems.reduce((s, i) => s + i.lineTotal, 0);
+      const isSingle = categoryItems.length === 1;
+
+      const movement = await manager.getRepository(Movement).save(
+        this.movementRepo.create({
+          companyId,
+          movementType: 'entry',
+          movementCode: returnCode,
+          movementDescription: returnType?.description || 'Devolución de ventas',
+          category,
+          productCode: isSingle ? categoryItems[0].productCode : null,
+          quantity: categoryQuantity,
+          unitPrice: isSingle ? categoryItems[0].unitCost : 0,
+          totalAmount: roundDecimal(categoryTotal),
+          itemCount: categoryItems.length,
+          reason: `Anulación factura ${data.invoiceNumber}`,
+          destinationWarehouse: resolvedWarehouseId,
+          userName,
+        }),
+      );
+
+      const itemEntities = categoryItems.map((ci) => {
         const entity = new MovementItem();
-        Object.assign(entity, { ...mi, movementId: returnMovement.id });
+        Object.assign(entity, {
+          movementId: movement.id,
+          productCode: ci.productCode,
+          productName: ci.productName,
+          quantity: ci.quantity,
+          unitPrice: ci.unitCost,
+          totalAmount: ci.lineTotal,
+          productUnit: ci.productUnit,
+        });
         return entity;
       });
       await manager.getRepository(MovementItem).save(itemEntities);
+
+      returnMovements.push(movement);
     }
 
-    // Voucher de reverso de costo (sourceModule='inventory')
+    // Voucher de reverso: UNO solo, agrupado por categoría
+    const costLines: any[] = [];
+    for (const [category, categoryTotal] of costByCategory) {
+      if (categoryTotal <= 0) continue;
+      costLines.push({
+        accountCode: getInventoryAccountByCategory(category),
+        debit: categoryTotal,
+        credit: 0,
+        description: `Reingreso inventario ${category} por anulación ${data.invoiceNumber}`,
+      });
+      costLines.push({
+        accountCode: getCostOfSalesAccountByCategory(category),
+        debit: 0,
+        credit: categoryTotal,
+        description: `Reverso costo de ventas ${category} - Factura ${data.invoiceNumber}`,
+      });
+    }
+
     if (costLines.length && totalCost > 0) {
       const costVoucher = await this.voucherService.createVoucherFromModule(
         companyId,
@@ -1150,30 +1222,64 @@ export class MovementsService {
         manager,
       );
 
-      returnMovement.voucherId = costVoucher.id;
-      await manager.getRepository(Movement).update(returnMovement.id, {
-        voucherId: costVoucher.id,
-      });
+      for (const movement of returnMovements) {
+        movement.voucherId = costVoucher.id;
+        await manager.getRepository(Movement).update(movement.id, {
+          voucherId: costVoucher.id,
+        });
+      }
+
       this.logger.log(
-        `Comprobante de reverso de costo ${costVoucher.voucherNumber} generado para la anulación de ${data.invoiceNumber} y enlazado al movimiento ${returnMovement.id}`,
+        `Comprobante de reverso ${costVoucher.voucherNumber} enlazado a ${returnMovements.length} movement(s) de la anulación ${data.invoiceNumber}`,
       );
     }
 
     return {
-      movement: returnMovement,
+      movements: returnMovements,
+      primaryMovement: returnMovements[0] || null,
       totalCost,
+      costByCategory,
       costLines,
     };
   }
 
   // ══════════════════════════════════════════════════════════
-  // ── RESTO DE MÉTODOS (createDirectEntry, createExit, createTransfer, ...) ──
+  // ── ENTRADAS DIRECTAS ──
   // ══════════════════════════════════════════════════════════
-  // (Idénticos al original — no se modifican en este cambio.)
 
   async createDirectEntry(
     companyId: number,
-    data: any,
+    data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
+      label?: string;
+      entity?: string;
+      warehouseId: string;
+      items?: {
+        productCode: string;
+        productName: string;
+        productDescription?: string;
+        quantity: number;
+        unitPrice?: number;
+        unit?: string;
+        location?: string;
+        expenseElement?: string;
+        costCenterId?: string;
+        subelementId?: string;
+      }[];
+      debitAccountCode?: string;
+      creditAccountCode?: string;
+      costCenterId?: string;
+      subelementId?: string;
+      productCode?: string;
+      productName?: string;
+      productDescription?: string;
+      quantity?: number;
+      unitPrice?: number;
+      unit?: string;
+      location?: string;
+      expenseElement?: string;
+    },
     userName?: string,
   ) {
     let items = data.items || [];
@@ -1344,7 +1450,31 @@ export class MovementsService {
     return this.enrichMovement(companyId, result);
   }
 
-  async createExit(companyId: number, data: any, userName?: string) {
+  // ══════════════════════════════════════════════════════════
+  // ── SALIDAS MANUALES ──
+  // ══════════════════════════════════════════════════════════
+
+  async createExit(
+    companyId: number,
+    data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
+      reason?: string;
+      entity?: string;
+      warehouseId: string;
+      expenseElement?: string;
+      debitAccountCode?: string;
+      creditAccountCode?: string;
+      costCenterId?: string;
+      subelementId?: string;
+      employeeId?: string;
+      employeeName?: string;
+      items?: { productCode: string; quantity: number; expenseElement?: string; costCenterId?: string; subelementId?: string }[];
+      product_code?: string;
+      quantity?: number;
+    },
+    userName?: string,
+  ) {
     let items = data.items || [];
     if (!items.length && data.product_code && data.quantity) {
       items = [{
@@ -1386,7 +1516,7 @@ export class MovementsService {
     const isReturn = isReturnCode(data.movementCode);
     const isPurchaseReturn = isPurchaseReturnCode(data.movementCode);
 
-    const productCodes = items.map((i: any) => i.productCode);
+    const productCodes = items.map((i) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
     const result = await this.dataSource.transaction(async (manager) => {
@@ -1557,7 +1687,24 @@ export class MovementsService {
     return this.enrichMovement(companyId, result);
   }
 
-  async createTransfer(companyId: number, data: any, userName?: string) {
+  // ══════════════════════════════════════════════════════════
+  // ── TRANSFERENCIAS ──
+  // ══════════════════════════════════════════════════════════
+
+  async createTransfer(
+    companyId: number,
+    data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
+      sourceWarehouseId: string;
+      destinationWarehouseId: string;
+      reason?: string;
+      items?: { productCode: string; quantity: number }[];
+      productCode?: string;
+      quantity?: number;
+    },
+    userName?: string,
+  ) {
     let items = data.items || [];
     if (!items.length && data.productCode && data.quantity) {
       items = [{ productCode: data.productCode, quantity: data.quantity }];
@@ -1613,7 +1760,7 @@ export class MovementsService {
       }
     }
 
-    const productCodes = items.map((i: any) => i.productCode);
+    const productCodes = items.map((i) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
     let grandTotal = 0;
@@ -1666,7 +1813,7 @@ export class MovementsService {
           movementDescription: exitMovType.description,
           category,
           productCode: items.length === 1 ? items[0].productCode : null,
-          quantity: items.reduce((sum: number, i: any) => sum + i.quantity, 0),
+          quantity: items.reduce((sum: number, i) => sum + i.quantity, 0),
           unitPrice: items.length === 1 ? (exitItems[0].unitPrice || 0) : 0,
           totalAmount: grandTotal,
           itemCount: items.length,
@@ -1685,7 +1832,7 @@ export class MovementsService {
           movementDescription: entryMovType.description,
           category,
           productCode: items.length === 1 ? items[0].productCode : null,
-          quantity: items.reduce((sum: number, i: any) => sum + i.quantity, 0),
+          quantity: items.reduce((sum: number, i) => sum + i.quantity, 0),
           unitPrice: items.length === 1 ? (entryItems[0].unitPrice || 0) : 0,
           totalAmount: grandTotal,
           itemCount: items.length,
@@ -1759,7 +1906,29 @@ export class MovementsService {
     }
   }
 
-  async createReturn(companyId: number, data: any, userName?: string) {
+  // ══════════════════════════════════════════════════════════
+  // ── DEVOLUCIONES MANUALES ──
+  // ══════════════════════════════════════════════════════════
+
+  async createReturn(
+    companyId: number,
+    data: {
+      movementCode: string;
+      category?: 'insumo' | 'mercancia' | 'produccion';
+      reason: string;
+      warehouseId: string;
+      purchase_id?: string;
+      entity?: string;
+      debitAccountCode?: string;
+      creditAccountCode?: string;
+      costCenterId?: string;
+      subelementId?: string;
+      items?: { productCode: string; quantity: number; costCenterId?: string; subelementId?: string }[];
+      product_code?: string;
+      quantity?: number;
+    },
+    userName?: string,
+  ) {
     let items = data.items || [];
     if (!items.length && data.product_code && data.quantity) {
       items = [{ productCode: data.product_code, quantity: data.quantity, costCenterId: data.costCenterId, subelementId: data.subelementId }];
@@ -1781,7 +1950,7 @@ export class MovementsService {
     }
 
     const category = data.category || movType.category;
-    const productCodes = items.map((i: any) => i.productCode);
+    const productCodes = items.map((i) => i.productCode);
     const inventoryMap = await this.inventoryWarehouseService.findByCodes(companyId, productCodes);
 
     const result = await this.dataSource.transaction(async (manager) => {
@@ -1838,7 +2007,7 @@ export class MovementsService {
           movementDescription: movType.description,
           category,
           productCode: items.length === 1 ? items[0].productCode : null,
-          quantity: items.reduce((sum: number, i: any) => sum + i.quantity, 0),
+          quantity: items.reduce((sum: number, i) => sum + i.quantity, 0),
           unitPrice: items.length === 1 ? (movementItems[0].unitPrice || 0) : 0,
           totalAmount: grandTotal,
           itemCount: items.length,
@@ -1924,6 +2093,10 @@ export class MovementsService {
     return movements.map(m => this.enrichMovementFromMap(m, inventoryMap));
   }
 
+  // ══════════════════════════════════════════════════════════
+  // ── FALTANTES / SOBRANTES EN INVESTIGACIÓN ──
+  // ══════════════════════════════════════════════════════════
+
   async findOpenInvestigations(companyId: number) {
     const movements = await this.movementRepo
       .createQueryBuilder('m')
@@ -1946,7 +2119,17 @@ export class MovementsService {
     };
   }
 
-  async resolveShortage(companyId: number, movementId: string, data: any, userName?: string) {
+  async resolveShortage(
+    companyId: number,
+    movementId: string,
+    data: {
+      resolution: 'loss' | 'responsible';
+      responsibleName?: string;
+      resolutionDate?: string;
+      notes?: string;
+    },
+    userName?: string,
+  ) {
     const movement = await this.movementRepo.findOne({
       where: { id: movementId, companyId },
     });
@@ -2035,7 +2218,16 @@ export class MovementsService {
     return this.enrichMovement(companyId, movement);
   }
 
-  async resolveSurplus(companyId: number, movementId: string, data: any, userName?: string) {
+  async resolveSurplus(
+    companyId: number,
+    movementId: string,
+    data: {
+      resolution: 'income' | 'owner_found';
+      resolutionDate?: string;
+      notes?: string;
+    },
+    userName?: string,
+  ) {
     const movement = await this.movementRepo.findOne({
       where: { id: movementId, companyId },
     });
@@ -2118,6 +2310,10 @@ export class MovementsService {
     return this.enrichMovement(companyId, movement);
   }
 
+  // ══════════════════════════════════════════════════════════
+  // ── CONTABILIZACIÓN GENÉRICA (entradas, salidas, transferencias) ──
+  // ══════════════════════════════════════════════════════════
+
   private async generateAccountingVoucher(
     companyId: number,
     movement: Movement,
@@ -2185,7 +2381,7 @@ export class MovementsService {
       } else if (['1107', '2107'].includes(movement.movementCode)) {
         creditAccount = '406';
       } else if (['106', '206', '306', '107', '207', '307'].includes(movement.movementCode)) {
-        creditAccount = movType.category === 'mercancia' ? '814' : '810';
+        creditAccount = getCostOfSalesAccountByCategory(movType.category);
       } else {
         creditAccount = accountingEntry.creditAccountCode;
       }
