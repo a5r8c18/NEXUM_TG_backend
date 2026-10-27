@@ -52,7 +52,8 @@ export class BankTransaction {
   @Column({ name: 'counterparty_bank', type: 'varchar', length: 100, nullable: true })
   counterpartyBank: string | null;
 
-  @Column({ name: 'transaction_code', type: 'varchar', length: 20, nullable: true })
+  /** Nombre amigable del tipo de comprobante (ej. "Transferencia Electrónica Recibida"). */
+  @Column({ name: 'transaction_code', type: 'varchar', length: 100, nullable: true })
   transactionCode: string | null;
 
   @Column({ name: 'batch_number', type: 'varchar', length: 50, nullable: true })
@@ -94,9 +95,9 @@ export class BankTransaction {
   @Column({ name: 'company_id', type: 'integer' })
   companyId: number;
 
-    /** Código del concepto de contrapartida elegido (FK lógica a counterpart_concepts.code). */
-@Column({ name: 'counterpart_concept_code', type: 'varchar', length: 10, nullable: true })
-counterpartConceptCode: string | null;
+  /** Código del concepto de contrapartida elegido (FK lógica a counterpart_concepts.code). */
+  @Column({ name: 'counterpart_concept_code', type: 'varchar', length: 10, nullable: true })
+  counterpartConceptCode: string | null;
 
   @ManyToOne(() => Company)
   @JoinColumn({ name: 'company_id' })

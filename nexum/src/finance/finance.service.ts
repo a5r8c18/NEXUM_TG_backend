@@ -23,6 +23,7 @@ import { DocumentSequenceService } from '../common/sequence/document-sequence.se
  * el backend — jamás se acepta del body.
  */
 const RECEIVABLE_FIELDS = [
+  'invoiceId',
   'invoiceNumber', 'customerName', 'customerId', 'customerAddress',
   'customerPhone', 'customerEmail', 'customerNit', 'originalAmount',
   'dueDate', 'priority', 'creditLimit', 'availableCredit',
@@ -77,6 +78,9 @@ const CASH_REGISTER_FIELDS = [
   'maxRetentionLimit', 'isDefault', 'notes',
 ] as const;
 
+/** Código del comprobante que usa cuenta contable en vez de concepto. */
+const OPENING_ENTRY_CODE = 'Carga Inicial';
+
 /** Devuelve solo las propiedades permitidas presentes en `data`. */
 function pick(data: any, fields: readonly string[]): Record<string, any> {
   const out: Record<string, any> = {};
@@ -124,7 +128,6 @@ export class FinanceService {
   // ── ANTIGÜEDAD DE SALDOS ──
   // ════════════════════════════════════════════════════════
 
-  /** Clasifica los días de mora en los tramos del reporte de antigüedad. */
   private static agingCategoryFor(
     days: number,
   ): 'current' | '1-30' | '31-60' | '61-90' | '91-120' | 'over-120' {
@@ -136,13 +139,6 @@ export class FinanceService {
     return 'over-120';
   }
 
-  /**
-   * Recalcula días de mora, tramo de antigüedad y estado 'overdue' de todas las
-   * cuentas por cobrar y por pagar pendientes.
-   *
-   * Sin este recálculo, los reportes de antigüedad quedan congelados en el
-   * momento de emisión del documento.
-   */
   async recalculateAging(companyId?: number) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -207,20 +203,6 @@ export class FinanceService {
     return qb.getMany();
   }
 
-  /**
-   * Detalle de una CxC con el comprobante contable de la OBLIGACIÓN.
-   *
-   * Solo se carga el asiento propio de la CxC (sourceModule='finance',
-   * sourceDocumentId=`AR-${id}`): 135 D / 699 H. Es el asiento que reconoce
-   * la obligación en Finanzas y cierra el puente con la transitoria que abrió
-   * Facturación.
-   *
-   * NO se cargan:
-   *   - El comprobante de VENTA de la factura (699 D / 900 H + IVA), porque
-   *     es un asiento de Facturación.
-   *   - El comprobante de COSTO de venta (810/814 D / 188/189 H), porque es
-   *     un evento de Inventario.
-   */
   async findOneReceivable(companyId: number, id: string) {
     const ar = await this.arRepo.findOne({
       where: { id, companyId },
@@ -228,7 +210,6 @@ export class FinanceService {
     });
     if (!ar) throw new NotFoundException(`CxC ${id} no encontrada`);
 
-    // Solo el comprobante de la obligación.
     const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
       companyId,
       `AR-${ar.id}`,
@@ -261,8 +242,6 @@ export class FinanceService {
     const ar = await this.findOneReceivable(companyId, id);
     const fields = pick(data, RECEIVABLE_FIELDS);
     Object.assign(ar, fields);
-    // Si corrige el monto original, el saldo se recalcula — nunca se acepta
-    // balanceAmount del cliente.
     if (fields.originalAmount !== undefined) {
       ar.balanceAmount =
         Math.round(
@@ -312,18 +291,6 @@ export class FinanceService {
     });
     if (!ap) throw new NotFoundException(`CxP ${id} no encontrada`);
 
-    // Los comprobantes contables de una CxP pueden venir de dos flujos distintos:
-    //
-    //   1. Obligaciones nacidas en Finanzas (nómina, tributos, retenciones…):
-    //      createPayable() genera el voucher con sourceModule='finance' y
-    //      sourceDocumentId=`AP-${ap.id}`.
-    //
-    //   2. Obligaciones nacidas en Compras/Inventario: el voucher se generó al
-    //      registrar la compra con sourceModule='inventory' y
-    //      sourceDocumentId=ap.purchaseId. Si la compra no llegó facturada,
-    //      habrá DOS vouchers (recepción 189/699 y factura 699/410); si llegó
-    //      facturada, uno solo (189/410). En ambos casos el detalle debe verlos
-    //      todos para reconstruir el ciclo contable de la obligación.
     const vouchersByObligation =
       await this.voucherService.findVouchersBySourceDocumentId(
         companyId,
@@ -337,8 +304,6 @@ export class FinanceService {
         )
       : [];
 
-    // Deduplicar por id (por si un flujo llegara a generar un voucher visible
-    // por ambos caminos) y ordenar cronológicamente.
     const seen = new Set<string>();
     const vouchers = [...vouchersByObligation, ...vouchersByPurchase]
       .filter((v) => {
@@ -351,17 +316,6 @@ export class FinanceService {
     return { ...ap, vouchers };
   }
 
-  /**
-   * Registra una cuenta por pagar.
-   *
-   * Si el módulo de origen envía `transitAccountCode` (p. ej. el comprobante de
-   * impuestos de nómina, que acredita la transitoria 699), la obligación nace
-   * contablemente aquí: se debita esa transitoria y se acredita la cuenta del
-   * pasivo (440 Obligaciones con el Presupuesto, 410 proveedores…), de modo que
-   * el pasivo se reconoce en el módulo donde se gestiona y la transitoria queda
-   * en cero. Sin `transitAccountCode` no se genera asiento, porque el pasivo ya
-   * viene asentado en el documento de origen.
-   */
   async createPayable(companyId: number, data: any, manager?: EntityManager) {
     const { transitAccountCode } = data;
     const payableData = pick(data, PAYABLE_FIELDS);
@@ -420,12 +374,6 @@ export class FinanceService {
     return saved;
   }
 
-  /**
-   * Anula las cuentas por pagar generadas por un documento de otro módulo
-   * (identificadas por su `invoiceNumber`), siempre que no tengan pagos
-   * aplicados. Se usa, por ejemplo, al cancelar una nómina para dar de baja la
-   * obligación con el presupuesto del estado.
-   */
   async cancelPayablesByInvoiceNumber(
     companyId: number,
     invoiceNumber: string,
@@ -443,8 +391,6 @@ export class FinanceService {
     for (const ap of payables) {
       if (ap.status === 'cancelled') continue;
       if (ap.status === 'paid' || Number(ap.paidAmount) > 0) {
-        // La obligación ya se pagó (total o parcialmente): no se puede anular
-        // automáticamente porque hay dinero movido que requiere reversa manual.
         this.logger.warn(
           `CxP ${ap.apNumber} está ${ap.status === 'paid' ? 'saldada' : 'parcialmente pagada'}; no se anula automáticamente`,
         );
@@ -457,7 +403,6 @@ export class FinanceService {
       await apRepo.save(ap);
       cancelled++;
 
-      // Reversar el asiento con que nació la obligación, si lo hubo.
       const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
         companyId,
         `AP-${ap.id}`,
@@ -509,8 +454,6 @@ export class FinanceService {
     if (filters?.accountType) qb.andWhere('ba.account_type = :type', { type: filters.accountType });
 
     const banks = await qb.getMany();
-    // Cuenta contable del fondo según el tipo: corriente/gastos → Efectivo en
-    // Banco; MLC (tarjeta) → Efectivo en Banco - operaciones con tarjeta.
     const bankAccountCode = await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_BANK);
     const cardAccountCode = await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_CARD);
     for (const ba of banks) {
@@ -577,7 +520,6 @@ export class FinanceService {
     return qb.getMany();
   }
 
-  /** Todas las transacciones bancarias de la empresa (con datos de la cuenta). */
   async findAllBankTransactions(companyId: number, type?: string) {
     const qb = this.txRepo
       .createQueryBuilder('tx')
@@ -589,10 +531,6 @@ export class FinanceService {
     return qb.getMany();
   }
 
-  /**
-   * Aplica una variación al saldo bancario en una única sentencia SQL.
-   * Evita las condiciones de carrera del patrón leer → sumar → guardar.
-   */
   private async applyBankBalanceDelta(
     companyId: number,
     bankAccountId: string,
@@ -618,28 +556,67 @@ export class FinanceService {
     );
   }
 
+  /**
+   * Crea una transacción bancaria.
+   *
+   * Dependiendo del `transactionCode`:
+   *   - 'Carga Inicial' → exige `counterpartyAccount` (cuenta contable del
+   *     nomenclador) y no usa conceptos.
+   *   - Otros (TER, OC, TEE, OP) → exigen `counterpartConceptCode` del
+   *     catálogo de conceptos y validan la dirección contra `transactionType`.
+   *
+   * Si llega `accountReceivableId`, además se liquida la obligación de cobro
+   * (se crea el `Payment` y se actualiza la CxC + la factura origen) dentro de
+   * la misma transacción de BD.
+   */
   async createBankTransaction(companyId: number, data: any, manager?: EntityManager) {
+    if (manager) {
+      return this.createBankTransactionInTx(companyId, data, manager);
+    }
+    return this.dataSource.transaction((mgr) =>
+      this.createBankTransactionInTx(companyId, data, mgr),
+    );
+  }
+
+  private async createBankTransactionInTx(
+    companyId: number,
+    data: any,
+    manager: EntityManager,
+  ) {
     const ba = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
 
-    // Validar el concepto de contrapartida
-    const conceptCode: string | undefined = data.counterpartConceptCode;
-    if (!conceptCode) {
-      throw new BadRequestException('Debe seleccionar un concepto de contrapartida');
-    }
-    const concept = await this.findOneCounterpartConcept(conceptCode);
-    if (!concept) {
-      throw new BadRequestException(
-        `El concepto de contrapartida "${conceptCode}" no existe o no está activo`,
-      );
-    }
-    const expectedDirection = data.transactionType === 'credit' ? 'income' : 'expense';
-    if (concept.direction !== 'both' && concept.direction !== expectedDirection) {
-      throw new BadRequestException(
-        `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
-      );
+    const transactionCode = data.transactionCode as string | undefined;
+    const isOpeningEntry = transactionCode === OPENING_ENTRY_CODE;
+
+    let concept: CounterpartConcept | null = null;
+
+    if (isOpeningEntry) {
+      // Carga Inicial: se elige cuenta contable del nomenclador.
+      if (!data.counterpartyAccount || !String(data.counterpartyAccount).trim()) {
+        throw new BadRequestException(
+          'Seleccione una cuenta contable para la Carga Inicial',
+        );
+      }
+    } else {
+      // Otros comprobantes: se elige concepto de contrapartida.
+      const conceptCode: string | undefined = data.counterpartConceptCode;
+      if (!conceptCode) {
+        throw new BadRequestException('Debe seleccionar un concepto de contrapartida');
+      }
+      concept = await this.findOneCounterpartConcept(conceptCode);
+      if (!concept) {
+        throw new BadRequestException(
+          `El concepto de contrapartida "${conceptCode}" no existe o no está activo`,
+        );
+      }
+      const expectedDirection = data.transactionType === 'credit' ? 'income' : 'expense';
+      if (concept.direction !== 'both' && concept.direction !== expectedDirection) {
+        throw new BadRequestException(
+          `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
+        );
+      }
     }
 
-    // Número compuesto por las siglas del tipo de comprobante + consecutivo.
     const VOUCHER_PREFIXES: Record<string, string> = {
       'Carga Inicial': 'CI',
       'Transferencia Electrónica Recibida': 'TER',
@@ -647,7 +624,7 @@ export class FinanceService {
       'Transferencia Electrónica Emitida': 'TEE',
       'Otros pagos': 'OP',
     };
-    const prefix = VOUCHER_PREFIXES[data.transactionCode] || 'TXB';
+    const prefix = VOUCHER_PREFIXES[transactionCode || ''] || 'TXB';
     const transactionNumber =
       data.transactionNumber ||
       (await this.sequenceService.nextFormatted(
@@ -657,13 +634,14 @@ export class FinanceService {
         { manager },
       ));
 
-    const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
+    const txRepo = manager.getRepository(BankTransaction);
     const tx = txRepo.create({
       ...pick(data, BANK_TRANSACTION_FIELDS),
-      counterpartConceptCode: concept.code,
+      counterpartConceptCode: concept?.code ?? null,
       counterpartyAccount: data.counterpartyAccount ?? null,
+      counterpartyName: data.counterpartyName ?? null,
       transactionNumber,
-      description: data.description || data.transactionCode || data.transactionType,
+      description: data.description || transactionCode || data.transactionType,
       transactionDate: data.transactionDate || new Date().toISOString().split('T')[0],
       currency: data.currency || 'CUP',
       exchangeRate: data.exchangeRate ?? 1,
@@ -672,7 +650,6 @@ export class FinanceService {
     });
     const saved = await txRepo.save(tx);
 
-    // Actualizar saldo de la cuenta de forma atómica
     await this.applyBankBalanceDelta(
       companyId,
       ba.id,
@@ -682,76 +659,491 @@ export class FinanceService {
       manager,
     );
 
-    // NOTA: la generación del asiento contable queda pendiente de decisión
-    // (ver pregunta #7 del diseño). Cuando se decida, se genera aquí con
-    // `concept` como contrapartida.
+    if (data.accountReceivableId) {
+      await this.settleReceivableFromBankTransaction(companyId, saved, data, manager);
+    }
+
     return saved;
   }
 
   /**
-   * Actualiza una transacción bancaria y reajusta el saldo de la cuenta.
+   * Liquida una CxC a partir de un comprobante bancario de ingreso.
    *
-   * El concepto y el nombre de la contrapartida SÍ pueden cambiarse; cuando se
-   * modifica el concepto se revalida contra el catálogo y contra el
-   * transactionType de la transacción, igual que en createBankTransaction.
+   * - Valida que la obligación exista, pertenezca a la empresa y esté pendiente.
+   * - Valida que el monto no exceda el saldo pendiente.
+   * - Crea el `Payment` (ligado por `referenceNumber` al comprobante).
+   * - Actualiza paidAmount / balanceAmount / status / lastPaymentDate.
+   * - Sincroniza el estado de la factura origen (la marca como pagada).
+   * - Genera el voucher contable (Débito Banco / Crédito CxC).
+   *
+   * Todo dentro del `manager` de la transacción del llamador.
    */
-  async updateBankTransaction(companyId: number, id: string, data: any) {
-    const tx = await this.txRepo.findOneBy({ id, companyId });
-    if (!tx) throw new NotFoundException('Transacción no encontrada');
+  private async settleReceivableFromBankTransaction(
+    companyId: number,
+    bankTx: BankTransaction,
+    data: any,
+    manager: EntityManager,
+  ): Promise<void> {
+    const arRepo = manager.getRepository(AccountReceivable);
+    const paymentRepo = manager.getRepository(Payment);
 
-    // Si cambian el concepto, validar contra el catálogo y la dirección.
-    if (data.counterpartConceptCode && data.counterpartConceptCode !== tx.counterpartConceptCode) {
-      const concept = await this.findOneCounterpartConcept(data.counterpartConceptCode);
-      if (!concept) {
-        throw new BadRequestException(
-          `El concepto de contrapartida "${data.counterpartConceptCode}" no existe o no está activo`,
-        );
-      }
-      const expectedDirection = tx.transactionType === 'credit' ? 'income' : 'expense';
-      if (concept.direction !== 'both' && concept.direction !== expectedDirection) {
-        throw new BadRequestException(
-          `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
-        );
-      }
-      tx.counterpartConceptCode = concept.code;
+    const ar = await arRepo.findOne({
+      where: { id: data.accountReceivableId, companyId },
+    });
+    if (!ar) {
+      throw new NotFoundException('Obligación de cobro no encontrada');
+    }
+    if (['paid', 'written_off', 'cancelled'].includes(ar.status)) {
+      const label =
+        ar.status === 'paid'
+          ? 'cobrada'
+          : ar.status === 'written_off'
+            ? 'dada de baja'
+            : 'cancelada';
+      throw new BadRequestException(`La obligación ${ar.arNumber} ya está ${label}`);
     }
 
-    const oldDelta = tx.transactionType === 'credit' ? Number(tx.amount) : -Number(tx.amount);
-    const newAmount = data.amount != null ? Number(data.amount) : Number(tx.amount);
-    const newDelta = tx.transactionType === 'credit' ? newAmount : -newAmount;
-
-    if (newDelta !== oldDelta) {
-      await this.applyBankBalanceDelta(companyId, tx.bankAccountId, newDelta - oldDelta);
+    const amount = Number(bankTx.amount);
+    if (amount - Number(ar.balanceAmount) > 0.01) {
+      throw new BadRequestException(
+        `El monto (${amount.toFixed(2)}) excede el saldo pendiente de ` +
+          `${ar.arNumber} (${Number(ar.balanceAmount).toFixed(2)})`,
+      );
     }
 
-    Object.assign(
-      tx,
-      pick(data, [
-        'transactionDate', 'transactionCode', 'referenceNumber',
-        'counterpartyAccount', 'counterpartyName', 'notes', 'description',
-      ] as const),
+    const paymentNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      'payment',
+      'PAG',
+      { manager },
     );
-    tx.amount = newAmount;
-    tx.operationStatus = 'edited';
-    return this.txRepo.save(tx);
-  }
 
-  /** Elimina una transacción bancaria revirtiendo su efecto en el saldo. */
-  async deleteBankTransaction(companyId: number, id: string) {
-    const tx = await this.txRepo.findOneBy({ id, companyId });
-    if (!tx) throw new NotFoundException('Transacción no encontrada');
+    const payment = paymentRepo.create({
+      companyId,
+      paymentNumber,
+      paymentDate: bankTx.transactionDate,
+      paymentType: 'receivable' as any,
+      paymentMethod: 'bank_transfer' as any,
+      amount,
+      currency: bankTx.currency,
+      exchangeRate: bankTx.exchangeRate,
+      description: `Cobro desde comprobante ${bankTx.transactionNumber}`,
+      referenceNumber: bankTx.transactionNumber,
+      bankAccountId: bankTx.bankAccountId,
+      accountReceivableId: ar.id,
+      status: 'completed' as any,
+    } as Partial<Payment>);
+    await paymentRepo.save(payment);
 
-    const delta = tx.transactionType === 'credit' ? -Number(tx.amount) : Number(tx.amount);
-    await this.applyBankBalanceDelta(companyId, tx.bankAccountId, delta);
-    await this.txRepo.remove(tx);
-    return { deleted: true };
+    ar.paidAmount = Math.round((Number(ar.paidAmount) + amount) * 100) / 100;
+    ar.balanceAmount =
+      Math.round((Number(ar.originalAmount) - Number(ar.paidAmount)) * 100) / 100;
+    ar.lastPaymentDate = bankTx.transactionDate;
+    ar.lastPaymentAmount = amount;
+    ar.status = (ar.balanceAmount <= 0.009 ? 'paid' : 'partial') as any;
+    await arRepo.save(ar);
+
+    await this.syncInvoiceStatusFromReceivable(companyId, ar, manager);
+
+    try {
+      await this.createPaymentVoucher(
+        companyId,
+        payment,
+        {
+          paymentType: 'receivable',
+          paymentMethod: 'bank_transfer',
+          amount,
+          paymentDate: bankTx.transactionDate,
+          description: payment.description,
+          performedBy: 'Sistema',
+        },
+        manager,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error generando voucher para Payment ${payment.paymentNumber}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw error;
+    }
+
+    this.logger.log(
+      `CxC ${ar.arNumber} liquidada por $${amount.toFixed(2)} desde ` +
+        `BankTransaction ${bankTx.transactionNumber}`,
+    );
   }
 
   /**
-   * Reversar una transacción bancaria identificada por su referenceNumber.
-   * Crea una nueva transacción del tipo opuesto con parentTransactionId
-   * apuntando al original, restaurando el saldo bancario (RH-07).
+   * Devuelve la CxC vinculada al comprobante bancario (vía el `Payment` con
+   * `referenceNumber = transactionNumber`). Devuelve `null` si no hay vínculo.
    */
+  async getLinkedReceivable(companyId: number, txId: string) {
+    const tx = await this.txRepo.findOneBy({ id: txId, companyId });
+    if (!tx) throw new NotFoundException('Transacción no encontrada');
+
+    const payment = await this.paymentRepo.findOne({
+      where: {
+        companyId,
+        referenceNumber: tx.transactionNumber,
+        paymentType: 'receivable' as any,
+      },
+    });
+    if (!payment?.accountReceivableId) return null;
+
+    const ar = await this.arRepo.findOne({
+      where: { id: payment.accountReceivableId, companyId },
+    });
+    if (!ar) return null;
+
+    return {
+      paymentId: payment.id,
+      paymentNumber: payment.paymentNumber,
+      paymentAmount: Number(payment.amount),
+      accountReceivable: ar,
+    };
+  }
+
+  /**
+   * Revierte el `Payment` de una liquidación de CxC:
+   *  - Restaura `paidAmount` / `balanceAmount` / `status` de la CxC.
+   *  - Sincroniza el estado de la factura origen.
+   *  - Cancela los vouchers asociados al `Payment`.
+   *  - Elimina el `Payment`.
+   */
+  private async revertLinkedReceivablePayment(
+    companyId: number,
+    payment: Payment,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (payment.accountReceivableId) {
+      const arRepo = manager.getRepository(AccountReceivable);
+      const ar = await arRepo.findOne({
+        where: { id: payment.accountReceivableId, companyId },
+      });
+      if (ar) {
+        ar.paidAmount = Math.max(
+          0,
+          Math.round((Number(ar.paidAmount) - Number(payment.amount)) * 100) / 100,
+        );
+        ar.balanceAmount =
+          Math.round((Number(ar.originalAmount) - Number(ar.paidAmount)) * 100) / 100;
+        ar.status = (
+          ar.balanceAmount <= 0.009
+            ? 'paid'
+            : Number(ar.paidAmount) > 0
+              ? 'partial'
+              : 'pending'
+        ) as any;
+        await arRepo.save(ar);
+        await this.syncInvoiceStatusFromReceivable(companyId, ar, manager);
+      }
+    }
+
+    try {
+      const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
+        companyId,
+        payment.id,
+        'finance',
+      );
+      for (const voucher of vouchers) {
+        if (voucher.status === 'cancelled') continue;
+        await this.voucherService.updateVoucherStatus(
+          companyId,
+          voucher.id,
+          'cancelled',
+          manager,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudieron cancelar los vouchers del Payment ${payment.paymentNumber}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    await manager.getRepository(Payment).remove(payment);
+  }
+
+  /**
+   * Ajusta el monto del `Payment` existente (misma CxC) cuando el usuario solo
+   * cambió el importe del comprobante, sin tocar la obligación vinculada.
+   */
+  private async updateLinkedReceivablePaymentAmount(
+    companyId: number,
+    payment: Payment,
+    tx: BankTransaction,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (!payment.accountReceivableId) return;
+
+    const arRepo = manager.getRepository(AccountReceivable);
+    const paymentRepo = manager.getRepository(Payment);
+
+    const ar = await arRepo.findOne({
+      where: { id: payment.accountReceivableId, companyId },
+    });
+    if (!ar) return;
+
+    const oldAmount = Number(payment.amount);
+    const newAmount = Number(tx.amount);
+    const delta = newAmount - oldAmount;
+
+    const projectedBalance = Number(ar.balanceAmount) - delta;
+    if (projectedBalance < -0.01) {
+      throw new BadRequestException(
+        `El nuevo monto (${newAmount.toFixed(2)}) excede el saldo disponible ` +
+          `de la CxC ${ar.arNumber} (${Number(ar.balanceAmount).toFixed(2)})`,
+      );
+    }
+
+    ar.paidAmount =
+      Math.round((Number(ar.paidAmount) + delta) * 100) / 100;
+    ar.balanceAmount =
+      Math.round((Number(ar.originalAmount) - Number(ar.paidAmount)) * 100) / 100;
+    ar.lastPaymentAmount = newAmount;
+    ar.lastPaymentDate = tx.transactionDate;
+    ar.status = (
+      ar.balanceAmount <= 0.009
+        ? 'paid'
+        : Number(ar.paidAmount) > 0
+          ? 'partial'
+          : 'pending'
+    ) as any;
+    await arRepo.save(ar);
+
+    await this.syncInvoiceStatusFromReceivable(companyId, ar, manager);
+
+    payment.amount = newAmount;
+    payment.paymentDate = tx.transactionDate;
+    await paymentRepo.save(payment);
+
+    this.logger.log(
+      `Payment ${payment.paymentNumber} actualizado a $${newAmount.toFixed(2)} ` +
+        `(CxC ${ar.arNumber}) desde comprobante ${tx.transactionNumber}`,
+    );
+  }
+
+  /**
+   * Actualiza una transacción bancaria.
+   *
+   * - Si el `transactionCode` resultante es 'Carga Inicial', exige
+   *   `counterpartyAccount` y limpia `counterpartConceptCode`.
+   * - En otro caso valida el concepto (si cambió) y limpia `counterpartyAccount`.
+   * - Si cambia el `bankAccountId`, revierte el saldo en el banco original,
+   *   lo aplica en el nuevo y actualiza `Payment.bankAccountId` si había
+   *   un Payment vinculado.
+   * - Si cambia el monto con la misma CxC, ajusta `paidAmount`/`balanceAmount`.
+   * - Si cambia/quita la CxC, revierte el `Payment` anterior y, si hay nueva,
+   *   crea la liquidación.
+   *
+   * Todo dentro de una transacción de BD.
+   */
+  async updateBankTransaction(companyId: number, id: string, data: any) {
+    return this.dataSource.transaction(async (manager) => {
+      const txRepo = manager.getRepository(BankTransaction);
+      const tx = await txRepo.findOneBy({ id, companyId });
+      if (!tx) throw new NotFoundException('Transacción no encontrada');
+
+      const effectiveCode = data.transactionCode ?? tx.transactionCode ?? '';
+      const isOpeningEntry = effectiveCode === OPENING_ENTRY_CODE;
+
+      if (isOpeningEntry) {
+        const account = data.counterpartyAccount ?? tx.counterpartyAccount;
+        if (!account || !String(account).trim()) {
+          throw new BadRequestException(
+            'Seleccione una cuenta contable para la Carga Inicial',
+          );
+        }
+        tx.counterpartConceptCode = null;
+        if (data.counterpartyAccount !== undefined) tx.counterpartyAccount = data.counterpartyAccount;
+        if (data.counterpartyName !== undefined) tx.counterpartyName = data.counterpartyName;
+      } else {
+        if (data.counterpartConceptCode && data.counterpartConceptCode !== tx.counterpartConceptCode) {
+          const concept = await this.findOneCounterpartConcept(data.counterpartConceptCode);
+          if (!concept) {
+            throw new BadRequestException(
+              `El concepto de contrapartida "${data.counterpartConceptCode}" no existe o no está activo`,
+            );
+          }
+          const expectedDirection = tx.transactionType === 'credit' ? 'income' : 'expense';
+          if (concept.direction !== 'both' && concept.direction !== expectedDirection) {
+            throw new BadRequestException(
+              `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
+            );
+          }
+          tx.counterpartConceptCode = concept.code;
+        }
+        tx.counterpartyAccount = null;
+        if (data.counterpartyName !== undefined) tx.counterpartyName = data.counterpartyName;
+      }
+
+      // ── Saldo bancario: puede cambiar monto, banco, o ambos ──
+      const oldBankId = tx.bankAccountId;
+      const newBankId = data.bankAccountId ?? oldBankId;
+      const bankChanged = newBankId !== oldBankId;
+
+      if (bankChanged) {
+        const newBankExists = await manager
+          .getRepository(BankAccount)
+          .findOneBy({ id: newBankId, companyId });
+        if (!newBankExists) {
+          throw new NotFoundException('Cuenta bancaria destino no encontrada');
+        }
+      }
+
+      const sign = tx.transactionType === 'credit' ? 1 : -1;
+      const oldSigned = sign * Number(tx.amount);
+      const newAmount = data.amount != null ? Number(data.amount) : Number(tx.amount);
+      const newSigned = sign * newAmount;
+
+      if (!bankChanged) {
+        if (newSigned !== oldSigned) {
+          await this.applyBankBalanceDelta(
+            companyId,
+            oldBankId,
+            newSigned - oldSigned,
+            manager,
+          );
+        }
+      } else {
+        // Revertir en banco viejo, aplicar en banco nuevo.
+        await this.applyBankBalanceDelta(companyId, oldBankId, -oldSigned, manager);
+        await this.applyBankBalanceDelta(companyId, newBankId, newSigned, manager);
+        tx.bankAccountId = newBankId;
+      }
+
+      Object.assign(
+        tx,
+        pick(data, [
+          'transactionDate', 'transactionCode', 'referenceNumber',
+          'notes', 'description',
+        ] as const),
+      );
+      tx.amount = newAmount;
+      tx.operationStatus = 'edited';
+      const savedTx = await txRepo.save(tx);
+
+      // Si cambió de banco, arrastrar el Payment vinculado (si existe).
+      if (bankChanged) {
+        const paymentRepo = manager.getRepository(Payment);
+        const linkedPayment = await paymentRepo.findOne({
+          where: {
+            companyId,
+            referenceNumber: savedTx.transactionNumber,
+            paymentType: 'receivable' as any,
+          },
+        });
+        if (linkedPayment) {
+          linkedPayment.bankAccountId = newBankId;
+          await paymentRepo.save(linkedPayment);
+        }
+      }
+
+      // Sincronizar Payment/CxC si el cliente manipuló la obligación de cobro.
+      if (data.accountReceivableId !== undefined) {
+        const paymentRepo = manager.getRepository(Payment);
+        const existingPayment = await paymentRepo.findOne({
+          where: {
+            companyId,
+            referenceNumber: savedTx.transactionNumber,
+            paymentType: 'receivable' as any,
+          },
+        });
+
+        const newArId = data.accountReceivableId || null;
+        const currentArId = existingPayment?.accountReceivableId || null;
+
+        if (existingPayment && currentArId !== newArId) {
+          await this.revertLinkedReceivablePayment(companyId, existingPayment, manager);
+        }
+
+        if (newArId) {
+          const stillExisting = await paymentRepo.findOne({
+            where: {
+              companyId,
+              referenceNumber: savedTx.transactionNumber,
+              paymentType: 'receivable' as any,
+            },
+          });
+
+          if (stillExisting) {
+            if (Number(stillExisting.amount) !== Number(savedTx.amount)) {
+              await this.updateLinkedReceivablePaymentAmount(
+                companyId,
+                stillExisting,
+                savedTx,
+                manager,
+              );
+            }
+          } else {
+            await this.settleReceivableFromBankTransaction(companyId, savedTx, data, manager);
+          }
+        }
+      }
+
+      return savedTx;
+    });
+  }
+
+  /**
+   * Elimina una transacción bancaria y revierte todos sus efectos
+   * (saldo bancario, CxC liquidada, Payment asociado y estado de la factura)
+   * dentro de la misma transacción de BD.
+   */
+  async deleteBankTransaction(companyId: number, id: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const txRepo = manager.getRepository(BankTransaction);
+      const tx = await txRepo.findOneBy({ id, companyId });
+      if (!tx) throw new NotFoundException('Transacción no encontrada');
+
+      // 1) Revertir liquidación de CxC si el comprobante la originó.
+      const paymentRepo = manager.getRepository(Payment);
+      const linkedPayment = await paymentRepo.findOne({
+        where: {
+          companyId,
+          referenceNumber: tx.transactionNumber,
+          paymentType: 'receivable' as any,
+        },
+      });
+
+      if (linkedPayment?.accountReceivableId) {
+        const arRepo = manager.getRepository(AccountReceivable);
+        const ar = await arRepo.findOne({
+          where: { id: linkedPayment.accountReceivableId, companyId },
+        });
+        if (ar) {
+          ar.paidAmount = Math.max(
+            0,
+            Math.round((Number(ar.paidAmount) - Number(linkedPayment.amount)) * 100) /
+              100,
+          );
+          ar.balanceAmount =
+            Math.round((Number(ar.originalAmount) - Number(ar.paidAmount)) * 100) /
+            100;
+          ar.status = (
+            ar.balanceAmount <= 0.009
+              ? 'paid'
+              : Number(ar.paidAmount) > 0
+                ? 'partial'
+                : 'pending'
+          ) as any;
+          await arRepo.save(ar);
+          await this.syncInvoiceStatusFromReceivable(companyId, ar, manager);
+        }
+        await paymentRepo.remove(linkedPayment);
+      }
+
+      // 2) Revertir saldo bancario y eliminar el comprobante.
+      const delta =
+        tx.transactionType === 'credit' ? -Number(tx.amount) : Number(tx.amount);
+      await this.applyBankBalanceDelta(companyId, tx.bankAccountId, delta, manager);
+      await txRepo.remove(tx);
+
+      return { deleted: true };
+    });
+  }
+
   async reverseBankTransaction(
     companyId: number,
     referenceNumber: string,
@@ -800,6 +1192,7 @@ export class FinanceService {
       referenceNumber: `REV-${original.referenceNumber || original.transactionNumber}`,
       category: original.category,
       counterpartConceptCode: original.counterpartConceptCode,
+      counterpartyAccount: original.counterpartyAccount,
       counterpartyName: original.counterpartyName,
       parentTransactionId: original.id,
     });
@@ -850,8 +1243,6 @@ export class FinanceService {
       throw new BadRequestException('El importe del pago debe ser mayor que cero');
     }
 
-    // Cuenta de contrapartida del asiento: se determina según la naturaleza de
-    // la obligación que se cancela, no siempre "Cuentas por Pagar a Proveedores".
     let counterpartAccount: string | undefined;
     let counterpartReference: string | undefined;
 
@@ -859,7 +1250,6 @@ export class FinanceService {
     const arRepo = manager.getRepository(AccountReceivable);
     const apRepo = manager.getRepository(AccountPayable);
 
-    // ── Validación contra el saldo pendiente y actualización del submayor ──
     if (data.accountReceivableId) {
       const ar = await arRepo.findOne({
         where: { id: data.accountReceivableId, companyId },
@@ -903,8 +1293,6 @@ export class FinanceService {
             `(${Number(ap.balanceAmount).toFixed(2)}).`,
         );
       }
-      // La cuenta de contrapartida la fija la propia obligación si la conoce
-      // (nóminas 455, retenciones 460, tributos 440…); en su defecto, proveedores.
       counterpartAccount = ap.accountCode || undefined;
       counterpartReference = ap.supplierNit || ap.supplierName;
     }
@@ -915,7 +1303,6 @@ export class FinanceService {
       'PAG',
       { manager },
     );
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const paymentData: Partial<Payment> = {
       ...pick(data, PAYMENT_FIELDS),
       companyId,
@@ -926,7 +1313,6 @@ export class FinanceService {
     const payment = paymentRepo.create(paymentData as Payment);
     const saved = await paymentRepo.save(payment);
 
-    // Actualizar CxC o CxP
     if (data.accountReceivableId) {
       const ar = await arRepo.findOne({ where: { id: data.accountReceivableId, companyId } });
       if (ar) {
@@ -938,8 +1324,6 @@ export class FinanceService {
         ar.status = ar.balanceAmount <= 0.009 ? 'paid' : 'partial';
         await arRepo.save(ar);
 
-        // Sincronizar el estado del documento de origen: la factura y su
-        // cuenta por cobrar deben reflejar siempre la misma realidad.
         await this.syncInvoiceStatusFromReceivable(companyId, ar, manager);
       }
     }
@@ -956,22 +1340,18 @@ export class FinanceService {
       }
     }
 
-    // ── Generar comprobante contable ──
     await this.createPaymentVoucher(companyId, saved, {
       ...data,
       counterpartAccount,
       counterpartReference,
     }, manager);
 
-    // ── Registrar movimiento según método de pago ──
     if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'check' ||
         data.paymentMethod === 'credit_card' || data.paymentMethod === 'debit_card') {
-      // Pago por banco → crear BankTransaction + actualizar saldo
       if (data.bankAccountId) {
         await this.registerBankMovementFromPayment(companyId, saved, data, manager);
       }
     } else if (data.paymentMethod === 'cash') {
-      // Pago en efectivo → crear CashMovement + actualizar saldo de caja
       await this.registerCashMovementFromPayment(companyId, saved, data, manager);
     }
 
@@ -982,35 +1362,57 @@ export class FinanceService {
   }
 
   /**
-   * Refleja en la factura el estado real de su cuenta por cobrar.
-   * Es el único punto donde la factura pasa a 'paid', de modo que el cobro se
-   * contabiliza una sola vez (aquí) y ambos documentos nunca divergen.
+   * Sincroniza el estado de la factura origen con el estado actual de la CxC.
+   *
+   * - Busca la factura por `invoiceId` y, si la CxC no lo tiene persistido,
+   *   por `invoiceNumber` (backfill automático del vínculo).
+   * - `ar.status === 'paid'`       → factura `paid`.
+   * - `ar.paidAmount > 0`          → factura `partial`.
+   * - sin pagos (reversión total)  → factura vuelve a `pending`.
    */
   private async syncInvoiceStatusFromReceivable(
     companyId: number,
     ar: AccountReceivable,
     manager?: EntityManager,
   ) {
-    if (!ar.invoiceId) return;
+    const invoiceRepo = manager
+      ? manager.getRepository(Invoice)
+      : this.invoiceRepo;
 
-    const invoiceRepo = manager ? manager.getRepository(Invoice) : this.invoiceRepo;
-    const invoice = await invoiceRepo.findOne({
-      where: { id: ar.invoiceId, companyId },
-    });
+    let invoice: Invoice | null = null;
+    if (ar.invoiceId) {
+      invoice = await invoiceRepo.findOne({
+        where: { id: ar.invoiceId, companyId },
+      });
+    }
+    if (!invoice && ar.invoiceNumber) {
+      invoice = await invoiceRepo.findOne({
+        where: { invoiceNumber: ar.invoiceNumber, companyId } as any,
+      });
+      if (invoice && !ar.invoiceId) {
+        ar.invoiceId = invoice.id;
+        const arRepo = manager
+          ? manager.getRepository(AccountReceivable)
+          : this.arRepo;
+        await arRepo.save(ar);
+      }
+    }
+
     if (!invoice || invoice.status === 'cancelled') return;
 
-    const newStatus =
+    const newStatus: string =
       ar.status === 'paid'
         ? 'paid'
         : Number(ar.paidAmount) > 0
           ? 'partial'
-          : invoice.status;
+          : 'pending';
 
     if (invoice.status !== newStatus) {
-      invoice.status = newStatus;
+      invoice.status = newStatus as any;
       await invoiceRepo.save(invoice);
       this.logger.log(
-        `Factura ${invoice.invoiceNumber} sincronizada a estado '${newStatus}' desde la CxC ${ar.arNumber}`,
+        `Factura ${invoice.invoiceNumber} sincronizada a '${newStatus}' ` +
+          `desde la CxC ${ar.arNumber}`,
       );
     }
   }
@@ -1043,8 +1445,6 @@ export class FinanceService {
     });
     await txRepo.save(tx);
 
-    // Actualizar saldo bancario de forma atómica: la lectura-modificación-
-    // escritura en memoria pierde operaciones concurrentes.
     await this.applyBankBalanceDelta(
       companyId,
       ba.id,
@@ -1056,7 +1456,6 @@ export class FinanceService {
   }
 
   private async registerCashMovementFromPayment(companyId: number, payment: Payment, data: any, manager?: EntityManager) {
-    // Buscar caja activa (abierta) o la default
     const cashRegisterRepo = manager ? manager.getRepository(CashRegister) : this.cashRegisterRepo;
     let cashRegister = await cashRegisterRepo.findOne({
       where: { companyId, status: 'open' },
@@ -1100,11 +1499,9 @@ export class FinanceService {
     });
     await cashMovementRepo.save(cm);
 
-    // Actualizar saldo de caja
     cashRegister.currentBalance = newBalance;
     await cashRegisterRepo.save(cashRegister);
 
-    // Advertir si excede límite de retención
     if (newBalance > Number(cashRegister.maxRetentionLimit)) {
       this.logger.warn(
         `Caja ${cashRegister.registerCode} excede límite de retención: $${newBalance} > $${cashRegister.maxRetentionLimit}. Se debe depositar en banco.`,
@@ -1118,8 +1515,6 @@ export class FinanceService {
     const isIncome = data.paymentType === 'receivable';
     const amount = Number(data.amount);
 
-    // Cuenta de tesorería según el método de pago, tomada del mapeo de cuentas
-    // de la empresa (nunca codificada en duro).
     let treasuryMapping: MappingType;
     if (data.paymentMethod === 'cash') {
       treasuryMapping = MappingType.TREASURY_CASH;
@@ -1143,11 +1538,9 @@ export class FinanceService {
         treasuryMapping,
       )) || '101';
 
-    // Líneas del comprobante
     const lines: any[] = [];
 
     if (isIncome) {
-      // Cobro de cliente: entra efectivo (DEBE) y se cancela la CxC (HABER)
       const receivableAccount =
         data.counterpartAccount ||
         (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) ||
@@ -1159,16 +1552,13 @@ export class FinanceService {
         description: `Ingreso por ${data.paymentMethod}`,
       });
       lines.push({
-        accountCode: receivableAccount, // Cuentas por Cobrar a Clientes
+        accountCode: receivableAccount,
         debit: 0,
         credit: amount,
         description: `Cobro ${payment.paymentNumber} - ${data.description || ''}`,
         reference: data.counterpartReference || data.counterpartyName || null,
       });
     } else {
-      // Pago de una obligación: se debita la cuenta donde está registrada
-      // (proveedores 410, nóminas 455, retenciones 460, tributos 440…) y sale
-      // el efectivo (HABER).
       const payableAccount =
         data.counterpartAccount ||
         (await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER)) ||
@@ -1206,8 +1596,6 @@ export class FinanceService {
       this.logger.log(`Voucher generado para Payment ${payment.paymentNumber}`);
     } catch (error) {
       this.logger.error(`Error generando voucher para Payment ${payment.paymentNumber}: ${error instanceof Error ? error.message : String(error)}`);
-      // El voucher borrador del pago es obligatorio; si no se puede generar,
-      // la operación no debe quedar registrada sin él.
       throw error;
     }
   }
@@ -1309,7 +1697,6 @@ export class FinanceService {
     }
     await this.cashRegisterRepo.save(cr);
 
-    // Registrar movimiento de apertura
     const openingNumber = await this.sequenceService.nextFormatted(companyId, 'cash-movement', 'CAJ', { year: 0, padding: 6 });
     const cm = this.cashMovementRepo.create({
       movementNumber: openingNumber,
@@ -1338,7 +1725,6 @@ export class FinanceService {
     cr.lastClosingDate = new Date();
     await this.cashRegisterRepo.save(cr);
 
-    // Registrar movimiento de cierre
     const closingNumber = await this.sequenceService.nextFormatted(companyId, 'cash-movement', 'CAJ', { year: 0, padding: 6 });
     const cm = this.cashMovementRepo.create({
       movementNumber: closingNumber,
@@ -1366,7 +1752,6 @@ export class FinanceService {
     cr.lastAuditDifference = difference;
 
     if (difference !== 0) {
-      // Registrar ajuste
       const auditNumber = await this.sequenceService.nextFormatted(companyId, 'cash-movement', 'CAJ', { year: 0, padding: 6 });
       const cm = this.cashMovementRepo.create({
         movementNumber: auditNumber,
@@ -1397,11 +1782,9 @@ export class FinanceService {
 
     const ba = await this.findOneBankAccount(companyId, bankAccountId);
 
-    // Debitar caja
     cr.currentBalance = Number(cr.currentBalance) - amount;
     await this.cashRegisterRepo.save(cr);
 
-    // Registrar movimiento de caja (salida)
     const cmCount = await this.cashMovementRepo.count({ where: { companyId } });
     const cm = this.cashMovementRepo.create({
       movementNumber: `CAJ-${String(cmCount + 1).padStart(6, '0')}`,
@@ -1416,12 +1799,10 @@ export class FinanceService {
     });
     await this.cashMovementRepo.save(cm);
 
-    // Acreditar banco
     ba.balance = Number(ba.balance) + amount;
     ba.availableBalance = ba.balance;
     await this.bankRepo.save(ba);
 
-    // Registrar transacción bancaria
     const txCount = await this.txRepo.count({ where: { companyId } });
     const tx = this.txRepo.create({
       transactionNumber: `TXB-${String(txCount + 1).padStart(6, '0')}`,
@@ -1539,7 +1920,6 @@ export class FinanceService {
     });
   }
 
-  /** Genera el código consecutivo CLE-000001, CLE-000002… */
   private async nextCustomerCode(): Promise<string> {
     const rows: { code: string }[] = await this.customerRepo.query(
       `SELECT code FROM customers WHERE code ~ '^CLE-[0-9]+$'

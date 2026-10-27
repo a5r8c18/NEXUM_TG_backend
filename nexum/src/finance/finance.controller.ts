@@ -122,11 +122,11 @@ export class FinanceController {
   }
 
   @Get('counterpart-concepts')
-findCounterpartConcepts(
-  @Query('direction') direction?: 'income' | 'expense',
-) {
-  return this.financeService.findCounterpartConcepts(direction);
-}
+  findCounterpartConcepts(
+    @Query('direction') direction?: 'income' | 'expense',
+  ) {
+    return this.financeService.findCounterpartConcepts(direction);
+  }
 
   @Post('banks')
   createBank(@Req() req: Request, @Body() body: any) {
@@ -147,6 +147,11 @@ findCounterpartConcepts(
   @Patch('bank-transactions/:id')
   updateBankTransaction(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
     return this.financeService.updateBankTransaction(getCompanyId(req), id, body);
+  }
+
+  @Get('bank-transactions/:id/linked-receivable')
+  getLinkedReceivable(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.getLinkedReceivable(getCompanyId(req), id);
   }
 
   @Delete('bank-transactions/:id')
