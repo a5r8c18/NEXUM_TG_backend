@@ -144,6 +144,11 @@ export class FinanceController {
     return this.financeService.findAllBankTransactions(getCompanyId(req), type);
   }
 
+  @Post('bank-transactions/opening-vouchers')
+  generateMissingOpeningVouchers(@Req() req: Request) {
+    return this.financeService.generateMissingOpeningVouchers(getCompanyId(req));
+  }
+
   @Patch('bank-transactions/:id')
   updateBankTransaction(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
     return this.financeService.updateBankTransaction(getCompanyId(req), id, body);

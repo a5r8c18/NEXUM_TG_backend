@@ -659,6 +659,10 @@ export class FinanceService {
       manager,
     );
 
+    if (isOpeningEntry) {
+      await this.createOpeningEntryVoucher(companyId, saved, manager);
+    }
+
     if (data.accountReceivableId) {
       await this.settleReceivableFromBankTransaction(companyId, saved, data, manager);
     }
@@ -754,7 +758,8 @@ export class FinanceService {
           paymentMethod: 'bank_transfer',
           amount,
           paymentDate: bankTx.transactionDate,
-          description: payment.description,
+          description: this.receivablePaymentDescription(ar, bankTx.transactionNumber),
+          counterpartReference: this.receivableReference(ar),
           performedBy: 'Sistema',
         },
         manager,
@@ -771,6 +776,110 @@ export class FinanceService {
       `CxC ${ar.arNumber} liquidada por $${amount.toFixed(2)} desde ` +
         `BankTransaction ${bankTx.transactionNumber}`,
     );
+  }
+
+  /**
+   * Comprobante contable de una Carga Inicial: lleva a Contabilidad el saldo
+   * que el negocio ya tenía en el banco antes de comenzar a usar el sistema.
+   *   Ingreso → Débito: cuenta contable del banco · Crédito: contrapartida.
+   */
+  private async createOpeningEntryVoucher(
+    companyId: number,
+    tx: BankTransaction,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (!tx.counterpartyAccount) {
+      throw new BadRequestException('Seleccione una cuenta contable para la Carga Inicial');
+    }
+    const ba = await manager.getRepository(BankAccount).findOneBy({ id: tx.bankAccountId, companyId });
+    if (!ba) throw new NotFoundException('Cuenta bancaria no encontrada');
+
+    const bankAccountCode =
+      ba.accountingAccount ||
+      (ba.accountType === 'mlc'
+        ? await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_CARD)
+        : null) ||
+      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_BANK)) ||
+      '110';
+
+    // Contabilidad se lleva en CUP: las cuentas en USD se convierten a la tasa
+    // indicada en la Carga Inicial.
+    const isUsd = ba.currency === 'USD';
+    const rate = isUsd ? Number(tx.exchangeRate) : 1;
+    if (isUsd && !(rate > 1)) {
+      throw new BadRequestException(
+        `La Carga Inicial ${tx.transactionNumber} es de una cuenta en USD: indique la tasa de cambio`,
+      );
+    }
+    const amount = Math.round(Number(tx.amount) * rate * 100) / 100;
+    const isCredit = tx.transactionType === 'credit';
+    const bankLabel = `${ba.bankName} - ${ba.accountNumber}`;
+    const bankLine = {
+      accountCode: bankAccountCode,
+      debit: isCredit ? amount : 0,
+      credit: isCredit ? 0 : amount,
+      description: isUsd
+        ? `Carga inicial ${bankLabel} (${Number(tx.amount).toFixed(2)} USD x ${rate})`
+        : `Carga inicial ${bankLabel}`,
+    };
+    const counterpartLine = {
+      accountCode: tx.counterpartyAccount,
+      debit: isCredit ? 0 : amount,
+      credit: isCredit ? amount : 0,
+      description: tx.notes || `Carga inicial ${bankLabel}`,
+    };
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'finance',
+      tx.id,
+      {
+        date: tx.transactionDate,
+        description: `Carga inicial ${tx.transactionNumber} - ${bankLabel}`,
+        type: 'ajuste',
+        reference: tx.transactionNumber,
+        createdBy: 'Sistema',
+        lines: isCredit ? [bankLine, counterpartLine] : [counterpartLine, bankLine],
+      },
+      manager,
+    );
+  }
+
+  /**
+   * Genera el comprobante contable de las Cargas Iniciales registradas antes
+   * de que existiera la contabilización automática. Omite las que ya tienen
+   * un comprobante vigente y procesa cada una en su propia transacción, de
+   * modo que un error (p. ej. período no abierto) no bloquee a las demás.
+   */
+  async generateMissingOpeningVouchers(companyId: number) {
+    const openings = await this.txRepo.find({
+      where: { companyId, transactionCode: OPENING_ENTRY_CODE },
+      order: { transactionDate: 'ASC' },
+    });
+
+    const created: string[] = [];
+    const errors: { transactionNumber: string; message: string }[] = [];
+    let skipped = 0;
+
+    for (const tx of openings) {
+      if (tx.parentTransactionId) continue;
+      const existing = await this.voucherService.findVouchersBySourceDocumentId(companyId, tx.id, 'finance');
+      if (existing.some((v) => v.status !== 'cancelled')) {
+        skipped++;
+        continue;
+      }
+      try {
+        await this.dataSource.transaction((mgr) => this.createOpeningEntryVoucher(companyId, tx, mgr));
+        created.push(tx.transactionNumber);
+      } catch (error) {
+        errors.push({
+          transactionNumber: tx.transactionNumber,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { created, skipped, errors };
   }
 
   /**
@@ -839,10 +948,29 @@ export class FinanceService {
       }
     }
 
+    await this.cancelPaymentVouchers(companyId, payment, manager);
+
+    await manager.getRepository(Payment).remove(payment);
+  }
+
+  private async cancelPaymentVouchers(
+    companyId: number,
+    payment: Payment,
+    manager: EntityManager,
+  ): Promise<void> {
+    await this.cancelSourceVouchers(companyId, payment.id, `Payment ${payment.paymentNumber}`, manager);
+  }
+
+  private async cancelSourceVouchers(
+    companyId: number,
+    sourceDocumentId: string,
+    label: string,
+    manager: EntityManager,
+  ): Promise<void> {
     try {
       const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
         companyId,
-        payment.id,
+        sourceDocumentId,
         'finance',
       );
       for (const voucher of vouchers) {
@@ -856,13 +984,62 @@ export class FinanceService {
       }
     } catch (error) {
       this.logger.warn(
-        `No se pudieron cancelar los vouchers del Payment ${payment.paymentNumber}: ${
+        `No se pudieron cancelar los vouchers de ${label}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     }
+  }
 
-    await manager.getRepository(Payment).remove(payment);
+  /**
+   * Anula el voucher vigente de un cobro de CxC y genera uno nuevo con los
+   * datos actuales del `Payment` (banco vinculado, importe y fecha).
+   */
+  private async regenerateReceivablePaymentVoucher(
+    companyId: number,
+    payment: Payment,
+    manager: EntityManager,
+  ): Promise<void> {
+    const ar = payment.accountReceivableId
+      ? await manager.getRepository(AccountReceivable).findOne({
+          where: { id: payment.accountReceivableId, companyId },
+        })
+      : null;
+    await this.cancelPaymentVouchers(companyId, payment, manager);
+    await this.createPaymentVoucher(
+      companyId,
+      payment,
+      {
+        paymentType: 'receivable',
+        paymentMethod: payment.paymentMethod || 'bank_transfer',
+        amount: Number(payment.amount),
+        paymentDate: payment.paymentDate,
+        description: ar
+          ? this.receivablePaymentDescription(ar, payment.referenceNumber || payment.paymentNumber)
+          : payment.description,
+        counterpartReference: ar ? this.receivableReference(ar) : undefined,
+        bankAccountId: payment.bankAccountId,
+        performedBy: 'Sistema',
+      },
+      manager,
+    );
+  }
+
+  /**
+   * Identificación del cliente en el submayor de la 135. Debe coincidir con la
+   * que usa el reconocimiento de la CxC al facturar (NIT → id → nombre) para
+   * que el cobro, total o parcial, disminuya el saldo del mismo cliente.
+   */
+  private receivableReference(ar: AccountReceivable): string {
+    return ar.customerNit || ar.customerId || ar.customerName;
+  }
+
+  /** Descripción del cobro: indica si es parcial y el saldo que queda pendiente. */
+  private receivablePaymentDescription(ar: AccountReceivable, document: string): string {
+    const balance = Number(ar.balanceAmount);
+    return balance > 0.009
+      ? `Cobro parcial CxC ${ar.arNumber} (comp. ${document}) - saldo pendiente ${balance.toFixed(2)}`
+      : `Cobro CxC ${ar.arNumber} (comp. ${document})`;
   }
 
   /**
@@ -947,6 +1124,10 @@ export class FinanceService {
 
       const effectiveCode = data.transactionCode ?? tx.transactionCode ?? '';
       const isOpeningEntry = effectiveCode === OPENING_ENTRY_CODE;
+      const wasOpeningEntry = tx.transactionCode === OPENING_ENTRY_CODE;
+      const openingSnapshot = [
+        tx.bankAccountId, Number(tx.amount), Number(tx.exchangeRate), tx.transactionDate, tx.counterpartyAccount, tx.notes,
+      ].join('|');
 
       if (isOpeningEntry) {
         const account = data.counterpartyAccount ?? tx.counterpartyAccount;
@@ -1017,12 +1198,21 @@ export class FinanceService {
         tx,
         pick(data, [
           'transactionDate', 'transactionCode', 'referenceNumber',
-          'notes', 'description',
+          'notes', 'description', 'exchangeRate',
         ] as const),
       );
       tx.amount = newAmount;
       tx.operationStatus = 'edited';
       const savedTx = await txRepo.save(tx);
+
+      // Carga Inicial: mantener su comprobante contable alineado con el banco.
+      const openingChanged =
+        [savedTx.bankAccountId, Number(savedTx.amount), Number(savedTx.exchangeRate), savedTx.transactionDate, savedTx.counterpartyAccount, savedTx.notes].join('|') !==
+        openingSnapshot;
+      if ((wasOpeningEntry && !isOpeningEntry) || (isOpeningEntry && (!wasOpeningEntry || openingChanged))) {
+        await this.cancelSourceVouchers(companyId, savedTx.id, `BankTransaction ${savedTx.transactionNumber}`, manager);
+        if (isOpeningEntry) await this.createOpeningEntryVoucher(companyId, savedTx, manager);
+      }
 
       // Si cambió de banco, arrastrar el Payment vinculado (si existe).
       if (bankChanged) {
@@ -1039,6 +1229,8 @@ export class FinanceService {
           await paymentRepo.save(linkedPayment);
         }
       }
+
+      let voucherAlreadyFresh = false;
 
       // Sincronizar Payment/CxC si el cliente manipuló la obligación de cobro.
       if (data.accountReceivableId !== undefined) {
@@ -1078,7 +1270,21 @@ export class FinanceService {
             }
           } else {
             await this.settleReceivableFromBankTransaction(companyId, savedTx, data, manager);
+            voucherAlreadyFresh = true;
           }
+        }
+      }
+
+      if (!voucherAlreadyFresh && (bankChanged || newSigned !== oldSigned)) {
+        const currentPayment = await manager.getRepository(Payment).findOne({
+          where: {
+            companyId,
+            referenceNumber: savedTx.transactionNumber,
+            paymentType: 'receivable' as any,
+          },
+        });
+        if (currentPayment?.accountReceivableId) {
+          await this.regenerateReceivablePaymentVoucher(companyId, currentPayment, manager);
         }
       }
 
@@ -1131,6 +1337,7 @@ export class FinanceService {
           await arRepo.save(ar);
           await this.syncInvoiceStatusFromReceivable(companyId, ar, manager);
         }
+        await this.cancelPaymentVouchers(companyId, linkedPayment, manager);
         await paymentRepo.remove(linkedPayment);
       }
 
@@ -1138,6 +1345,9 @@ export class FinanceService {
       const delta =
         tx.transactionType === 'credit' ? -Number(tx.amount) : Number(tx.amount);
       await this.applyBankBalanceDelta(companyId, tx.bankAccountId, delta, manager);
+      if (tx.transactionCode === OPENING_ENTRY_CODE) {
+        await this.cancelSourceVouchers(companyId, tx.id, `BankTransaction ${tx.transactionNumber}`, manager);
+      }
       await txRepo.remove(tx);
 
       return { deleted: true };
@@ -1532,7 +1742,19 @@ export class FinanceService {
       treasuryMapping = MappingType.TREASURY_CASH;
     }
 
+    // Si el pago está vinculado a una cuenta bancaria, se usa la cuenta
+    // contable a la que está asociada en Finanzas (no la genérica 110).
+    const bankAccountId = payment.bankAccountId || data.bankAccountId;
+    const linkedBank =
+      treasuryMapping !== MappingType.TREASURY_CASH && bankAccountId
+        ? await (manager ? manager.getRepository(BankAccount) : this.bankRepo).findOneBy({
+            id: bankAccountId,
+            companyId,
+          })
+        : null;
+
     const cashAccountCode =
+      linkedBank?.accountingAccount ||
       (await this.accountMappingService.getAccountForMapping(
         companyId,
         treasuryMapping,

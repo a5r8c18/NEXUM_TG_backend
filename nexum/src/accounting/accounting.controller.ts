@@ -16,6 +16,7 @@ import {
   Req,
   Res,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { VoucherService } from './voucher.service';
@@ -128,6 +129,11 @@ export class AccountingController {
   getVoucherStatistics(@Req() req: Request) {
     const companyId = getCompanyId(req);
     return this.voucherService.getVoucherStatistics(companyId);
+  }
+
+  @Get('vouchers/:id/origin')
+  getVoucherOrigin(@Req() req: Request, @Param('id') id: string) {
+    return this.voucherService.resolveVoucherOrigin(getCompanyId(req), id);
   }
 
   @Get('vouchers/:id')
@@ -475,6 +481,24 @@ export class AccountingController {
       accountCode,
       fromDate,
       toDate,
+    );
+  }
+
+  @Get('reports/account-history')
+  getAccountHistory(
+    @Req() req: Request,
+    @Query('accountCode') accountCode: string,
+    @Query('subaccountCode') subaccountCode?: string,
+    @Query('toDate') toDate?: string,
+    @Query('includeDrafts') includeDrafts?: string,
+  ) {
+    if (!accountCode) throw new BadRequestException('Debe indicar la cuenta');
+    return this.reportService.getAccountHistory(
+      getCompanyId(req),
+      accountCode,
+      subaccountCode || undefined,
+      toDate,
+      reportOptions(includeDrafts),
     );
   }
 

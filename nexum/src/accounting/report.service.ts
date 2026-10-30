@@ -1028,6 +1028,95 @@ export class ReportService {
     };
   }
 
+  /**
+   * Historial de una cuenta (y opcionalmente de una de sus subcuentas) desde
+   * el primer asiento registrado en el sistema hasta la fecha indicada (hoy
+   * por defecto), con el saldo acumulado partida a partida según la
+   * naturaleza de la cuenta.
+   */
+  async getAccountHistory(
+    companyId: number,
+    accountCode: string,
+    subaccountCode?: string,
+    toDate?: string,
+    options?: ReportOptions,
+  ) {
+    const account = await this.accountRepo.findOneBy({ code: accountCode, companyId });
+    if (!account) {
+      throw new NotFoundException(`Cuenta ${accountCode} no encontrada`);
+    }
+    const subaccount = subaccountCode
+      ? await this.accountRepo.findOneBy({ code: subaccountCode, companyId })
+      : null;
+    if (subaccountCode && !subaccount) {
+      throw new NotFoundException(`Subcuenta ${subaccountCode} no encontrada`);
+    }
+
+    const until = toDate || new Date().toISOString().split('T')[0];
+    const qb = this.voucherLinesQuery(companyId, options)
+      .addSelect(['v.id', 'v.voucherNumber', 'v.date', 'v.description', 'v.type', 'v.status', 'v.sourceModule', 'v.reference'])
+      .andWhere('v.date <= :until', { until });
+
+    if (subaccountCode) {
+      // Los asientos antiguos guardan la subcuenta en `account_code`.
+      qb.andWhere('(vl.subaccount_code = :sub OR vl.account_code = :sub)', { sub: subaccountCode });
+    } else {
+      qb.andWhere(`(vl.account_code = :code OR ${ReportService.LEDGER_CODE_SQL} = :code)`, {
+        code: accountCode,
+      });
+    }
+
+    const lines = await qb
+      .orderBy('v.date', 'ASC')
+      .addOrderBy('v.createdAt', 'ASC')
+      .addOrderBy('vl.lineOrder', 'ASC')
+      .getMany();
+
+    const isDeudora = (subaccount?.nature || account.nature) !== 'acreedora';
+    let running = 0;
+    let totalDebit = 0;
+    let totalCredit = 0;
+    const entries = lines.map((l) => {
+      const debit = Number(l.debit);
+      const credit = Number(l.credit);
+      totalDebit += debit;
+      totalCredit += credit;
+      running = Math.round((running + (isDeudora ? debit - credit : credit - debit)) * 100) / 100;
+      return {
+        id: l.id,
+        date: l.voucher.date,
+        voucherId: l.voucher.id,
+        voucherNumber: l.voucher.voucherNumber,
+        voucherType: l.voucher.type,
+        voucherStatus: l.voucher.status,
+        sourceModule: l.voucher.sourceModule,
+        voucherDescription: l.voucher.description,
+        description: l.description || l.voucher.description,
+        accountCode: l.accountCode,
+        subaccountCode: l.subaccountCode,
+        subaccountName: l.subaccountName,
+        reference: l.reference || l.voucher.reference,
+        debit,
+        credit,
+        balance: running,
+      };
+    });
+
+    return {
+      accountCode: account.code,
+      accountName: account.name,
+      subaccountCode: subaccount?.code ?? null,
+      subaccountName: subaccount?.name ?? null,
+      nature: subaccount?.nature || account.nature,
+      fromDate: entries[0]?.date ?? null,
+      toDate: until,
+      totalDebit: Math.round(totalDebit * 100) / 100,
+      totalCredit: Math.round(totalCredit * 100) / 100,
+      finalBalance: running,
+      entries,
+    };
+  }
+
   async getGeneralJournal(
     companyId: number,
     fromDate?: string,

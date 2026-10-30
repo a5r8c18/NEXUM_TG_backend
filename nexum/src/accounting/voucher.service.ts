@@ -187,6 +187,95 @@ export class VoucherService {
     return voucher;
   }
 
+  /**
+   * Indica a qué pantalla y documento del módulo de origen corresponde un
+   * comprobante, para poder navegar desde Contabilidad al documento que lo
+   * generó. Los comprobantes manuales (o sin origen identificable) llevan al
+   * propio comprobante en Contabilidad.
+   */
+  async resolveVoucherOrigin(companyId: number, voucherId: string) {
+    const voucher = await this.voucherRepo.findOne({ where: { id: voucherId, companyId } });
+    if (!voucher) throw new NotFoundException('Comprobante no encontrado');
+
+    type Origin = { module: string; label: string; route: string; queryParams?: Record<string, string> };
+    const own: Origin = {
+      module: 'accounting',
+      label: 'Comprobante en Contabilidad',
+      route: '/accounting',
+      queryParams: { open: voucher.id },
+    };
+    const src = voucher.sourceDocumentId || '';
+    if (!src) return own;
+
+    const one = async (sql: string, params: any[]) =>
+      ((await this.voucherRepo.manager.query(sql, params)) as any[])[0] || null;
+    const bankTxOrigin = (tx: { id: string; transaction_type: string }): Origin => ({
+      module: 'finance',
+      label: tx.transaction_type === 'credit' ? 'Banco - Ingreso' : 'Banco - Egreso',
+      route: tx.transaction_type === 'credit' ? '/finance/banks/income' : '/finance/banks/expense',
+      queryParams: { open: tx.id },
+    });
+    const invoiceOrigin = (id: string): Origin => ({
+      module: 'invoices',
+      label: 'Factura',
+      route: '/billing/invoices',
+      queryParams: { open: id },
+    });
+
+    switch (voucher.sourceModule as string) {
+      case 'finance': {
+        const ar = src.match(/^AR-(.+?)(-reversal)?$/);
+        if (ar) return { module: 'finance', label: 'Cuenta por cobrar', route: '/finance/receivables', queryParams: { open: ar[1] } };
+        const ap = src.match(/^AP-(.+?)(-reversal)?$/);
+        if (ap) return { module: 'finance', label: 'Cuenta por pagar', route: '/finance/payables', queryParams: { open: ap[1] } };
+
+        const tx = await one(
+          `SELECT id, transaction_type FROM bank_transactions WHERE id::text = $1 AND company_id = $2`,
+          [src, companyId],
+        );
+        if (tx) return bankTxOrigin(tx);
+
+        const payment = await one(
+          `SELECT id, reference_number FROM payments WHERE id::text = $1 AND company_id = $2`,
+          [src, companyId],
+        );
+        if (payment) {
+          const paymentTx = payment.reference_number
+            ? await one(
+                `SELECT id, transaction_type FROM bank_transactions WHERE transaction_number = $1 AND company_id = $2`,
+                [payment.reference_number, companyId],
+              )
+            : null;
+          return paymentTx
+            ? bankTxOrigin(paymentTx)
+            : { module: 'finance', label: 'Cobros y pagos', route: '/finance/payments', queryParams: { open: payment.id } };
+        }
+        return { module: 'finance', label: 'Finanzas', route: '/finance' };
+      }
+      case 'invoices':
+        return invoiceOrigin(src.replace(/-reversal$/, ''));
+      case 'inventory': {
+        const cost = src.match(/^(.+?)-cost(-reversal)?$/);
+        if (cost) return invoiceOrigin(cost[1]);
+        const movementId = src.replace(/-(shortage|surplus)-resolution$/, '');
+        const purchase = await one(`SELECT id FROM purchases WHERE id::text = $1 AND company_id = $2`, [movementId, companyId]);
+        if (purchase) return { module: 'inventory', label: 'Compra', route: `/inventory/purchases/${purchase.id}/invoice` };
+        return { module: 'inventory', label: 'Movimientos de inventario', route: '/inventory/movements' };
+      }
+      case 'fixed-assets':
+        return { module: 'fixed-assets', label: 'Activos fijos', route: '/billing/fixed-assets' };
+      case 'payroll':
+      case 'hr': {
+        const id = src.replace(/^(SUB|MAT|PAY)-/, '');
+        return /^\d+$/.test(id)
+          ? { module: 'payroll', label: 'Nómina', route: '/hr/payroll', queryParams: { open: id } }
+          : { module: 'payroll', label: 'Nómina', route: '/hr/payroll' };
+      }
+      default:
+        return own;
+    }
+  }
+
   async findVouchersBySourceDocumentId(
     companyId: number,
     sourceDocumentId: string,
@@ -929,7 +1018,17 @@ export class VoucherService {
       );
     }
 
-    const account = await repo.findOneBy({ code, companyId });
+    let account = await repo.findOneBy({ code, companyId });
+    if (!account && code.includes('-')) {
+      // Subcuentas creadas antes de normalizar sus códigos: se guardaron solo
+      // con el sufijo (`0001`) aunque se referencien como `110-0001`.
+      const sep = code.indexOf('-');
+      account = await repo.findOneBy({
+        companyId,
+        parentCode: code.slice(0, sep),
+        code: code.slice(sep + 1),
+      });
+    }
     if (!account) {
       throw new BadRequestException(
         `Cuenta contable ${code} no encontrada para esta empresa`,

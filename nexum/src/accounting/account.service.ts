@@ -227,6 +227,20 @@ export class AccountService {
       .getMany();
   }
 
+  /**
+   * Código de subcuenta con el mismo formato que el nomenclador
+   * (`<cuenta>-<subcuenta>`, p. ej. `110-0010`). Acepta que el usuario
+   * escriba solo el sufijo (`10`, `0010`) o el código completo, y completa
+   * con ceros los sufijos numéricos hasta 4 dígitos.
+   */
+  static normalizeSubaccountCode(parentCode: string, rawCode: string): string {
+    let suffix = String(rawCode || '').trim();
+    if (suffix.startsWith(`${parentCode}-`)) suffix = suffix.slice(parentCode.length + 1);
+    if (!suffix) throw new BadRequestException('El código de subcuenta es obligatorio');
+    if (/^\d{1,3}$/.test(suffix)) suffix = suffix.padStart(4, '0');
+    return `${parentCode}-${suffix}`;
+  }
+
   async createSubaccount(
     companyId: number,
     data: {
@@ -246,21 +260,23 @@ export class AccountService {
       throw new BadRequestException('Cuenta padre no encontrada');
     }
 
+    const code = AccountService.normalizeSubaccountCode(parentAccount.code, data.subaccountCode);
+
     // Verificar que no exista una cuenta con el mismo código
     const existing = await this.accountRepo.findOneBy({
-      code: data.subaccountCode,
+      code,
       companyId,
     });
     if (existing) {
       throw new BadRequestException(
-        `Ya existe una cuenta con el código ${data.subaccountCode}`,
+        `Ya existe una cuenta con el código ${code}`,
       );
     }
 
     // Crear la subcuenta como una cuenta con level=4
     const subaccount = this.accountRepo.create({
       companyId,
-      code: data.subaccountCode,
+      code,
       name: data.subaccountName,
       description: data.description || null,
       type: parentAccount.type, // Heredar tipo de la cuenta padre
