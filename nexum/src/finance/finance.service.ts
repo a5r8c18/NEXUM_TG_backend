@@ -12,6 +12,7 @@ import { CashMovement } from '../entities/cash-movement.entity';
 import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { Customer } from '../entities/customer.entity';
 import { CounterpartConcept } from '../entities/counterpart-concept.entity';
+import { Account } from '../entities/account.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -453,15 +454,34 @@ export class FinanceService {
     if (filters?.status) qb.andWhere('ba.status = :status', { status: filters.status });
     if (filters?.accountType) qb.andWhere('ba.account_type = :type', { type: filters.accountType });
 
-    const banks = await qb.getMany();
-    const bankAccountCode = await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_BANK);
-    const cardAccountCode = await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_CARD);
-    for (const ba of banks) {
-      ba.accountingAccount = ba.accountingAccount || (ba.accountType === 'mlc'
-        ? (cardAccountCode || bankAccountCode)
-        : bankAccountCode);
+    return qb.getMany();
+  }
+
+  /**
+   * La cuenta contable de un banco la elige siempre el usuario: debe venir
+   * informada y existir en el nomenclador de la empresa.
+   */
+  private async validateBankAccountingAccount(companyId: number, code: string | null | undefined) {
+    const value = String(code ?? '').trim();
+    if (!value) {
+      throw new BadRequestException('Seleccione la cuenta contable a la que se vincula la cuenta bancaria');
     }
-    return banks;
+    const exists = await this.dataSource.getRepository(Account).findOneBy({ companyId, code: value });
+    if (!exists) {
+      throw new BadRequestException(`La cuenta contable ${value} no existe en el nomenclador de la empresa`);
+    }
+    return value;
+  }
+
+  /** Cuenta contable vinculada por el usuario al banco; sin cuenta por defecto. */
+  private bankAccountingCode(ba: BankAccount): string {
+    if (!ba.accountingAccount?.trim()) {
+      throw new BadRequestException(
+        `La cuenta bancaria ${ba.bankName} - ${ba.accountNumber} no tiene cuenta contable vinculada. ` +
+          'Asígnela en Finanzas > Bancos antes de registrar operaciones.',
+      );
+    }
+    return ba.accountingAccount.trim();
   }
 
   async findOneBankAccount(companyId: number, id: string, manager?: EntityManager) {
@@ -476,6 +496,7 @@ export class FinanceService {
 
   async createBankAccount(companyId: number, data: any) {
     const fields = pick(data, BANK_ACCOUNT_FIELDS);
+    fields.accountingAccount = await this.validateBankAccountingAccount(companyId, fields.accountingAccount);
     const ba = this.bankRepo.create({
       ...fields,
       accountName: (fields.accountName ?? fields.bankName ?? '').trim(),
@@ -489,6 +510,7 @@ export class FinanceService {
   async updateBankAccount(companyId: number, id: string, data: any) {
     const ba = await this.findOneBankAccount(companyId, id);
     Object.assign(ba, pick(data, BANK_ACCOUNT_UPDATE_FIELDS));
+    ba.accountingAccount = await this.validateBankAccountingAccount(companyId, ba.accountingAccount);
     if (!ba.accountName?.trim()) ba.accountName = ba.bankName;
     if (!ba.openingDate) ba.openingDate = new Date().toISOString().split('T')[0];
     return this.bankRepo.save(ba);
@@ -794,13 +816,7 @@ export class FinanceService {
     const ba = await manager.getRepository(BankAccount).findOneBy({ id: tx.bankAccountId, companyId });
     if (!ba) throw new NotFoundException('Cuenta bancaria no encontrada');
 
-    const bankAccountCode =
-      ba.accountingAccount ||
-      (ba.accountType === 'mlc'
-        ? await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_CARD)
-        : null) ||
-      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_BANK)) ||
-      '110';
+    const bankAccountCode = this.bankAccountingCode(ba);
 
     // Contabilidad se lleva en CUP: las cuentas en USD se convierten a la tasa
     // indicada en la Carga Inicial.
@@ -1742,23 +1758,24 @@ export class FinanceService {
       treasuryMapping = MappingType.TREASURY_CASH;
     }
 
-    // Si el pago está vinculado a una cuenta bancaria, se usa la cuenta
-    // contable a la que está asociada en Finanzas (no la genérica 110).
-    const bankAccountId = payment.bankAccountId || data.bankAccountId;
-    const linkedBank =
-      treasuryMapping !== MappingType.TREASURY_CASH && bankAccountId
-        ? await (manager ? manager.getRepository(BankAccount) : this.bankRepo).findOneBy({
-            id: bankAccountId,
-            companyId,
-          })
-        : null;
-
-    const cashAccountCode =
-      linkedBank?.accountingAccount ||
-      (await this.accountMappingService.getAccountForMapping(
+    // Operaciones bancarias: la cuenta es la que el usuario vinculó a la cuenta
+    // bancaria en Finanzas, nunca una por defecto. El efectivo va a Caja.
+    let cashAccountCode: string;
+    if (treasuryMapping === MappingType.TREASURY_CASH) {
+      cashAccountCode =
+        (await this.accountMappingService.getAccountForMapping(companyId, treasuryMapping)) || '101';
+    } else {
+      const bankAccountId = payment.bankAccountId || data.bankAccountId;
+      if (!bankAccountId) {
+        throw new BadRequestException('Seleccione la cuenta bancaria de la operación');
+      }
+      const linkedBank = await (manager ? manager.getRepository(BankAccount) : this.bankRepo).findOneBy({
+        id: bankAccountId,
         companyId,
-        treasuryMapping,
-      )) || '101';
+      });
+      if (!linkedBank) throw new NotFoundException('Cuenta bancaria no encontrada');
+      cashAccountCode = this.bankAccountingCode(linkedBank);
+    }
 
     const lines: any[] = [];
 
