@@ -197,7 +197,17 @@ export class VoucherService {
     const voucher = await this.voucherRepo.findOne({ where: { id: voucherId, companyId } });
     if (!voucher) throw new NotFoundException('Comprobante no encontrado');
 
-    type Origin = { module: string; label: string; route: string; queryParams?: Record<string, string> };
+    /**
+     * `display: 'voucher'` indica que el documento a mostrar es el propio
+     * comprobante (con sus partidas) y no una pantalla de otro módulo.
+     */
+    type Origin = {
+      module: string;
+      label: string;
+      route: string;
+      queryParams?: Record<string, string>;
+      display?: 'voucher';
+    };
     const own: Origin = {
       module: 'accounting',
       label: 'Comprobante en Contabilidad',
@@ -236,9 +246,13 @@ export class VoucherService {
         if (tx) return bankTxOrigin(tx);
 
         const payment = await one(
-          `SELECT id, reference_number FROM payments WHERE id::text = $1 AND company_id = $2`,
+          `SELECT id, reference_number, payment_type FROM payments WHERE id::text = $1 AND company_id = $2`,
           [src, companyId],
         );
+        // Cobros: se muestra el comprobante del cobro con sus partidas.
+        if (payment?.payment_type === 'receivable') {
+          return { module: 'finance', label: 'Comprobante del cobro', route: '', display: 'voucher' };
+        }
         if (payment) {
           const paymentTx = payment.reference_number
             ? await one(

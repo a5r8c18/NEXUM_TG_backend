@@ -99,6 +99,22 @@ export class BankTransaction {
   @Column({ name: 'counterpart_concept_code', type: 'varchar', length: 10, nullable: true })
   counterpartConceptCode: string | null;
 
+  /** Concepto 19 (pago en línea): cuenta de ingreso que recibe el importe bruto. */
+  @Column({ name: 'income_account', type: 'varchar', length: 50, nullable: true })
+  incomeAccount: string | null;
+
+  /** Concepto 19: importe bruto del ingreso (antes de la comisión). */
+  @Column({ name: 'income_amount', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  incomeAmount: number | null;
+
+  /** Concepto 19: cuenta de gasto de la comisión bancaria. */
+  @Column({ name: 'fee_account', type: 'varchar', length: 50, nullable: true })
+  feeAccount: string | null;
+
+  /** Concepto 19: comisión descontada por el banco. */
+  @Column({ name: 'fee_amount', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  feeAmount: number | null;
+
   @ManyToOne(() => Company)
   @JoinColumn({ name: 'company_id' })
   company: Company;

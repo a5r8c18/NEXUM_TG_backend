@@ -82,6 +82,9 @@ const CASH_REGISTER_FIELDS = [
 /** Código del comprobante que usa cuenta contable en vez de concepto. */
 const OPENING_ENTRY_CODE = 'Carga Inicial';
 
+/** Concepto de contrapartida: Ingresos por Pago en Línea (ingreso bruto - comisión = neto al banco). */
+const ONLINE_PAYMENT_CONCEPT = '19';
+
 /** Devuelve solo las propiedades permitidas presentes en `data`. */
 function pick(data: any, fields: readonly string[]): Record<string, any> {
   const out: Record<string, any> = {};
@@ -657,9 +660,19 @@ export class FinanceService {
         { manager },
       ));
 
+    const isOnlinePayment = concept?.code === ONLINE_PAYMENT_CONCEPT;
+    const online = isOnlinePayment
+      ? await this.validateOnlinePayment(companyId, data)
+      : { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null };
+    // En pago en línea el monto que entra al banco es el neto (ingreso - comisión).
+    if (isOnlinePayment) {
+      data.amount = Math.round((Number(online.incomeAmount) - Number(online.feeAmount)) * 100) / 100;
+    }
+
     const txRepo = manager.getRepository(BankTransaction);
     const tx = txRepo.create({
       ...pick(data, BANK_TRANSACTION_FIELDS),
+      ...online,
       counterpartConceptCode: concept?.code ?? null,
       counterpartyAccount: data.counterpartyAccount ?? null,
       counterpartyName: data.counterpartyName ?? null,
@@ -684,6 +697,9 @@ export class FinanceService {
 
     if (isOpeningEntry) {
       await this.createOpeningEntryVoucher(companyId, saved, manager);
+    }
+    if (isOnlinePayment) {
+      await this.createOnlinePaymentVoucher(companyId, saved, manager);
     }
 
     if (data.accountReceivableId) {
@@ -857,6 +873,114 @@ export class FinanceService {
         reference: tx.transactionNumber,
         createdBy: 'Sistema',
         lines: isCredit ? [bankLine, counterpartLine] : [counterpartLine, bankLine],
+      },
+      manager,
+    );
+  }
+
+  /**
+   * Valida los datos del concepto 19 (Ingresos por Pago en Línea): cuenta de
+   * ingreso y de gasto del nomenclador, ingreso bruto mayor que cero y
+   * comisión menor que el ingreso.
+   */
+  private async validateOnlinePayment(companyId: number, data: any) {
+    const incomeAccount = String(data.incomeAccount ?? '').trim();
+    const feeAccount = String(data.feeAccount ?? '').trim();
+    const incomeAmount = Math.round(Number(data.incomeAmount) * 100) / 100;
+    const feeAmount = Math.round(Number(data.feeAmount || 0) * 100) / 100;
+
+    if (!incomeAccount) throw new BadRequestException('Seleccione la cuenta de ingreso');
+    if (!feeAccount) throw new BadRequestException('Seleccione la cuenta de gasto de la comisión');
+    if (!(incomeAmount > 0)) throw new BadRequestException('Indique el importe del ingreso');
+    if (feeAmount < 0) throw new BadRequestException('La comisión no puede ser negativa');
+    if (feeAmount >= incomeAmount) {
+      throw new BadRequestException('La comisión debe ser menor que el importe del ingreso');
+    }
+
+    const accountRepo = this.dataSource.getRepository(Account);
+    for (const [code, type, label] of [
+      [incomeAccount, 'income', 'de ingreso'],
+      [feeAccount, 'expense', 'de gasto'],
+    ] as const) {
+      const account = await accountRepo.findOneBy({ companyId, code });
+      if (!account) {
+        throw new BadRequestException(`La cuenta ${code} no existe en el nomenclador de la empresa`);
+      }
+      if (account.type !== type) {
+        throw new BadRequestException(`La cuenta ${code} - ${account.name} no es una cuenta ${label}`);
+      }
+    }
+
+    return { incomeAccount, incomeAmount, feeAccount, feeAmount };
+  }
+
+  /**
+   * Comprobante del concepto 19 (Ingresos por Pago en Línea). El banco
+   * descuenta su comisión del cobro, por lo que:
+   *   Débito:  cuenta del banco (neto) + cuenta de gasto (comisión)
+   *   Crédito: cuenta de ingreso (importe bruto)
+   */
+  private async createOnlinePaymentVoucher(
+    companyId: number,
+    tx: BankTransaction,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (!tx.incomeAccount || !tx.feeAccount) {
+      throw new BadRequestException('Indique la cuenta de ingreso y la cuenta de gasto de la comisión');
+    }
+    const ba = await manager.getRepository(BankAccount).findOneBy({ id: tx.bankAccountId, companyId });
+    if (!ba) throw new NotFoundException('Cuenta bancaria no encontrada');
+    const bankAccountCode = this.bankAccountingCode(ba);
+
+    const isUsd = ba.currency === 'USD';
+    const rate = isUsd ? Number(tx.exchangeRate) : 1;
+    if (isUsd && !(rate > 1)) {
+      throw new BadRequestException(
+        `El comprobante ${tx.transactionNumber} es de una cuenta en USD: indique la tasa de cambio`,
+      );
+    }
+    const toCup = (v: number) => Math.round(Number(v) * rate * 100) / 100;
+    const income = toCup(Number(tx.incomeAmount));
+    const fee = toCup(Number(tx.feeAmount || 0));
+    const net = Math.round((income - fee) * 100) / 100;
+
+    const bankLabel = `${ba.bankName} - ${ba.accountNumber}`;
+    const customer = tx.counterpartyName || null;
+    const lines: any[] = [
+      {
+        accountCode: bankAccountCode,
+        debit: net,
+        credit: 0,
+        description: `Ingreso neto por pago en línea ${bankLabel}`,
+      },
+    ];
+    if (fee > 0) {
+      lines.push({
+        accountCode: tx.feeAccount,
+        debit: fee,
+        credit: 0,
+        description: `Comisión bancaria pago en línea ${tx.transactionNumber}`,
+      });
+    }
+    lines.push({
+      accountCode: tx.incomeAccount,
+      debit: 0,
+      credit: income,
+      description: tx.notes || `Ingreso por pago en línea ${tx.transactionNumber}`,
+      reference: customer,
+    });
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'finance',
+      tx.id,
+      {
+        date: tx.transactionDate,
+        description: `Ingreso por pago en línea ${tx.transactionNumber}${customer ? ` - ${customer}` : ''}`,
+        type: 'recibo',
+        reference: tx.transactionNumber,
+        createdBy: 'Sistema',
+        lines,
       },
       manager,
     );
@@ -1142,9 +1266,16 @@ export class FinanceService {
       const effectiveCode = data.transactionCode ?? tx.transactionCode ?? '';
       const isOpeningEntry = effectiveCode === OPENING_ENTRY_CODE;
       const wasOpeningEntry = tx.transactionCode === OPENING_ENTRY_CODE;
-      const openingSnapshot = [
-        tx.bankAccountId, Number(tx.amount), Number(tx.exchangeRate), tx.transactionDate, tx.counterpartyAccount, tx.notes,
-      ].join('|');
+      const wasOnlinePayment = !wasOpeningEntry && tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT;
+      // Datos que determinan el comprobante contable propio del movimiento
+      // (Carga Inicial y pago en línea); si cambian, el comprobante se regenera.
+      const voucherSnapshot = (t: BankTransaction) =>
+        [
+          t.transactionCode, t.counterpartConceptCode, t.bankAccountId, Number(t.amount),
+          Number(t.exchangeRate), t.transactionDate, t.counterpartyAccount, t.counterpartyName, t.notes,
+          t.incomeAccount, Number(t.incomeAmount || 0), t.feeAccount, Number(t.feeAmount || 0),
+        ].join('|');
+      const previousSnapshot = voucherSnapshot(tx);
 
       if (isOpeningEntry) {
         const account = data.counterpartyAccount ?? tx.counterpartyAccount;
@@ -1174,6 +1305,22 @@ export class FinanceService {
         }
         tx.counterpartyAccount = null;
         if (data.counterpartyName !== undefined) tx.counterpartyName = data.counterpartyName;
+      }
+
+      // Pago en línea: el monto al banco es siempre el neto (ingreso - comisión).
+      const isOnlinePayment = !isOpeningEntry && tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT;
+      if (isOnlinePayment) {
+        const merge = (k: string, prev: any) => (data[k] !== undefined ? data[k] : prev);
+        const online = await this.validateOnlinePayment(companyId, {
+          incomeAccount: merge('incomeAccount', tx.incomeAccount),
+          incomeAmount: merge('incomeAmount', tx.incomeAmount),
+          feeAccount: merge('feeAccount', tx.feeAccount),
+          feeAmount: merge('feeAmount', tx.feeAmount),
+        });
+        Object.assign(tx, online);
+        data.amount = Math.round((online.incomeAmount - online.feeAmount) * 100) / 100;
+      } else {
+        Object.assign(tx, { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null });
       }
 
       // ── Saldo bancario: puede cambiar monto, banco, o ambos ──
@@ -1222,13 +1369,13 @@ export class FinanceService {
       tx.operationStatus = 'edited';
       const savedTx = await txRepo.save(tx);
 
-      // Carga Inicial: mantener su comprobante contable alineado con el banco.
-      const openingChanged =
-        [savedTx.bankAccountId, Number(savedTx.amount), Number(savedTx.exchangeRate), savedTx.transactionDate, savedTx.counterpartyAccount, savedTx.notes].join('|') !==
-        openingSnapshot;
-      if ((wasOpeningEntry && !isOpeningEntry) || (isOpeningEntry && (!wasOpeningEntry || openingChanged))) {
+      // Carga Inicial y pago en línea: mantener su comprobante alineado con el banco.
+      const hadOwnVoucher = wasOpeningEntry || wasOnlinePayment;
+      const hasOwnVoucher = isOpeningEntry || isOnlinePayment;
+      if ((hadOwnVoucher || hasOwnVoucher) && voucherSnapshot(savedTx) !== previousSnapshot) {
         await this.cancelSourceVouchers(companyId, savedTx.id, `BankTransaction ${savedTx.transactionNumber}`, manager);
         if (isOpeningEntry) await this.createOpeningEntryVoucher(companyId, savedTx, manager);
+        if (isOnlinePayment) await this.createOnlinePaymentVoucher(companyId, savedTx, manager);
       }
 
       // Si cambió de banco, arrastrar el Payment vinculado (si existe).
@@ -1362,7 +1509,7 @@ export class FinanceService {
       const delta =
         tx.transactionType === 'credit' ? -Number(tx.amount) : Number(tx.amount);
       await this.applyBankBalanceDelta(companyId, tx.bankAccountId, delta, manager);
-      if (tx.transactionCode === OPENING_ENTRY_CODE) {
+      if (tx.transactionCode === OPENING_ENTRY_CODE || tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT) {
         await this.cancelSourceVouchers(companyId, tx.id, `BankTransaction ${tx.transactionNumber}`, manager);
       }
       await txRepo.remove(tx);
