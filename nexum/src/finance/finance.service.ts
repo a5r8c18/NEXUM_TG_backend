@@ -519,8 +519,9 @@ export class FinanceService {
   async getBankStatistics(companyId: number) {
     const all = await this.bankRepo.find({ where: { companyId } });
     const totalBalance = all.reduce((s, a) => s + Number(a.balance), 0);
+    const totalAvailable = all.reduce((s, a) => s + Number(a.availableBalance), 0);
     const activeAccounts = all.filter(a => a.status === 'active').length;
-    return { total: all.length, activeAccounts, totalBalance };
+    return { total: all.length, activeAccounts, totalBalance, totalAvailable };
   }
 
   // ══════════════════════════════════════════════════════════
