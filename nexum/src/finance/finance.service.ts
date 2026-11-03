@@ -85,6 +85,9 @@ const OPENING_ENTRY_CODE = 'Carga Inicial';
 /** Concepto de contrapartida: Ingresos por Pago en Línea (ingreso bruto - comisión = neto al banco). */
 const ONLINE_PAYMENT_CONCEPT = '19';
 
+/** Conceptos que piden una cuenta de ingreso del nomenclador: 19 (con comisión) y 23 (sin comisión). */
+const INCOME_ACCOUNT_CONCEPTS = new Set([ONLINE_PAYMENT_CONCEPT, '23']);
+
 /** Devuelve solo las propiedades permitidas presentes en `data`. */
 function pick(data: any, fields: readonly string[]): Record<string, any> {
   const out: Record<string, any> = {};
@@ -660,12 +663,12 @@ export class FinanceService {
         { manager },
       ));
 
-    const isOnlinePayment = concept?.code === ONLINE_PAYMENT_CONCEPT;
-    const online = isOnlinePayment
-      ? await this.validateOnlinePayment(companyId, data)
+    const isIncomeAccount = INCOME_ACCOUNT_CONCEPTS.has(concept?.code ?? '');
+    const online = isIncomeAccount
+      ? await this.validateOnlinePayment(companyId, data, concept?.code === ONLINE_PAYMENT_CONCEPT)
       : { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null };
-    // En pago en línea el monto que entra al banco es el neto (ingreso - comisión).
-    if (isOnlinePayment) {
+    // El monto que entra al banco es el neto: ingreso menos comisión (concepto 19).
+    if (isIncomeAccount) {
       data.amount = Math.round((Number(online.incomeAmount) - Number(online.feeAmount)) * 100) / 100;
     }
 
@@ -698,7 +701,7 @@ export class FinanceService {
     if (isOpeningEntry) {
       await this.createOpeningEntryVoucher(companyId, saved, manager);
     }
-    if (isOnlinePayment) {
+    if (isIncomeAccount) {
       await this.createOnlinePaymentVoucher(companyId, saved, manager);
     }
 
@@ -879,29 +882,30 @@ export class FinanceService {
   }
 
   /**
-   * Valida los datos del concepto 19 (Ingresos por Pago en Línea): cuenta de
-   * ingreso y de gasto del nomenclador, ingreso bruto mayor que cero y
-   * comisión menor que el ingreso.
+   * Valida los conceptos con cuenta de ingreso del nomenclador: el 19
+   * (Ingresos por Pago en Línea) pide además la cuenta de gasto de la
+   * comisión; el 23 (Ingresos de cafetería) solo la cuenta de ingreso.
    */
-  private async validateOnlinePayment(companyId: number, data: any) {
+  private async validateOnlinePayment(companyId: number, data: any, requireFee = true) {
     const incomeAccount = String(data.incomeAccount ?? '').trim();
-    const feeAccount = String(data.feeAccount ?? '').trim();
+    const feeAccount = requireFee ? String(data.feeAccount ?? '').trim() : null;
     const incomeAmount = Math.round(Number(data.incomeAmount) * 100) / 100;
-    const feeAmount = Math.round(Number(data.feeAmount || 0) * 100) / 100;
+    const feeAmount = requireFee ? Math.round(Number(data.feeAmount || 0) * 100) / 100 : 0;
 
     if (!incomeAccount) throw new BadRequestException('Seleccione la cuenta de ingreso');
-    if (!feeAccount) throw new BadRequestException('Seleccione la cuenta de gasto de la comisión');
     if (!(incomeAmount > 0)) throw new BadRequestException('Indique el importe del ingreso');
-    if (feeAmount < 0) throw new BadRequestException('La comisión no puede ser negativa');
-    if (feeAmount >= incomeAmount) {
-      throw new BadRequestException('La comisión debe ser menor que el importe del ingreso');
+    if (requireFee) {
+      if (!feeAccount) throw new BadRequestException('Seleccione la cuenta de gasto de la comisión');
+      if (feeAmount < 0) throw new BadRequestException('La comisión no puede ser negativa');
+      if (feeAmount >= incomeAmount) {
+        throw new BadRequestException('La comisión debe ser menor que el importe del ingreso');
+      }
     }
 
     const accountRepo = this.dataSource.getRepository(Account);
-    for (const [code, type, label] of [
-      [incomeAccount, 'income', 'de ingreso'],
-      [feeAccount, 'expense', 'de gasto'],
-    ] as const) {
+    const checks: [string, string, string][] = [[incomeAccount, 'income', 'de ingreso']];
+    if (feeAccount) checks.push([feeAccount, 'expense', 'de gasto']);
+    for (const [code, type, label] of checks) {
       const account = await accountRepo.findOneBy({ companyId, code });
       if (!account) {
         throw new BadRequestException(`La cuenta ${code} no existe en el nomenclador de la empresa`);
@@ -925,12 +929,16 @@ export class FinanceService {
     tx: BankTransaction,
     manager: EntityManager,
   ): Promise<void> {
-    if (!tx.incomeAccount || !tx.feeAccount) {
-      throw new BadRequestException('Indique la cuenta de ingreso y la cuenta de gasto de la comisión');
+    if (!tx.incomeAccount) {
+      throw new BadRequestException('Indique la cuenta de ingreso');
     }
     const ba = await manager.getRepository(BankAccount).findOneBy({ id: tx.bankAccountId, companyId });
     if (!ba) throw new NotFoundException('Cuenta bancaria no encontrada');
     const bankAccountCode = this.bankAccountingCode(ba);
+    const concept = tx.counterpartConceptCode
+      ? await this.findOneCounterpartConcept(tx.counterpartConceptCode)
+      : null;
+    const conceptName = concept?.name || 'Ingreso por pago en línea';
 
     const isUsd = ba.currency === 'USD';
     const rate = isUsd ? Number(tx.exchangeRate) : 1;
@@ -951,22 +959,22 @@ export class FinanceService {
         accountCode: bankAccountCode,
         debit: net,
         credit: 0,
-        description: `Ingreso neto por pago en línea ${bankLabel}`,
+        description: `${conceptName} neto ${bankLabel}`,
       },
     ];
-    if (fee > 0) {
+    if (fee > 0 && tx.feeAccount) {
       lines.push({
         accountCode: tx.feeAccount,
         debit: fee,
         credit: 0,
-        description: `Comisión bancaria pago en línea ${tx.transactionNumber}`,
+        description: `Comisión bancaria ${tx.transactionNumber}`,
       });
     }
     lines.push({
       accountCode: tx.incomeAccount,
       debit: 0,
       credit: income,
-      description: tx.notes || `Ingreso por pago en línea ${tx.transactionNumber}`,
+      description: tx.notes || `${conceptName} ${tx.transactionNumber}`,
       reference: customer,
     });
 
@@ -976,7 +984,7 @@ export class FinanceService {
       tx.id,
       {
         date: tx.transactionDate,
-        description: `Ingreso por pago en línea ${tx.transactionNumber}${customer ? ` - ${customer}` : ''}`,
+        description: `${conceptName} ${tx.transactionNumber}${customer ? ` - ${customer}` : ''}`,
         type: 'recibo',
         reference: tx.transactionNumber,
         createdBy: 'Sistema',
@@ -1266,7 +1274,7 @@ export class FinanceService {
       const effectiveCode = data.transactionCode ?? tx.transactionCode ?? '';
       const isOpeningEntry = effectiveCode === OPENING_ENTRY_CODE;
       const wasOpeningEntry = tx.transactionCode === OPENING_ENTRY_CODE;
-      const wasOnlinePayment = !wasOpeningEntry && tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT;
+      const wasOnlinePayment = !wasOpeningEntry && INCOME_ACCOUNT_CONCEPTS.has(tx.counterpartConceptCode ?? '');
       // Datos que determinan el comprobante contable propio del movimiento
       // (Carga Inicial y pago en línea); si cambian, el comprobante se regenera.
       const voucherSnapshot = (t: BankTransaction) =>
@@ -1307,16 +1315,20 @@ export class FinanceService {
         if (data.counterpartyName !== undefined) tx.counterpartyName = data.counterpartyName;
       }
 
-      // Pago en línea: el monto al banco es siempre el neto (ingreso - comisión).
-      const isOnlinePayment = !isOpeningEntry && tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT;
+      // Conceptos con cuenta de ingreso: el monto al banco es el neto (ingreso - comisión).
+      const isOnlinePayment = !isOpeningEntry && INCOME_ACCOUNT_CONCEPTS.has(tx.counterpartConceptCode ?? '');
       if (isOnlinePayment) {
         const merge = (k: string, prev: any) => (data[k] !== undefined ? data[k] : prev);
-        const online = await this.validateOnlinePayment(companyId, {
-          incomeAccount: merge('incomeAccount', tx.incomeAccount),
-          incomeAmount: merge('incomeAmount', tx.incomeAmount),
-          feeAccount: merge('feeAccount', tx.feeAccount),
-          feeAmount: merge('feeAmount', tx.feeAmount),
-        });
+        const online = await this.validateOnlinePayment(
+          companyId,
+          {
+            incomeAccount: merge('incomeAccount', tx.incomeAccount),
+            incomeAmount: merge('incomeAmount', tx.incomeAmount),
+            feeAccount: merge('feeAccount', tx.feeAccount),
+            feeAmount: merge('feeAmount', tx.feeAmount),
+          },
+          tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT,
+        );
         Object.assign(tx, online);
         data.amount = Math.round((online.incomeAmount - online.feeAmount) * 100) / 100;
       } else {
@@ -1509,7 +1521,7 @@ export class FinanceService {
       const delta =
         tx.transactionType === 'credit' ? -Number(tx.amount) : Number(tx.amount);
       await this.applyBankBalanceDelta(companyId, tx.bankAccountId, delta, manager);
-      if (tx.transactionCode === OPENING_ENTRY_CODE || tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT) {
+      if (tx.transactionCode === OPENING_ENTRY_CODE || INCOME_ACCOUNT_CONCEPTS.has(tx.counterpartConceptCode ?? '')) {
         await this.cancelSourceVouchers(companyId, tx.id, `BankTransaction ${tx.transactionNumber}`, manager);
       }
       await txRepo.remove(tx);
