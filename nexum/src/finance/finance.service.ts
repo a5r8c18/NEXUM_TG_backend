@@ -88,6 +88,9 @@ const ONLINE_PAYMENT_CONCEPT = '19';
 /** Conceptos que piden una cuenta de ingreso del nomenclador: 19 (con comisión) y 23 (sin comisión). */
 const INCOME_ACCOUNT_CONCEPTS = new Set([ONLINE_PAYMENT_CONCEPT, '23']);
 
+/** Concepto 38: transferencias entre cuentas bancarias propias. */
+const BANK_TRANSFER_CONCEPT = '38';
+
 /** Devuelve solo las propiedades permitidas presentes en `data`. */
 function pick(data: any, fields: readonly string[]): Record<string, any> {
   const out: Record<string, any> = {};
@@ -586,6 +589,149 @@ export class FinanceService {
   }
 
   /**
+   * Concepto 38: cuenta contraria de la transferencia en la misma moneda.
+   * Con dos cuentas en esa moneda es la otra; con más de dos, el movimiento
+   * solo corre entre la corriente (`checking`) y la de gastos mayorista
+   * (`expenses`). Devuelve null si no hay contraria válida.
+   */
+  private async findTransferCounterpart(
+    companyId: number,
+    bank: BankAccount,
+    manager?: EntityManager,
+  ): Promise<BankAccount | null> {
+    const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
+    const sameCurrency = await bankRepo.find({
+      where: { companyId, currency: bank.currency, status: 'active' },
+      order: { isDefault: 'DESC', createdAt: 'ASC' },
+    });
+    const others = sameCurrency.filter((b) => b.id !== bank.id);
+    if (!others.length) return null;
+    if (sameCurrency.length <= 2) return others[0];
+
+    const target =
+      bank.accountType === 'checking'
+        ? 'expenses'
+        : bank.accountType === 'expenses'
+          ? 'checking'
+          : null;
+    if (!target) return null;
+    return others.find((b) => b.accountType === target) ?? null;
+  }
+
+  /**
+   * Resuelve la cuenta contraria de una transferencia ya registrada: primero
+   * por `counterpartyBank` (número de cuenta guardado al crearla) y, si ya no
+   * existe, por la regla corriente ↔ gastos vigente.
+   */
+  private async resolveStoredTransferCounterpart(
+    companyId: number,
+    counterpartyBank: string | null,
+    bankAccountId: string,
+    manager?: EntityManager,
+  ): Promise<BankAccount | null> {
+    const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
+    if (counterpartyBank) {
+      const stored = await bankRepo.findOneBy({
+        companyId,
+        accountNumber: counterpartyBank,
+      });
+      if (stored) return stored;
+    }
+    const bank = await bankRepo.findOneBy({ id: bankAccountId, companyId });
+    return bank ? this.findTransferCounterpart(companyId, bank, manager) : null;
+  }
+
+  /** Tipo de comprobante del espejo: el equivalente de sentido opuesto. */
+  private mirrorTransactionCode(code: string | null): string {
+    const map: Record<string, string> = {
+      'Transferencia Electrónica Recibida': 'Transferencia Electrónica Emitida',
+      'Otros cobros': 'Otros pagos',
+      'Transferencia Electrónica Emitida': 'Transferencia Electrónica Recibida',
+      'Otros pagos': 'Otros cobros',
+    };
+    return map[code ?? ''] ?? 'Transferencia entre cuentas';
+  }
+
+  /** Busca el comprobante espejo vinculado a `tx` (concepto 38), en cualquier sentido. */
+  private async findTransferLinked(
+    companyId: number,
+    tx: BankTransaction,
+    manager?: EntityManager,
+  ): Promise<BankTransaction | null> {
+    const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
+    if (tx.linkedTransactionId) {
+      const linked = await txRepo.findOneBy({ id: tx.linkedTransactionId, companyId });
+      if (linked) return linked;
+    }
+    return txRepo.findOneBy({ linkedTransactionId: tx.id, companyId });
+  }
+
+  /**
+   * Crea el comprobante espejo del concepto 38 en la cuenta contraria:
+   * mismo monto, tipo opuesto y enlace mutuo con el original.
+   */
+  private async createTransferMirror(
+    companyId: number,
+    tx: BankTransaction,
+    txBank: BankAccount,
+    counterpart: BankAccount,
+    manager?: EntityManager,
+  ): Promise<BankTransaction> {
+    const txRepo = manager ? manager.getRepository(BankTransaction) : this.txRepo;
+    const prefix = tx.transactionType === 'credit' ? 'TEE' : 'TER';
+    const transactionNumber = await this.sequenceService.nextFormatted(
+      companyId,
+      `bank-transaction-${prefix}`,
+      prefix,
+      { manager },
+    );
+    const mirror = txRepo.create({
+      companyId,
+      bankAccountId: counterpart.id,
+      transactionNumber,
+      transactionDate: tx.transactionDate,
+      transactionType: tx.transactionType === 'credit' ? 'debit' : 'credit',
+      amount: tx.amount,
+      currency: tx.currency,
+      exchangeRate: tx.exchangeRate,
+      description: `Transferencia ${tx.transactionNumber}`,
+      referenceNumber: tx.transactionNumber,
+      transactionCode: this.mirrorTransactionCode(tx.transactionCode),
+      counterpartConceptCode: BANK_TRANSFER_CONCEPT,
+      counterpartyBank: txBank.accountNumber,
+      counterpartyName: tx.counterpartyName,
+      notes: tx.notes,
+      linkedTransactionId: tx.id,
+    });
+    return txRepo.save(mirror);
+  }
+
+  /** Alinea el espejo con los datos vigentes del comprobante original. */
+  private async updateTransferMirror(
+    mirror: BankTransaction,
+    tx: BankTransaction,
+    txBank: BankAccount,
+    counterpart: BankAccount,
+    manager: EntityManager,
+  ): Promise<void> {
+    const txRepo = manager.getRepository(BankTransaction);
+    mirror.bankAccountId = counterpart.id;
+    mirror.transactionType = tx.transactionType === 'credit' ? 'debit' : 'credit';
+    mirror.transactionCode = this.mirrorTransactionCode(tx.transactionCode);
+    mirror.transactionDate = tx.transactionDate;
+    mirror.amount = tx.amount;
+    mirror.currency = tx.currency;
+    mirror.exchangeRate = tx.exchangeRate;
+    mirror.description = `Transferencia ${tx.transactionNumber}`;
+    mirror.referenceNumber = tx.transactionNumber;
+    mirror.counterpartyBank = txBank.accountNumber;
+    mirror.counterpartyName = tx.counterpartyName;
+    mirror.notes = tx.notes;
+    mirror.operationStatus = 'edited';
+    await txRepo.save(mirror);
+  }
+
+  /**
    * Crea una transacción bancaria.
    *
    * Dependiendo del `transactionCode`:
@@ -672,6 +818,18 @@ export class FinanceService {
       data.amount = Math.round((Number(online.incomeAmount) - Number(online.feeAmount)) * 100) / 100;
     }
 
+    // Concepto 38: la cuenta contraria en la misma moneda se mueve en
+    // sentido opuesto (corriente ↔ gastos cuando hay más de dos cuentas).
+    let transferCounterpart: BankAccount | null = null;
+    if (concept?.code === BANK_TRANSFER_CONCEPT) {
+      transferCounterpart = await this.findTransferCounterpart(companyId, ba, manager);
+      if (!transferCounterpart) {
+        throw new BadRequestException(
+          'El concepto 38 transfiere entre cuentas propias en la misma moneda; si hay más de dos, solo entre la corriente y la de gastos',
+        );
+      }
+    }
+
     const txRepo = manager.getRepository(BankTransaction);
     const tx = txRepo.create({
       ...pick(data, BANK_TRANSACTION_FIELDS),
@@ -679,6 +837,7 @@ export class FinanceService {
       counterpartConceptCode: concept?.code ?? null,
       counterpartyAccount: data.counterpartyAccount ?? null,
       counterpartyName: data.counterpartyName ?? null,
+      counterpartyBank: transferCounterpart?.accountNumber ?? null,
       transactionNumber,
       description: data.description || transactionCode || data.transactionType,
       transactionDate: data.transactionDate || new Date().toISOString().split('T')[0],
@@ -697,6 +856,27 @@ export class FinanceService {
         : -Number(data.amount),
       manager,
     );
+
+    if (transferCounterpart) {
+      await this.applyBankBalanceDelta(
+        companyId,
+        transferCounterpart.id,
+        data.transactionType === 'credit'
+          ? -Number(data.amount)
+          : Number(data.amount),
+        manager,
+      );
+      const mirror = await this.createTransferMirror(
+        companyId,
+        saved,
+        ba,
+        transferCounterpart,
+        manager,
+      );
+      saved.linkedTransactionId = mirror.id;
+      await txRepo.save(saved);
+      await this.createBankTransferVoucher(companyId, saved, ba, transferCounterpart, manager);
+    }
 
     if (isOpeningEntry) {
       await this.createOpeningEntryVoucher(companyId, saved, manager);
@@ -995,6 +1175,65 @@ export class FinanceService {
   }
 
   /**
+   * Comprobante del concepto 38 (transferencias entre cuentas propias):
+   *   Débito:  cuenta contable del banco que recibe los fondos
+   *   Crédito: cuenta contable del banco que los entrega
+   * Un solo comprobante por par; se ancla en el comprobante operado.
+   */
+  private async createBankTransferVoucher(
+    companyId: number,
+    tx: BankTransaction,
+    txBank: BankAccount,
+    counterpart: BankAccount,
+    manager: EntityManager,
+  ): Promise<void> {
+    const isCredit = tx.transactionType === 'credit';
+    const debitCode = this.bankAccountingCode(isCredit ? txBank : counterpart);
+    const creditCode = this.bankAccountingCode(isCredit ? counterpart : txBank);
+
+    const isUsd = txBank.currency === 'USD';
+    const rate = isUsd ? Number(tx.exchangeRate) : 1;
+    if (isUsd && !(rate > 1)) {
+      throw new BadRequestException(
+        `El comprobante ${tx.transactionNumber} es de una cuenta en USD: indique la tasa de cambio`,
+      );
+    }
+    const amount = Math.round(Number(tx.amount) * rate * 100) / 100;
+
+    const txLabel = `${txBank.bankName} - ${txBank.accountNumber}`;
+    const cpLabel = `${counterpart.bankName} - ${counterpart.accountNumber}`;
+    const [destLabel, srcLabel] = isCredit ? [txLabel, cpLabel] : [cpLabel, txLabel];
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'finance',
+      tx.id,
+      {
+        date: tx.transactionDate,
+        description: `Transferencia ${tx.transactionNumber} de ${srcLabel} a ${destLabel}`,
+        type: 'ajuste',
+        reference: tx.transactionNumber,
+        createdBy: 'Sistema',
+        lines: [
+          {
+            accountCode: debitCode,
+            debit: amount,
+            credit: 0,
+            description: `Transferencia recibida ${destLabel}`,
+          },
+          {
+            accountCode: creditCode,
+            debit: 0,
+            credit: amount,
+            description: `Transferencia emitida ${srcLabel}`,
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
+  /**
    * Genera el comprobante contable de las Cargas Iniciales registradas antes
    * de que existiera la contabilización automática. Omite las que ya tienen
    * un comprobante vigente y procesa cada una en su propia transacción, de
@@ -1275,6 +1514,8 @@ export class FinanceService {
       const isOpeningEntry = effectiveCode === OPENING_ENTRY_CODE;
       const wasOpeningEntry = tx.transactionCode === OPENING_ENTRY_CODE;
       const wasOnlinePayment = !wasOpeningEntry && INCOME_ACCOUNT_CONCEPTS.has(tx.counterpartConceptCode ?? '');
+      const wasBankTransfer = !wasOpeningEntry && tx.counterpartConceptCode === BANK_TRANSFER_CONCEPT;
+      const previousCounterpartyBank = tx.counterpartyBank;
       // Datos que determinan el comprobante contable propio del movimiento
       // (Carga Inicial y pago en línea); si cambian, el comprobante se regenera.
       const voucherSnapshot = (t: BankTransaction) =>
@@ -1282,6 +1523,7 @@ export class FinanceService {
           t.transactionCode, t.counterpartConceptCode, t.bankAccountId, Number(t.amount),
           Number(t.exchangeRate), t.transactionDate, t.counterpartyAccount, t.counterpartyName, t.notes,
           t.incomeAccount, Number(t.incomeAmount || 0), t.feeAccount, Number(t.feeAmount || 0),
+          t.counterpartyBank,
         ].join('|');
       const previousSnapshot = voucherSnapshot(tx);
 
@@ -1370,6 +1612,45 @@ export class FinanceService {
         tx.bankAccountId = newBankId;
       }
 
+      // Concepto 38: revertir el efecto en la contraria anterior y aplicar
+      // el efecto nuevo en la contraria vigente (siempre en sentido opuesto
+      // a la cuenta seleccionada). Solo se revierte si hay evidencia de que
+      // el efecto se aplicó (counterpartyBank o espejo vinculado).
+      const isBankTransfer = !isOpeningEntry && tx.counterpartConceptCode === BANK_TRANSFER_CONCEPT;
+      const linkedTransfer = wasBankTransfer
+        ? await this.findTransferLinked(companyId, tx, manager)
+        : null;
+      if (wasBankTransfer && (previousCounterpartyBank || linkedTransfer)) {
+        const oldCp = await this.resolveStoredTransferCounterpart(
+          companyId,
+          previousCounterpartyBank,
+          oldBankId,
+          manager,
+        );
+        if (oldCp) {
+          await this.applyBankBalanceDelta(companyId, oldCp.id, oldSigned, manager);
+        }
+      }
+      let transferCounterpart: BankAccount | null = null;
+      let transferNewBank: BankAccount | null = null;
+      if (isBankTransfer) {
+        transferNewBank = await manager
+          .getRepository(BankAccount)
+          .findOneBy({ id: newBankId, companyId });
+        transferCounterpart = transferNewBank
+          ? await this.findTransferCounterpart(companyId, transferNewBank, manager)
+          : null;
+        if (!transferCounterpart) {
+          throw new BadRequestException(
+            'El concepto 38 transfiere entre cuentas propias en la misma moneda; si hay más de dos, solo entre la corriente y la de gastos',
+          );
+        }
+        await this.applyBankBalanceDelta(companyId, transferCounterpart.id, -newSigned, manager);
+        tx.counterpartyBank = transferCounterpart.accountNumber;
+      } else if (wasBankTransfer) {
+        tx.counterpartyBank = null;
+      }
+
       Object.assign(
         tx,
         pick(data, [
@@ -1381,13 +1662,44 @@ export class FinanceService {
       tx.operationStatus = 'edited';
       const savedTx = await txRepo.save(tx);
 
-      // Carga Inicial y pago en línea: mantener su comprobante alineado con el banco.
-      const hadOwnVoucher = wasOpeningEntry || wasOnlinePayment;
-      const hasOwnVoucher = isOpeningEntry || isOnlinePayment;
+      // Concepto 38: el espejo en la contraria sigue al comprobante.
+      if (isBankTransfer && transferCounterpart && transferNewBank) {
+        if (linkedTransfer) {
+          await this.updateTransferMirror(
+            linkedTransfer,
+            savedTx,
+            transferNewBank,
+            transferCounterpart,
+            manager,
+          );
+        } else {
+          const mirror = await this.createTransferMirror(
+            companyId,
+            savedTx,
+            transferNewBank,
+            transferCounterpart,
+            manager,
+          );
+          savedTx.linkedTransactionId = mirror.id;
+          await txRepo.save(savedTx);
+        }
+      } else if (linkedTransfer) {
+        await txRepo.remove(linkedTransfer);
+        savedTx.linkedTransactionId = null;
+        await txRepo.save(savedTx);
+      }
+
+      // Carga Inicial, pago en línea y transferencias: mantener el
+      // comprobante contable alineado con el banco.
+      const hadOwnVoucher = wasOpeningEntry || wasOnlinePayment || wasBankTransfer;
+      const hasOwnVoucher = isOpeningEntry || isOnlinePayment || isBankTransfer;
       if ((hadOwnVoucher || hasOwnVoucher) && voucherSnapshot(savedTx) !== previousSnapshot) {
         await this.cancelSourceVouchers(companyId, savedTx.id, `BankTransaction ${savedTx.transactionNumber}`, manager);
         if (isOpeningEntry) await this.createOpeningEntryVoucher(companyId, savedTx, manager);
         if (isOnlinePayment) await this.createOnlinePaymentVoucher(companyId, savedTx, manager);
+        if (isBankTransfer && transferCounterpart && transferNewBank) {
+          await this.createBankTransferVoucher(companyId, savedTx, transferNewBank, transferCounterpart, manager);
+        }
       }
 
       // Si cambió de banco, arrastrar el Payment vinculado (si existe).
@@ -1521,7 +1833,32 @@ export class FinanceService {
       const delta =
         tx.transactionType === 'credit' ? -Number(tx.amount) : Number(tx.amount);
       await this.applyBankBalanceDelta(companyId, tx.bankAccountId, delta, manager);
-      if (tx.transactionCode === OPENING_ENTRY_CODE || INCOME_ACCOUNT_CONCEPTS.has(tx.counterpartConceptCode ?? '')) {
+      // Concepto 38: revertir también el movimiento en la cuenta contraria
+      // y eliminar el comprobante espejo. Solo se revierte el saldo si hay
+      // evidencia de que el efecto se aplicó (counterpartyBank o espejo).
+      if (tx.counterpartConceptCode === BANK_TRANSFER_CONCEPT) {
+        const linked = await this.findTransferLinked(companyId, tx, manager);
+        if (tx.counterpartyBank || linked) {
+          const counterpart = await this.resolveStoredTransferCounterpart(
+            companyId,
+            tx.counterpartyBank,
+            tx.bankAccountId,
+            manager,
+          );
+          if (counterpart) {
+            await this.applyBankBalanceDelta(
+              companyId,
+              counterpart.id,
+              -delta,
+              manager,
+            );
+          }
+        }
+        if (linked) {
+          await txRepo.remove(linked);
+        }
+      }
+      if (tx.transactionCode === OPENING_ENTRY_CODE || INCOME_ACCOUNT_CONCEPTS.has(tx.counterpartConceptCode ?? '') || tx.counterpartConceptCode === BANK_TRANSFER_CONCEPT) {
         await this.cancelSourceVouchers(companyId, tx.id, `BankTransaction ${tx.transactionNumber}`, manager);
       }
       await txRepo.remove(tx);
@@ -1580,6 +1917,7 @@ export class FinanceService {
       counterpartConceptCode: original.counterpartConceptCode,
       counterpartyAccount: original.counterpartyAccount,
       counterpartyName: original.counterpartyName,
+      counterpartyBank: original.counterpartyBank,
       parentTransactionId: original.id,
     });
     const saved = await txRepo.save(reversal);
@@ -1590,6 +1928,39 @@ export class FinanceService {
       reverseType === 'credit' ? Number(original.amount) : -Number(original.amount),
       manager,
     );
+
+    // Concepto 38: la contraria también revierte su movimiento y se
+    // registra el espejo del reverso para que quede en su historial.
+    if (original.counterpartConceptCode === BANK_TRANSFER_CONCEPT &&
+        (original.counterpartyBank || (await this.findTransferLinked(companyId, original, manager)))) {
+      const counterpart = await this.resolveStoredTransferCounterpart(
+        companyId,
+        original.counterpartyBank,
+        original.bankAccountId,
+        manager,
+      );
+      if (counterpart) {
+        await this.applyBankBalanceDelta(
+          companyId,
+          counterpart.id,
+          reverseType === 'credit' ? -Number(original.amount) : Number(original.amount),
+          manager,
+        );
+        const originalBank = await (manager ? manager.getRepository(BankAccount) : this.bankRepo)
+          .findOneBy({ id: original.bankAccountId, companyId });
+        if (originalBank) {
+          const revMirror = await this.createTransferMirror(
+            companyId,
+            saved,
+            originalBank,
+            counterpart,
+            manager,
+          );
+          saved.linkedTransactionId = revMirror.id;
+          await txRepo.save(saved);
+        }
+      }
+    }
 
     this.logger.log(`BankTransaction ${original.transactionNumber} reversada por ${saved.transactionNumber}`);
     return saved;
