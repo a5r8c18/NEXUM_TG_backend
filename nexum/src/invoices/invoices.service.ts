@@ -124,6 +124,7 @@ export class InvoicesService {
     const invoice = await this.invoiceRepo.findOne({
       where: { id, companyId },
       relations: ['items'],
+      withDeleted: true,
     });
     if (!invoice) throw new NotFoundException(`Factura #${id} no encontrada`);
 
