@@ -277,21 +277,25 @@ export class FinanceController {
 
   // ── Clientes / Entidades ──
   @Get('customers')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
   findCustomers(@Req() req: Request) {
     return this.financeService.findCustomers(getCompanyId(req));
   }
 
   @Post('customers')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
   createCustomer(@Req() req: Request, @Body() body: any) {
     return this.financeService.createCustomer(getCompanyId(req), body);
   }
 
   @Put('customers/:id')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
   updateCustomer(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
     return this.financeService.updateCustomer(getCompanyId(req), id, body);
   }
 
   @Delete('customers/:id')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)
   deleteCustomer(@Req() req: Request, @Param('id') id: string) {
     return this.financeService.deleteCustomer(getCompanyId(req), id);
   }
