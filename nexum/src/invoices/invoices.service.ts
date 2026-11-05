@@ -17,6 +17,8 @@ import { MappingType } from '../entities/account-mapping.entity';
 import { Invoice } from '../entities/invoice.entity';
 import { InvoiceItem } from '../entities/invoice-item.entity';
 import { Movement } from '../entities/movement.entity';
+import { MovementItem } from '../entities/movement-item.entity';
+import { WarehouseReturn } from '../entities/warehouse-return.entity';
 import { DeliveryReport } from '../entities/delivery-report.entity';
 import { AccountReceivable } from '../entities/account-receivable.entity';
 import { Customer } from '../entities/customer.entity';
@@ -788,6 +790,113 @@ export class InvoicesService {
     if (options?.reason) {
       invoice.notes = `${invoice.notes ? `${invoice.notes} | ` : ''}Anulada: ${options.reason}`;
     }
+  }
+
+  /**
+   * Cancela la anulación de una factura: anula los comprobantes de reverso,
+   * saca del inventario lo que la devolución había reingresado, elimina los
+   * movimientos/informes de devolución creados y restaura la CxC y la
+   * factura a pendiente.
+   */
+  async restoreAnnulled(
+    companyId: number,
+    id: string,
+    options?: { reason?: string; performedBy?: string },
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const invoice = await manager.getRepository(Invoice).findOne({
+        where: { id, companyId },
+      });
+      if (!invoice) throw new NotFoundException(`Factura #${id} no encontrada`);
+      if (invoice.status !== 'cancelled') {
+        throw new BadRequestException(
+          `Solo se puede cancelar la anulación de una factura anulada (${invoice.invoiceNumber})`,
+        );
+      }
+
+      const ar = await manager.getRepository(AccountReceivable).findOne({
+        where: { invoiceId: id, companyId },
+      });
+
+      // 1. Anular los comprobantes de reverso generados por la anulación.
+      const sourceIds = [`${id}-reversal`, `${id}-cost-reversal`];
+      if (ar) sourceIds.push(`AR-${ar.id}-reversal`);
+      for (const src of sourceIds) {
+        const vouchers = await this.voucherService.findVouchersBySourceDocumentId(
+          companyId,
+          src,
+        );
+        for (const v of vouchers) {
+          if (v.status !== 'cancelled') {
+            await this.voucherService.updateVoucherStatus(
+              companyId,
+              v.id,
+              'cancelled',
+              manager,
+            );
+          }
+        }
+      }
+
+      // 2. Revertir los movimientos de devolución de la anulación: sale del
+      //    almacén lo que había reingresado y se eliminan los movimientos.
+      const returnMovements = await manager.getRepository(Movement).find({
+        where: {
+          companyId,
+          movementType: 'entry',
+          reason: `Anulación factura ${invoice.invoiceNumber}`,
+        },
+        relations: ['items'],
+      });
+      for (const m of returnMovements) {
+        const lines = m.items?.length ? m.items : ([m] as any[]);
+        if (m.destinationWarehouse) {
+          for (const line of lines) {
+            if (!line.productCode) continue;
+            await this.inventoryWarehouseService.updateStock(
+              companyId,
+              line.productCode,
+              m.destinationWarehouse,
+              Number(line.quantity),
+              'exit',
+              undefined,
+              manager,
+            );
+          }
+        }
+        await manager.getRepository(MovementItem).delete({ movementId: m.id });
+        await manager.getRepository(Movement).delete({ id: m.id });
+      }
+      if (returnMovements.length) {
+        await manager
+          .getRepository(WarehouseReturn)
+          .createQueryBuilder()
+          .update()
+          .set({ status: 'cancelled' })
+          .where('company_id = :companyId', { companyId })
+          .andWhere('return_reason ILIKE :reason', {
+            reason: `%${invoice.invoiceNumber}%`,
+          })
+          .execute();
+      }
+
+      // 3. Restaurar la cuenta por cobrar.
+      if (ar) {
+        ar.paidAmount = 0;
+        ar.balanceAmount = Number(ar.originalAmount);
+        ar.status = 'pending';
+        ar.writtenOffDate = null;
+        ar.writtenOffReason = null;
+        ar.collectionNotes = `${ar.collectionNotes ? `${ar.collectionNotes} | ` : ''}Anulación cancelada`;
+        await manager.getRepository(AccountReceivable).save(ar);
+      }
+
+      // 4. Restaurar la factura.
+      invoice.status = 'pending';
+      invoice.notes = `${invoice.notes ? `${invoice.notes} | ` : ''}Anulación cancelada${options?.reason ? `: ${options.reason}` : ''}`;
+      const saved = await manager.getRepository(Invoice).save(invoice);
+      return { invoice: saved };
+    });
   }
 
   async getStatistics(companyId: number) {

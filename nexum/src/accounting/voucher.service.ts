@@ -273,7 +273,9 @@ export class VoucherService {
         if (cost) return invoiceOrigin(cost[1]);
         const movementId = src.replace(/-(shortage|surplus)-resolution$/, '');
         const purchase = await one(`SELECT id FROM purchases WHERE id::text = $1 AND company_id = $2`, [movementId, companyId]);
-        if (purchase) return { module: 'inventory', label: 'Compra', route: `/inventory/purchases/${purchase.id}/invoice` };
+        // El documento de la recepción es el propio comprobante: así se ven
+        // las cuentas reales usadas (no un resumen fijo 189/410).
+        if (purchase) return { module: 'inventory', label: 'Comprobante de recepción', route: '', display: 'voucher' };
         return { module: 'inventory', label: 'Movimientos de inventario', route: '/inventory/movements' };
       }
       case 'fixed-assets':

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Req, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Req, Param, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { PurchasesService } from './purchases.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -30,6 +30,19 @@ export class PurchasesController {
       console.log('📦 Controller received body:', body);
     const companyId = getCompanyId(req);
     return this.purchasesService.create(companyId, body);
+  }
+
+  @Patch(':id')
+  updateReception(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    return this.purchasesService.updateReception(companyId, id, body);
+  }
+
+  @Post(':id/cancel')
+  cancelReception(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    const companyId = getCompanyId(req);
+    const userName = (req as any).user?.email || body?.userName;
+    return this.purchasesService.cancelReception(companyId, id, userName);
   }
 
   @Post(':id/invoice')

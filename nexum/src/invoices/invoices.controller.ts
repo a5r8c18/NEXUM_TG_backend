@@ -107,4 +107,19 @@ export class InvoicesController {
 
     return result;
   }
+
+  /** Cancela la anulación de una factura (restaura CxC, stock y comprobantes). */
+  @Post(':id/restore-annulment')
+  restoreAnnulment(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+  ) {
+    const companyId = getCompanyId(req);
+    const user = (req as any).user;
+    return this.invoicesService.restoreAnnulled(companyId, id, {
+      reason: body?.reason,
+      performedBy: user?.email || user?.name,
+    });
+  }
 }

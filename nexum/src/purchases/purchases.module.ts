@@ -5,6 +5,7 @@ import { PurchasesService } from './purchases.service';
 import { AuthModule } from '../auth/auth.module';
 import { InventoryWarehouseModule } from '../inventory-warehouse/inventory-warehouse.module';
 import { ProductsModule } from '../products/products.module';
+import { MovementsModule } from '../movements/movements.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { WarehousesModule } from '../warehouses/warehouses.module';
 import { Purchase } from '../entities/purchase.entity';
@@ -24,6 +25,7 @@ import { AccountPayable } from '../entities/account-payable.entity';
     ]),
     InventoryWarehouseModule,
     ProductsModule,
+    MovementsModule,
     WarehousesModule,
     forwardRef(() => AccountingModule),
     forwardRef(() => AuthModule),

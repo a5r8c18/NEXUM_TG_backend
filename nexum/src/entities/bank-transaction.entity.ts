@@ -107,6 +107,13 @@ export class BankTransaction {
   @Column({ name: 'income_account', type: 'varchar', length: 50, nullable: true })
   incomeAccount: string | null;
 
+  /** Concepto 19: subcuenta de la 835 elegida por el usuario. */
+  @Column({ name: 'income_subaccount', type: 'varchar', length: 20, nullable: true })
+  incomeSubaccount: string | null;
+
+  /** Transitorio (no persiste): nombre de la subcuenta, lo rellena la validación del 19. */
+  incomeSubaccountName?: string | null;
+
   /** Concepto 19: importe bruto del ingreso (antes de la comisión). */
   @Column({ name: 'income_amount', type: 'decimal', precision: 12, scale: 2, nullable: true })
   incomeAmount: number | null;

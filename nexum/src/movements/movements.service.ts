@@ -29,6 +29,7 @@ import {
   isReturnCode,
   isPurchaseReturnCode,
   isEntitySalesReturnCode,
+  PURCHASE_RETURN_EXIT_CODES,
   MovementTypeDefinition,
   InventoryCategory,
 } from './movement-types.catalog';
@@ -2378,7 +2379,7 @@ export class MovementsService {
       this.logger.warn(`Cuenta crédito ${creditAccount} no existe para la empresa. Usando cuenta por defecto según tipo.`);
       if (['102', '202', '402'].includes(movement.movementCode)) {
         creditAccount = '406';
-      } else if (['1107', '2107'].includes(movement.movementCode)) {
+      } else if (PURCHASE_RETURN_EXIT_CODES.includes(movement.movementCode)) {
         creditAccount = '406';
       } else if (['106', '206', '306', '107', '207', '307'].includes(movement.movementCode)) {
         creditAccount = getCostOfSalesAccountByCategory(movType.category);

@@ -13,6 +13,7 @@ import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { Customer } from '../entities/customer.entity';
 import { CounterpartConcept } from '../entities/counterpart-concept.entity';
 import { Account } from '../entities/account.entity';
+import { Subaccount } from '../entities/subaccount.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -87,6 +88,9 @@ const ONLINE_PAYMENT_CONCEPT = '19';
 
 /** Conceptos que piden una cuenta de ingreso del nomenclador: 19 (con comisión) y 23 (sin comisión). */
 const INCOME_ACCOUNT_CONCEPTS = new Set([ONLINE_PAYMENT_CONCEPT, '23']);
+
+/** Cuenta fija del concepto 19 (Pago en Línea): el usuario elige su subcuenta. */
+const ONLINE_PAYMENT_INCOME_ACCOUNT = '835';
 
 /** Concepto 38: transferencias entre cuentas bancarias propias. */
 const BANK_TRANSFER_CONCEPT = '38';
@@ -812,7 +816,7 @@ export class FinanceService {
     const isIncomeAccount = INCOME_ACCOUNT_CONCEPTS.has(concept?.code ?? '');
     const online = isIncomeAccount
       ? await this.validateOnlinePayment(companyId, data, concept?.code === ONLINE_PAYMENT_CONCEPT)
-      : { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null };
+      : { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null, incomeSubaccount: null };
     // El monto que entra al banco es el neto: ingreso menos comisión (concepto 19).
     if (isIncomeAccount) {
       data.amount = Math.round((Number(online.incomeAmount) - Number(online.feeAmount)) * 100) / 100;
@@ -1067,7 +1071,10 @@ export class FinanceService {
    * comisión; el 23 (Ingresos de cafetería) solo la cuenta de ingreso.
    */
   private async validateOnlinePayment(companyId: number, data: any, requireFee = true) {
-    const incomeAccount = String(data.incomeAccount ?? '').trim();
+    // Concepto 19 (Pago en Línea): la cuenta de ingreso queda fijada en la
+    // 835 y el usuario elige la subcuenta; el 23 mantiene libre elección.
+    const incomeAccount = requireFee ? ONLINE_PAYMENT_INCOME_ACCOUNT : String(data.incomeAccount ?? '').trim();
+    const incomeSubaccount = requireFee ? String(data.incomeSubaccount ?? '').trim() || null : null;
     const feeAccount = requireFee ? String(data.feeAccount ?? '').trim() : null;
     const incomeAmount = Math.round(Number(data.incomeAmount) * 100) / 100;
     const feeAmount = requireFee ? Math.round(Number(data.feeAmount || 0) * 100) / 100 : 0;
@@ -1095,7 +1102,21 @@ export class FinanceService {
       }
     }
 
-    return { incomeAccount, incomeAmount, feeAccount, feeAmount };
+    let incomeSubaccountName: string | null = null;
+    if (incomeSubaccount) {
+      const sub = await this.dataSource.getRepository(Subaccount).findOne({
+        where: { companyId, subaccountCode: incomeSubaccount },
+        relations: ['account'],
+      });
+      if (!sub || sub.account?.code !== ONLINE_PAYMENT_INCOME_ACCOUNT) {
+        throw new BadRequestException(
+          `La subcuenta ${incomeSubaccount} no existe o no pertenece a la ${ONLINE_PAYMENT_INCOME_ACCOUNT}`,
+        );
+      }
+      incomeSubaccountName = sub.subaccountName;
+    }
+
+    return { incomeAccount, incomeAmount, feeAccount, feeAmount, incomeSubaccount, incomeSubaccountName };
   }
 
   /**
@@ -1156,6 +1177,7 @@ export class FinanceService {
       credit: income,
       description: tx.notes || `${conceptName} ${tx.transactionNumber}`,
       reference: customer,
+      ...(tx.incomeSubaccount ? { subaccountCode: tx.incomeSubaccount, subaccountName: tx.incomeSubaccountName } : {}),
     });
 
     await this.voucherService.createVoucherFromModule(
@@ -1565,6 +1587,7 @@ export class FinanceService {
           companyId,
           {
             incomeAccount: merge('incomeAccount', tx.incomeAccount),
+            incomeSubaccount: merge('incomeSubaccount', tx.incomeSubaccount),
             incomeAmount: merge('incomeAmount', tx.incomeAmount),
             feeAccount: merge('feeAccount', tx.feeAccount),
             feeAmount: merge('feeAmount', tx.feeAmount),
@@ -1574,7 +1597,7 @@ export class FinanceService {
         Object.assign(tx, online);
         data.amount = Math.round((online.incomeAmount - online.feeAmount) * 100) / 100;
       } else {
-        Object.assign(tx, { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null });
+        Object.assign(tx, { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null, incomeSubaccount: null });
       }
 
       // ── Saldo bancario: puede cambiar monto, banco, o ambos ──

@@ -1,6 +1,7 @@
-import { Injectable, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, forwardRef, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import { MovementsService } from '../movements/movements.service';
 import { InventoryWarehouseService } from '../inventory-warehouse/inventory-warehouse.service';
 import { ProductsService } from '../products/products.service';
 import { WarehousesService } from '../warehouses/warehouses.service';
@@ -35,8 +36,130 @@ export class PurchasesService {
     private readonly rrRepo: Repository<ReceptionReport>,
     @InjectRepository(AccountPayable)
     private readonly apRepo: Repository<AccountPayable>,
+    private readonly movementsService: MovementsService,
     private readonly dataSource: DataSource,
   ) {}
+
+  /** Concepto de devolución de compra según la categoría de la recepción. */
+  private static readonly PURCHASE_RETURN_CODE: Record<InventoryCategory, string> = {
+    insumo: '1107',
+    mercancia: '2107',
+    produccion: '3107',
+  };
+
+  /**
+   * Edita los datos de cabecera del informe de recepción (documento,
+   * proveedor, entidad, transportista y recepcionado por). No toca
+   * productos, cantidades ni el inventario.
+   */
+  async updateReception(
+    companyId: number,
+    purchaseId: string,
+    data: {
+      document?: string;
+      supplier?: string;
+      entity?: string;
+      transportista?: string;
+      receivedBy?: string;
+    },
+  ) {
+    const purchase = await this.purchaseRepo.findOneBy({ id: purchaseId, companyId });
+    if (!purchase) throw new NotFoundException('Compra no encontrada');
+    if (purchase.status === 'cancelled') {
+      throw new BadRequestException('La recepción está cancelada');
+    }
+    if (purchase.isReconciled) {
+      throw new BadRequestException('La recepción está conciliada y no admite cambios');
+    }
+
+    if (data.document !== undefined) purchase.document = data.document;
+    if (data.supplier !== undefined) purchase.supplier = data.supplier;
+    if (data.entity !== undefined) purchase.entity = data.entity;
+    await this.purchaseRepo.save(purchase);
+
+    const report = await this.rrRepo.findOneBy({ purchaseId, companyId });
+    if (report) {
+      const notes = JSON.parse(report.notes || '{}');
+      if (data.document !== undefined) notes.document = data.document;
+      if (data.entity !== undefined) notes.entity = data.entity;
+      if (data.supplier !== undefined) {
+        notes.supplier = data.supplier;
+        report.supplierName = data.supplier;
+      }
+      if (data.transportista !== undefined) notes.transportista = data.transportista;
+      if (data.receivedBy !== undefined) {
+        notes.responsables = { ...(notes.responsables || {}), recepcionadoPor: data.receivedBy };
+        report.receivedBy = data.receivedBy;
+      }
+      report.notes = JSON.stringify(notes);
+      await this.rrRepo.save(report);
+    }
+
+    return { purchase };
+  }
+
+  /**
+   * Cancela un informe de recepción: genera una salida por devolución de
+   * compra con el concepto propio de cada categoría (1107 insumo, 2107
+   * mercancía, 3107 producción), lo que descarga el stock, crea el informe
+   * de devolución, asienta el comprobante y ajusta la CxP del proveedor.
+   */
+  async cancelReception(companyId: number, purchaseId: string, userName?: string) {
+    const purchase = await this.purchaseRepo.findOne({
+      where: { id: purchaseId, companyId },
+      relations: ['products'],
+    });
+    if (!purchase) throw new NotFoundException('Compra no encontrada');
+    if (purchase.status === 'cancelled') {
+      throw new BadRequestException('La recepción ya está cancelada');
+    }
+    if (purchase.isReconciled) {
+      throw new BadRequestException('La recepción está conciliada: revierta primero la conciliación');
+    }
+
+    const payable = await this.apRepo.findOneBy({ purchaseId, companyId });
+    if (payable && Number(payable.paidAmount) > 0) {
+      throw new BadRequestException(
+        `La recepción tiene pagos registrados por ${Number(payable.paidAmount).toFixed(2)}. Revierta primero los pagos en Finanzas.`,
+      );
+    }
+
+    // Una salida de devolución por categoría presente en la recepción.
+    const byCategory = new Map<InventoryCategory, { productCode: string; quantity: number }[]>();
+    for (const p of purchase.products ?? []) {
+      const cat = ((p as any).category as InventoryCategory) || 'mercancia';
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat)!.push({ productCode: p.productCode, quantity: Number(p.quantity) });
+    }
+
+    const movements: any[] = [];
+    for (const [category, items] of byCategory) {
+      const code = PurchasesService.PURCHASE_RETURN_CODE[category];
+      const mov = await this.movementsService.createExit(
+        companyId,
+        {
+          movementCode: code,
+          category,
+          warehouseId: purchase.warehouse,
+          entity: purchase.supplier,
+          reason: `Cancelación recepción ${purchase.document}`,
+          items,
+        },
+        userName,
+      );
+      movements.push(mov);
+    }
+
+    purchase.status = 'cancelled';
+    await this.purchaseRepo.save(purchase);
+    const report = await this.rrRepo.findOneBy({ purchaseId, companyId });
+    if (report) {
+      report.status = 'cancelled';
+      await this.rrRepo.save(report);
+    }
+
+    return { purchase, movements };
+  }
 
   async findAll(companyId: number) {
     const purchases = await this.purchaseRepo.find({

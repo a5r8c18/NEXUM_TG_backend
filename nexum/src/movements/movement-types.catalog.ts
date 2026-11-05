@@ -91,6 +91,7 @@ const EXIT_TYPES: MovementTypeDefinition[] = [
   { code: '3102', description: 'Transferencia enviadas', direction: 'exit', category: 'produccion' },
   { code: '3104', description: 'Faltante en inventario', direction: 'exit', category: 'produccion' },
   { code: '3105', description: 'Salida a centro de costo', direction: 'exit', category: 'produccion' },
+  { code: '3107', description: 'Devolución de compra a entidades', direction: 'exit', category: 'produccion' },
   { code: '3109', description: 'Ajuste disminución al terminar el proceso', direction: 'exit', category: 'produccion' },
   { code: '3110', description: 'Ajuste de inventario (salida)', direction: 'exit', category: 'produccion' },
 ];
@@ -113,7 +114,7 @@ export function isAdjustmentCode(code: string): boolean {
  */
 
 /** Salidas por devolución de compra a entidades (proveedores). */
-export const PURCHASE_RETURN_EXIT_CODES = ['1107', '2107'];
+export const PURCHASE_RETURN_EXIT_CODES = ['1107', '2107', '3107'];
 
 /** Entradas por devolución de ventas efectuadas a trabajadores. */
 export const WORKER_SALES_RETURN_ENTRY_CODES = ['106', '206', '306'];
