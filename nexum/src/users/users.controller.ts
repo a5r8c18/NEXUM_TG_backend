@@ -20,7 +20,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.guard';
 import { UserRole } from '../entities/user.entity';
-import { CreateUserDto, UpdateUserDto, ChangePasswordDto, AssignCompaniesDto } from './dto/user.dto';
+import { CreateUserDto, UpdateUserDto, ChangePasswordDto, ChangeOwnPasswordDto, AssignCompaniesDto } from './dto/user.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -115,6 +115,19 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   async reactivate(@Param('id') id: string) {
     return this.usersService.reactivate(id);
+  }
+
+  // Autoservicio: cualquier usuario autenticado cambia su propia contraseña
+  @Post('me/password')
+  async changeOwnPassword(
+    @Req() req: any,
+    @Body() data: ChangeOwnPasswordDto,
+  ) {
+    return this.usersService.changeOwnPassword(
+      req.user.id,
+      data.currentPassword,
+      data.newPassword,
+    );
   }
 
   @Post(':id/change-password')

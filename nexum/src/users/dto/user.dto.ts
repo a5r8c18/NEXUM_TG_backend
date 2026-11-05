@@ -65,6 +65,16 @@ export class ChangePasswordDto {
   newPassword: string;
 }
 
+export class ChangeOwnPasswordDto {
+  @IsString({ message: 'La contraseña actual debe ser texto' })
+  @IsNotEmpty({ message: 'La contraseña actual es obligatoria' })
+  currentPassword: string;
+
+  @IsString({ message: 'La nueva contraseña debe ser texto' })
+  @MinLength(6, { message: 'La contraseña debe tener al menos 6 caracteres' })
+  newPassword: string;
+}
+
 export class AssignCompaniesDto {
   @IsArray({ message: 'companyIds debe ser un arreglo' })
   @ArrayMinSize(1, { message: 'Debe asignar al menos una empresa' })

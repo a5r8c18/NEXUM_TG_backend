@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
@@ -48,13 +48,13 @@ export class UsersService {
     // Verificar si el email ya existe
     const existingUser = await this.userRepo.findOneBy({ email: data.email });
     if (existingUser) {
-      throw new Error('El correo ya está registrado');
+      throw new BadRequestException('El correo ya está registrado');
     }
 
     // Verificar que la empresa existe
     const company = await this.companyRepo.findOneBy({ id: data.companyId });
     if (!company) {
-      throw new Error('Empresa no encontrada');
+      throw new NotFoundException('Empresa no encontrada');
     }
 
     const newUser = new User();
@@ -124,14 +124,14 @@ export class UsersService {
   ) {
     const user = await this.userRepo.findOneBy({ id });
     if (!user) {
-      throw new Error('Usuario no encontrado');
+      throw new NotFoundException('Usuario no encontrado');
     }
 
     // Si se cambia el email, verificar que no exista
     if (data.email && data.email !== user.email) {
       const existingUser = await this.userRepo.findOneBy({ email: data.email });
       if (existingUser) {
-        throw new Error('El correo ya está registrado');
+        throw new BadRequestException('El correo ya está registrado');
       }
     }
 
@@ -184,7 +184,7 @@ export class UsersService {
   async remove(id: string) {
     const user = await this.userRepo.findOneBy({ id });
     if (!user) {
-      throw new Error('Usuario no encontrado');
+      throw new NotFoundException('Usuario no encontrado');
     }
 
     user.isActive = false;
@@ -207,7 +207,7 @@ export class UsersService {
   async reactivate(id: string) {
     const user = await this.userRepo.findOneBy({ id });
     if (!user) {
-      throw new Error('Usuario no encontrado');
+      throw new NotFoundException('Usuario no encontrado');
     }
 
     user.isActive = true;
@@ -226,11 +226,39 @@ export class UsersService {
     return reactivatedUser;
   }
 
+  // Cambiar la propia contraseña verificando la actual (autoservicio)
+  async changeOwnPassword(id: string, currentPassword: string, newPassword: string) {
+    const user = await this.userRepo.findOneBy({ id });
+    if (!user || !user.password) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.password);
+    if (!matches) {
+      throw new UnauthorizedException('La contraseña actual es incorrecta');
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    const updatedUser = await this.userRepo.save(user);
+
+    this.logger.logAudit(
+      'USER_PASSWORD_CHANGED',
+      'User',
+      {
+        userId: user.id,
+        userEmail: user.email,
+        companyId: user.companyId?.toString()
+      }
+    );
+
+    return updatedUser;
+  }
+
   // Cambiar contraseña
   async changePassword(id: string, newPassword: string) {
     const user = await this.userRepo.findOneBy({ id });
     if (!user) {
-      throw new Error('Usuario no encontrado');
+      throw new NotFoundException('Usuario no encontrado');
     }
 
     user.password = await bcrypt.hash(newPassword, 10);

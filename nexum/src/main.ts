@@ -61,6 +61,10 @@ async function bootstrap() {
       'Authorization',
       'x-company-id',
       'x-tenant-id',
+      'x-warehouse-id',
+      'x-user-id',
+      'x-user-email',
+      'x-user-role',
     ],
   });
 
