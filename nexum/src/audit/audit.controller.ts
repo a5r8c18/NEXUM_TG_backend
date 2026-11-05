@@ -1,6 +1,8 @@
 import { Controller, Get, Query, Req, UseGuards, Param } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard, Roles } from '../auth/roles.guard';
+import { UserRole } from '../entities/user.entity';
 import { getCompanyId } from '../common/get-company-id';
 import { AuditAction, AuditResource } from '../entities/audit-log.entity';
 
@@ -40,6 +42,48 @@ export class AuditController {
     }
 
     return await this.auditService.findByCompany(getCompanyId(req), filters);
+  }
+
+  @Get('logs-all')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPERADMIN)
+  async getAllAuditLogs(
+    @Query('companyId') companyId?: string,
+    @Query('userId') userId?: string,
+    @Query('action') action?: AuditAction,
+    @Query('resource') resource?: AuditResource,
+    @Query('resourceId') resourceId?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('success') success?: string,
+  ) {
+    const filters: any = {
+      userId,
+      action,
+      resource,
+      resourceId,
+    };
+
+    if (companyId) {
+      const parsed = parseInt(companyId, 10);
+      if (!Number.isNaN(parsed)) {
+        filters.companyId = parsed;
+      }
+    }
+
+    if (fromDate) {
+      filters.fromDate = new Date(fromDate);
+    }
+
+    if (toDate) {
+      filters.toDate = new Date(toDate);
+    }
+
+    if (success !== undefined) {
+      filters.success = success === 'true';
+    }
+
+    return await this.auditService.findAllCompanies(filters);
   }
 
   @Get('logs/user/:userId')

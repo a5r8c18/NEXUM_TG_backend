@@ -91,6 +91,59 @@ export class AuditService {
     return queryBuilder.orderBy('audit.createdAt', 'DESC').limit(1000).getMany();
   }
 
+  async findAllCompanies(filters?: {
+    companyId?: number;
+    userId?: string;
+    action?: AuditAction;
+    resource?: AuditResource;
+    resourceId?: string;
+    fromDate?: Date;
+    toDate?: Date;
+    success?: boolean;
+  }): Promise<AuditLog[]> {
+    const queryBuilder = this.auditLogRepo
+      .createQueryBuilder('audit')
+      .leftJoinAndSelect('audit.company', 'company');
+
+    if (filters?.companyId) {
+      queryBuilder.where('audit.companyId = :companyId', {
+        companyId: filters.companyId,
+      });
+    } else {
+      queryBuilder.where('1 = 1');
+    }
+
+    if (filters?.userId) {
+      queryBuilder.andWhere('audit.userId = :userId', { userId: filters.userId });
+    }
+
+    if (filters?.action) {
+      queryBuilder.andWhere('audit.action = :action', { action: filters.action });
+    }
+
+    if (filters?.resource) {
+      queryBuilder.andWhere('audit.resource = :resource', { resource: filters.resource });
+    }
+
+    if (filters?.resourceId) {
+      queryBuilder.andWhere('audit.resourceId = :resourceId', { resourceId: filters.resourceId });
+    }
+
+    if (filters?.fromDate) {
+      queryBuilder.andWhere('audit.createdAt >= :fromDate', { fromDate: filters.fromDate });
+    }
+
+    if (filters?.toDate) {
+      queryBuilder.andWhere('audit.createdAt <= :toDate', { toDate: filters.toDate });
+    }
+
+    if (filters?.success !== undefined) {
+      queryBuilder.andWhere('audit.success = :success', { success: filters.success });
+    }
+
+    return queryBuilder.orderBy('audit.createdAt', 'DESC').limit(1000).getMany();
+  }
+
   async findByUser(
     userId: string,
     companyId: number,
