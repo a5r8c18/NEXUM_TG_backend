@@ -1029,7 +1029,7 @@ export class AccountingController {
   }
 
   @Post('accounts/seed-2016')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
   seedChartOfAccounts(
     @Req() req: Request,
     @Body() body: { type?: 'state' | 'non-state' },
