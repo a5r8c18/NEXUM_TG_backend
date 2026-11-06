@@ -21,7 +21,7 @@ import { getCompanyId } from '../common/get-company-id';
  * usuario corriente.
  */
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+@Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
 @Controller('hr/reports')
 export class HrReportController {
   constructor(private readonly service: HrReportService) {}

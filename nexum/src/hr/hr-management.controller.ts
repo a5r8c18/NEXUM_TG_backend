@@ -29,7 +29,7 @@ import {
  * administración. Registrar la asistencia diaria y solicitar una licencia, en
  * cambio, son operaciones corrientes abiertas a cualquier usuario autenticado.
  */
-const HR_ADMIN_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN] as const;
+const HR_ADMIN_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER] as const;
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)

@@ -26,7 +26,7 @@ import { CreatePositionDto, UpdatePositionDto } from './dto/position.dto';
  * salarial, que es información sensible— quedan reservadas a administración
  * mediante `@Roles` a nivel de método, que sobreescribe el de la clase.
  */
-const HR_WRITE_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN] as const;
+const HR_WRITE_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER] as const;
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)

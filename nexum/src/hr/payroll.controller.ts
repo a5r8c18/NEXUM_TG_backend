@@ -40,7 +40,7 @@ import {
  * anularlas son actos de administración: mueven el mayor y el banco. El
  * `@Roles` de método sobreescribe el de la clase.
  */
-const PAYROLL_ADMIN_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN] as const;
+const PAYROLL_ADMIN_ROLES = [UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER] as const;
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER)
