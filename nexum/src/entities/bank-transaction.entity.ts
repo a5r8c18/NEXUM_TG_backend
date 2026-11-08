@@ -10,6 +10,14 @@ import {
 import { Company } from './company.entity';
 import { BankAccount } from './bank-account.entity';
 
+export type BankTransactionSourceModule =
+  | 'manual'
+  | 'payment'
+  | 'payroll'
+  | 'fixed-assets'
+  | 'transfer'
+  | 'reversal';
+
 @Entity('bank_transactions')
 export class BankTransaction {
   @PrimaryGeneratedColumn('uuid')
@@ -24,9 +32,9 @@ export class BankTransaction {
   @Column({ name: 'transaction_type', type: 'varchar', length: 20 })
   transactionType: 'debit' | 'credit' | 'transfer_in' | 'transfer_out' | 'fee' | 'interest' | 'penalty';
 
-  /** Estado de la operación: borrador, editado o confirmado. */
+  /** Estado de la operación: borrador, editado, confirmado o anulado. */
   @Column({ name: 'operation_status', type: 'varchar', length: 15, default: 'confirmed' })
-  operationStatus: 'draft' | 'edited' | 'confirmed';
+  operationStatus: 'draft' | 'edited' | 'confirmed' | 'cancelled';
 
   @Column({ name: 'amount', type: 'decimal', precision: 12, scale: 2 })
   amount: number;
@@ -90,6 +98,30 @@ export class BankTransaction {
   @Column({ name: 'linked_transaction_id', type: 'uuid', nullable: true })
   linkedTransactionId: string | null;
 
+  /**
+   * Operación que generó el comprobante. Solo los 'manual' se editan en
+   * Finanzas; se eliminan los 'manual' y los 'payment' (con reversión del
+   * pago origen). El resto se anula desde su operación de origen.
+   */
+  @Column({ name: 'source_module', type: 'varchar', length: 30, default: 'manual' })
+  sourceModule: BankTransactionSourceModule;
+
+  /**
+   * Estados previos de lo que la anulación revirtió (vouchers, pagos,
+   * espejo y estado propio); permite deshacer la anulación después.
+   */
+  /** Anticipos (26/27): importe ya liquidado contra obligaciones del tercero. */
+  @Column({ name: 'advance_applied_amount', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  advanceAppliedAmount: number;
+
+  @Column({ name: 'cancel_snapshot', type: 'jsonb', nullable: true })
+  cancelSnapshot: {
+    prevStatus: string;
+    vouchers: { id: string; status: string }[];
+    payments: { id: string; vouchers: { id: string; status: string }[] }[];
+    mirror?: { id: string; status: string };
+  } | null;
+
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
@@ -107,7 +139,7 @@ export class BankTransaction {
   @Column({ name: 'income_account', type: 'varchar', length: 50, nullable: true })
   incomeAccount: string | null;
 
-  /** Concepto 19: subcuenta de la 835 elegida por el usuario. */
+  /** Concepto 19: subcuenta de la 900 (ingreso) elegida por el usuario. */
   @Column({ name: 'income_subaccount', type: 'varchar', length: 20, nullable: true })
   incomeSubaccount: string | null;
 
@@ -121,6 +153,13 @@ export class BankTransaction {
   /** Concepto 19: cuenta de gasto de la comisión bancaria. */
   @Column({ name: 'fee_account', type: 'varchar', length: 50, nullable: true })
   feeAccount: string | null;
+
+  /** Concepto 19: subcuenta de la 835 (gasto/comisión) elegida por el usuario. */
+  @Column({ name: 'fee_subaccount', type: 'varchar', length: 20, nullable: true })
+  feeSubaccount: string | null;
+
+  /** Transitorio (no persiste): nombre de la subcuenta de gasto. */
+  feeSubaccountName?: string | null;
 
   /** Concepto 19: comisión descontada por el banco. */
   @Column({ name: 'fee_amount', type: 'decimal', precision: 12, scale: 2, nullable: true })

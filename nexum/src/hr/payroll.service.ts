@@ -1357,6 +1357,7 @@ export class PayrollService {
             description: `Pago nómina ${payroll.period}`,
             referenceNumber: `PAGO-NOM-${payroll.period}-${payroll.id}`,
             category: 'payroll',
+            sourceModule: 'payroll',
             companyId,
           },
           manager,

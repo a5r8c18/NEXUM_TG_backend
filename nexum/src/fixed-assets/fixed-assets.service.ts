@@ -802,6 +802,7 @@ export class FixedAssetsService {
             description: `Venta de AFT ${asset.assetCode} - ${asset.name}`,
             referenceNumber: `BAJA-${asset.assetCode}`,
             category: 'fixed-asset-sale',
+            sourceModule: 'fixed-assets',
             counterpartyName: asset.responsiblePerson,
           });
           this.logger.log(`Transacción bancaria por venta AFT ${asset.assetCode} generada`);
@@ -1178,6 +1179,7 @@ export class FixedAssetsService {
           description: `Mejora capitalizable AFT ${asset.assetCode}`,
           referenceNumber: `MEJ-${asset.assetCode}`,
           category: 'fixed-asset-improvement',
+          sourceModule: 'fixed-assets',
         });
       } catch (error) {
         this.logger.error(`Error transacción bancaria mejora AFT ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Subaccount } from '../entities/subaccount.entity';
+import { VoucherLine } from '../entities/voucher-line.entity';
 
 @Injectable()
 export class SubaccountService {
@@ -9,6 +10,33 @@ export class SubaccountService {
     @InjectRepository(Subaccount)
     private readonly subaccountRepo: Repository<Subaccount>,
   ) {}
+
+  /**
+   * Recalcula el saldo de las subcuentas desde las líneas de comprobantes
+   * asentados (posted), ajustado por la naturaleza de cada subcuenta.
+   */
+  private async overlayLiveBalances(companyId: number, subs: Subaccount[]): Promise<Subaccount[]> {
+    if (!subs.length) return subs;
+    const rows = await this.subaccountRepo.manager
+      .getRepository(VoucherLine)
+      .createQueryBuilder('l')
+      .innerJoin('l.voucher', 'v')
+      .where('v.companyId = :companyId', { companyId })
+      .andWhere("v.status = 'posted'")
+      .select('l.subaccountCode', 'subaccountCode')
+      .addSelect('SUM(l.debit)', 'debit')
+      .addSelect('SUM(l.credit)', 'credit')
+      .groupBy('l.subaccountCode')
+      .getRawMany();
+    const bal = new Map(
+      rows.map((r) => [r.subaccountCode, { d: Number(r.debit) || 0, c: Number(r.credit) || 0 }]),
+    );
+    for (const s of subs) {
+      const t = bal.get(s.subaccountCode) || { d: 0, c: 0 };
+      s.balance = s.nature === 'acreedora' ? t.c - t.d : t.d - t.c;
+    }
+    return subs;
+  }
 
   async findAll(accountId?: string): Promise<Subaccount[]> {
     const queryBuilder = this.subaccountRepo.createQueryBuilder('subaccount');
@@ -19,14 +47,16 @@ export class SubaccountService {
 
     queryBuilder.orderBy('subaccount.subaccountCode', 'ASC');
 
-    return await queryBuilder.getMany();
+    const list = await queryBuilder.getMany();
+    return this.overlayLiveBalances(list[0]?.companyId, list);
   }
 
   async findOne(id: string): Promise<Subaccount | null> {
-    return await this.subaccountRepo.findOne({
+    const sub = await this.subaccountRepo.findOne({
       where: { id },
       relations: ['account', 'company'],
     });
+    return sub ? (await this.overlayLiveBalances(sub.companyId, [sub]))[0] : null;
   }
 
   async findByAccount(accountId: string): Promise<Subaccount[]> {

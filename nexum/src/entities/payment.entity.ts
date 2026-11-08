@@ -27,7 +27,7 @@ export class Payment {
   paymentType: 'receivable' | 'payable';
 
   @Column({ name: 'payment_method', type: 'varchar', length: 20 })
-  paymentMethod: 'cash' | 'bank_transfer' | 'check' | 'credit_card' | 'debit_card' | 'other';
+  paymentMethod: 'cash' | 'bank_transfer' | 'check' | 'credit_card' | 'debit_card' | 'advance' | 'other';
 
   @Column({ name: 'amount', type: 'decimal', precision: 12, scale: 2 })
   amount: number;

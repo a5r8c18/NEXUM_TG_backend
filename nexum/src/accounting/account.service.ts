@@ -71,20 +71,61 @@ export class AccountService {
     }
 
     qb.orderBy('a.code', 'ASC');
-    return qb.getMany();
+    return this.overlayLiveBalances(companyId, await qb.getMany());
+  }
+
+  /**
+   * Recalcula el saldo de las cuentas desde las líneas de comprobantes
+   * asentados (posted). El efecto de cada línea se acumula en la cuenta
+   * resuelta y en toda su cadena de padres, ajustado por la naturaleza.
+   */
+  private async overlayLiveBalances(companyId: number, accounts: Account[]): Promise<Account[]> {
+    if (!accounts.length) return accounts;
+    const [rows, all] = await Promise.all([
+      this.accountRepo.manager.getRepository(VoucherLine)
+        .createQueryBuilder('l')
+        .innerJoin('l.voucher', 'v')
+        .where('v.companyId = :companyId', { companyId })
+        .andWhere("v.status = 'posted'")
+        .select('l.accountId', 'accountId')
+        .addSelect('SUM(l.debit)', 'debit')
+        .addSelect('SUM(l.credit)', 'credit')
+        .groupBy('l.accountId')
+        .getRawMany(),
+      this.accountRepo.findBy({ companyId }),
+    ]);
+    const byId = new Map(all.map((a) => [a.id, a]));
+    const byCode = new Map(all.map((a) => [a.code, a]));
+    const bal = new Map<string, number>();
+    for (const r of rows) {
+      const d = Number(r.debit) || 0;
+      const c = Number(r.credit) || 0;
+      let acc = byId.get(r.accountId);
+      const seen = new Set<string>();
+      while (acc && !seen.has(acc.code)) {
+        seen.add(acc.code);
+        bal.set(
+          acc.code,
+          (bal.get(acc.code) || 0) + (acc.nature === 'acreedora' ? c - d : d - c),
+        );
+        acc = acc.parentCode ? byCode.get(acc.parentCode) : undefined;
+      }
+    }
+    for (const a of accounts) a.balance = bal.get(a.code) ?? 0;
+    return accounts;
   }
 
   async findOneAccount(companyId: number, id: string) {
     const account = await this.accountRepo.findOneBy({ id, companyId });
     if (!account) throw new NotFoundException(`Cuenta #${id} no encontrada`);
-    return account;
+    return (await this.overlayLiveBalances(companyId, [account]))[0];
   }
 
   async findAccountByCode(companyId: number, code: string) {
     const account = await this.accountRepo.findOneBy({ code, companyId });
     if (!account)
       throw new NotFoundException(`Cuenta con código ${code} no encontrada`);
-    return account;
+    return (await this.overlayLiveBalances(companyId, [account]))[0];
   }
 
   /**
@@ -194,7 +235,7 @@ export class AccountService {
   // ══════════════════════════════════════════════════════════
 
   async findAccountsByParentCode(companyId: number, parentCode: string) {
-    return this.accountRepo.find({
+    const list = await this.accountRepo.find({
       where: {
         companyId,
         parentCode,
@@ -204,6 +245,7 @@ export class AccountService {
         code: 'ASC',
       },
     });
+    return this.overlayLiveBalances(companyId, list);
   }
 
   async getSubaccountsByAccount(companyId: number, accountId: string) {
@@ -214,7 +256,7 @@ export class AccountService {
 
     // Las subcuentas pueden estar enlazadas por parentAccountId o, en los
     // catálogos cargados por semilla/importación, solo por parentCode.
-    return this.accountRepo
+    const children = await this.accountRepo
       .createQueryBuilder('a')
       .where('a.companyId = :companyId', { companyId })
       .andWhere('a.isActive = true')
@@ -225,6 +267,7 @@ export class AccountService {
       )
       .orderBy('a.code', 'ASC')
       .getMany();
+    return this.overlayLiveBalances(companyId, children);
   }
 
   /**

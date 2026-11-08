@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { Voucher, SourceModule, VoucherType } from '../entities/voucher.entity';
 import { VoucherLine } from '../entities/voucher-line.entity';
 import { Account } from '../entities/account.entity';
+import { Subaccount } from '../entities/subaccount.entity';
 import { Subelement } from '../entities/subelement.entity';
 import { AccountingPeriod } from '../entities/accounting-period.entity';
 import { EntityManager } from 'typeorm';
@@ -919,17 +920,54 @@ export class VoucherService {
       if (account) {
         const debit = Number(line.debit) || 0;
         const credit = Number(line.credit) || 0;
-        if (account.nature === 'acreedora') {
-          account.balance = Number(account.balance) + credit - debit;
-        } else {
-          account.balance = Number(account.balance) + debit - credit;
-        }
-        await manager.getRepository(Account).save(account);
+        await this.applyLineBalance(manager, companyId, account, line, debit, credit);
       }
     }
 
     voucher.status = 'posted';
     return await manager.getRepository(Voucher).save(voucher);
+  }
+
+  /**
+   * Aplica el efecto de una línea al saldo de la cuenta resuelta, a la
+   * subcuenta analítica (si la línea la tiene) y a toda la cadena de
+   * cuentas padre del nomenclador. `sign = 1` contabiliza, `-1` revierte.
+   */
+  private async applyLineBalance(
+    manager: EntityManager,
+    companyId: number,
+    account: Account,
+    line: any,
+    debit: number,
+    credit: number,
+    sign = 1,
+  ) {
+    const apply = (nature: string, balance: any) =>
+      Number(balance) + sign * (nature === 'acreedora' ? credit - debit : debit - credit);
+    account.balance = apply(account.nature, account.balance);
+    await manager.getRepository(Account).save(account);
+
+    if (line.subaccountCode) {
+      const sub = await manager.getRepository(Subaccount).findOneBy({
+        companyId,
+        subaccountCode: line.subaccountCode,
+      });
+      if (sub) {
+        sub.balance = apply(sub.nature, sub.balance);
+        await manager.getRepository(Subaccount).save(sub);
+      }
+    }
+
+    let parentCode = account.parentCode;
+    const seen = new Set<string>([account.code]);
+    while (parentCode && !seen.has(parentCode)) {
+      seen.add(parentCode);
+      const parent = await manager.getRepository(Account).findOneBy({ code: parentCode, companyId });
+      if (!parent) break;
+      parent.balance = apply(parent.nature, parent.balance);
+      await manager.getRepository(Account).save(parent);
+      parentCode = parent.parentCode;
+    }
   }
 
   private async reverseVoucherBalancesInTransaction(
@@ -954,12 +992,7 @@ export class VoucherService {
       if (account) {
         const debit = Number(line.debit) || 0;
         const credit = Number(line.credit) || 0;
-        if (account.nature === 'acreedora') {
-          account.balance = Number(account.balance) - credit + debit;
-        } else {
-          account.balance = Number(account.balance) - debit + credit;
-        }
-        await manager.getRepository(Account).save(account);
+        await this.applyLineBalance(manager, voucherWithLines.companyId, account, line, debit, credit, -1);
       }
     }
 

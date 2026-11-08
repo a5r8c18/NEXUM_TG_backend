@@ -159,9 +159,34 @@ export class FinanceController {
     return this.financeService.getLinkedReceivable(getCompanyId(req), id);
   }
 
+  @Get('bank-transactions/:id/linked-payable')
+  getLinkedPayable(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.getLinkedPayable(getCompanyId(req), id);
+  }
+
+  @Post('bank-transactions/:id/apply-advance')
+  applyAdvance(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.applyAdvanceToObligation(getCompanyId(req), id, body);
+  }
+
+  @Get('bank-transactions/:id/advance-applications')
+  getAdvanceApplications(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.getAdvanceApplications(getCompanyId(req), id);
+  }
+
   @Delete('bank-transactions/:id')
   deleteBankTransaction(@Req() req: Request, @Param('id') id: string) {
     return this.financeService.deleteBankTransaction(getCompanyId(req), id);
+  }
+
+  @Post('bank-transactions/:id/cancel')
+  cancelBankTransaction(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.cancelBankTransaction(getCompanyId(req), id);
+  }
+
+  @Post('bank-transactions/:id/restore-annulment')
+  restoreBankTransactionAnnulment(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.restoreBankTransactionAnnulment(getCompanyId(req), id);
   }
 
   @Get('banks/:bankAccountId/transactions')
@@ -205,6 +230,11 @@ export class FinanceController {
   @Post('payments')
   createPayment(@Req() req: Request, @Body() body: any) {
     return this.financeService.createPayment(getCompanyId(req), body);
+  }
+
+  @Post('payments/:id/cancel')
+  cancelPaymentApplication(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.cancelAdvanceApplication(getCompanyId(req), id);
   }
 
   // ── Caja (Efectivo - Cuenta 101) ──

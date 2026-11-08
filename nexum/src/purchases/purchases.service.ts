@@ -61,6 +61,8 @@ export class PurchasesService {
       entity?: string;
       transportista?: string;
       receivedBy?: string;
+      products?: { productCode?: string; description?: string; quantity?: number; unitPrice?: number }[];
+      totalAmount?: number;
     },
   ) {
     const purchase = await this.purchaseRepo.findOneBy({ id: purchaseId, companyId });
@@ -91,8 +93,38 @@ export class PurchasesService {
         notes.responsables = { ...(notes.responsables || {}), recepcionadoPor: data.receivedBy };
         report.receivedBy = data.receivedBy;
       }
+      if (data.products) {
+        const items = data.products.map((p) => ({
+          productCode: p.productCode ?? '',
+          description: p.description ?? '',
+          quantity: Number(p.quantity) || 0,
+          unitPrice: Number(p.unitPrice) || 0,
+        }));
+        notes.products = items;
+        report.totalItems = items.length;
+        report.totalAmount =
+          data.totalAmount ??
+          items.reduce((s, p) => s + p.quantity * p.unitPrice, 0);
+      } else if (data.totalAmount !== undefined) {
+        report.totalAmount = Number(data.totalAmount) || 0;
+      }
       report.notes = JSON.stringify(notes);
       await this.rrRepo.save(report);
+    }
+
+    if (data.products) {
+      await this.ppRepo.delete({ purchaseId });
+      const lines = data.products.map((p: any) =>
+        this.ppRepo.create({
+          purchaseId,
+          productCode: p.productCode ?? '',
+          productName: p.description ?? p.productName ?? '',
+          quantity: Math.round(Number(p.quantity) || 0),
+          unitPrice: Number(p.unitPrice) || 0,
+          totalPrice: (Number(p.quantity) || 0) * (Number(p.unitPrice) || 0),
+        }),
+      );
+      await this.ppRepo.save(lines);
     }
 
     return { purchase };
@@ -174,6 +206,7 @@ export class PurchasesService {
     const purchase = await this.purchaseRepo.findOne({
       where: { id: purchaseId, companyId },
       relations: ['products'],
+      withDeleted: true,
     });
     if (!purchase) throw new BadRequestException('Compra no encontrada');
     return { purchase, products: purchase.products };
