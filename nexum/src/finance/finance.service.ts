@@ -41,6 +41,8 @@ const PAYABLE_FIELDS = [
   'createdBy',
 ] as const;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const PAYABLE_UPDATE_FIELDS = PAYABLE_FIELDS.filter(
   (f) => f !== 'purchaseId' && f !== 'purchaseNumber' && f !== 'createdBy',
 );
@@ -103,6 +105,15 @@ const ADVANCE_CONCEPTS = new Set(['26', '27']);
  * y anticipos (26/27), cuyo tercero vincula el movimiento con la obligación.
  */
 const THIRD_PARTY_REQUIRED_CONCEPTS = new Set(['20', '21', '26', '27']);
+
+/**
+ * Conceptos de ingreso que no se registran en Banco: 28 (los cobros
+ * anticipados se liquidan desde su vista) y 80/81 (efectivo, va por Caja).
+ */
+const BANK_INCOME_EXCLUDED_CONCEPTS = new Set(['28', '80', '81']);
+
+/** Conceptos disponibles en Caja - Ingreso. */
+export const CASH_INCOME_CONCEPTS = ['24', '80', '81'];
 
 /** Valores válidos de `source_module` en comprobantes bancarios. */
 const BANK_TX_SOURCE_MODULES = new Set<string>([
@@ -262,8 +273,17 @@ export class FinanceService {
       'CXC',
     );
     const fields = pick(data, RECEIVABLE_FIELDS);
+    if (!String(fields.customerName ?? '').trim()) {
+      throw new BadRequestException('El cliente es obligatorio');
+    }
+    if (!(Number(fields.originalAmount) > 0)) {
+      throw new BadRequestException('El monto debe ser mayor que cero');
+    }
     const ar = this.arRepo.create({
       ...fields,
+      // Una CxC manual no proviene de una factura: la columna es obligatoria.
+      invoiceNumber: fields.invoiceNumber || '',
+      collectionNotes: fields.collectionNotes ?? data.description ?? null,
       companyId,
       arNumber,
       balanceAmount: fields.originalAmount,
@@ -352,6 +372,21 @@ export class FinanceService {
   async createPayable(companyId: number, data: any, manager?: EntityManager) {
     const { transitAccountCode } = data;
     const payableData = pick(data, PAYABLE_FIELDS);
+    if (!String(payableData.supplierName ?? '').trim()) {
+      throw new BadRequestException('El proveedor es obligatorio');
+    }
+    if (!(Number(payableData.originalAmount) > 0)) {
+      throw new BadRequestException('El monto debe ser mayor que cero');
+    }
+    // El NIT del proveedor es opcional en el catálogo, pero la columna de la
+    // CxP es obligatoria; `supplier_id` es uuid, así que un código no vale.
+    payableData.supplierNit = payableData.supplierNit || '';
+    if (payableData.supplierId && !UUID_RE.test(String(payableData.supplierId))) {
+      payableData.supplierId = null;
+    }
+    if (payableData.notes == null && data.description) {
+      payableData.notes = data.description;
+    }
     const apNumber = await this.sequenceService.nextFormatted(
       companyId,
       'account-payable',
@@ -768,6 +803,23 @@ export class FinanceService {
    * (se crea el `Payment` y se actualiza la CxC + la factura origen) dentro de
    * la misma transacción de BD.
    */
+  /**
+   * Los conceptos 28, 80 y 81 no se usan en ingresos bancarios. Solo se
+   * valida al elegir el concepto, así los comprobantes antiguos que ya lo
+   * tienen siguen pudiéndose editar.
+   */
+  private assertConceptAllowedInBank(
+    concept: CounterpartConcept,
+    transactionType: string,
+  ): void {
+    if (transactionType === 'credit' && BANK_INCOME_EXCLUDED_CONCEPTS.has(concept.code)) {
+      throw new BadRequestException(
+        `El concepto ${concept.code} — ${concept.name} no se registra en Banco - Ingreso` +
+          (concept.code === '28' ? '; liquide el anticipo desde Cobros anticipados.' : '; regístrelo en Caja.'),
+      );
+    }
+  }
+
   async createBankTransaction(companyId: number, data: any, manager?: EntityManager) {
     if (manager) {
       return this.createBankTransactionInTx(companyId, data, manager);
@@ -814,6 +866,7 @@ export class FinanceService {
           `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
         );
       }
+      this.assertConceptAllowedInBank(concept, data.transactionType);
       if (
         THIRD_PARTY_REQUIRED_CONCEPTS.has(concept.code) &&
         !String(data.counterpartyName ?? '').trim()
@@ -2092,6 +2145,7 @@ export class FinanceService {
               `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
             );
           }
+          this.assertConceptAllowedInBank(concept, tx.transactionType);
           tx.counterpartConceptCode = concept.code;
         }
         tx.counterpartyAccount = null;
@@ -3755,6 +3809,12 @@ export class FinanceService {
     }
     if (movementType === 'expense' && Number(cr.currentBalance) < amount) {
       throw new BadRequestException(`Saldo insuficiente en caja ${cr.registerCode}. Disponible: $${cr.currentBalance}`);
+    }
+    // En los ingresos de caja el concepto es un código del catálogo (24/80/81).
+    if (movementType === 'income' && data.concept && !CASH_INCOME_CONCEPTS.includes(String(data.concept))) {
+      throw new BadRequestException(
+        `Concepto no válido para Caja - Ingreso; use ${CASH_INCOME_CONCEPTS.join(', ')}`,
+      );
     }
 
     const movementNumber = await this.sequenceService.nextFormatted(
