@@ -98,6 +98,12 @@ const BANK_TRANSFER_CONCEPT = '38';
 /** 26 Cobros anticipados (acredita la contrapartida, p. ej. 430) y 27 Pagos anticipados (la debita). */
 const ADVANCE_CONCEPTS = new Set(['26', '27']);
 
+/**
+ * Conceptos que exigen el cliente/proveedor: liquidaciones de CxC/CxP (20/21)
+ * y anticipos (26/27), cuyo tercero vincula el movimiento con la obligación.
+ */
+const THIRD_PARTY_REQUIRED_CONCEPTS = new Set(['20', '21', '26', '27']);
+
 /** Valores válidos de `source_module` en comprobantes bancarios. */
 const BANK_TX_SOURCE_MODULES = new Set<string>([
   'manual',
@@ -806,6 +812,14 @@ export class FinanceService {
       if (concept.direction !== 'both' && concept.direction !== expectedDirection) {
         throw new BadRequestException(
           `El concepto "${concept.name}" no aplica a este tipo de comprobante`,
+        );
+      }
+      if (
+        THIRD_PARTY_REQUIRED_CONCEPTS.has(concept.code) &&
+        !String(data.counterpartyName ?? '').trim()
+      ) {
+        throw new BadRequestException(
+          `El concepto "${concept.name}" requiere indicar el ${concept.requiresSupplier ? 'proveedor' : 'cliente'}`,
         );
       }
     }
@@ -1976,11 +1990,12 @@ export class FinanceService {
     }
     if (
       action !== 'editar' &&
-      ADVANCE_CONCEPTS.has(tx.counterpartConceptCode ?? '')
+      ADVANCE_CONCEPTS.has(tx.counterpartConceptCode ?? '') &&
+      Number(tx.advanceAppliedAmount || 0) > 0.009
     ) {
       throw new BadRequestException(
-        'Un cobro o pago anticipado solo se cancela al liquidarlo contra una ' +
-          'cuenta por cobrar o por pagar del mismo cliente o proveedor.',
+        `El anticipo ${tx.transactionNumber} tiene liquidaciones aplicadas a ` +
+          'obligaciones del tercero; deshágalas antes de anularlo.',
       );
     }
     const source = tx.sourceModule || 'manual';
@@ -2081,6 +2096,14 @@ export class FinanceService {
         }
         tx.counterpartyAccount = null;
         if (data.counterpartyName !== undefined) tx.counterpartyName = data.counterpartyName;
+        if (
+          THIRD_PARTY_REQUIRED_CONCEPTS.has(tx.counterpartConceptCode ?? '') &&
+          !String(tx.counterpartyName ?? '').trim()
+        ) {
+          throw new BadRequestException(
+            'Este concepto requiere indicar el cliente o proveedor',
+          );
+        }
       }
 
       // Conceptos con cuenta de ingreso: el monto al banco es el neto (ingreso - comisión).
@@ -2487,11 +2510,12 @@ export class FinanceService {
       };
 
       // 1) Comprobante contable propio (Carga Inicial, pago en línea,
-      //    transferencia): se anula registrando su estado previo.
+      //    transferencia, anticipo): se anula registrando su estado previo.
       if (
         tx.transactionCode === OPENING_ENTRY_CODE ||
         INCOME_ACCOUNT_CONCEPTS.has(tx.counterpartConceptCode ?? '') ||
-        tx.counterpartConceptCode === BANK_TRANSFER_CONCEPT
+        tx.counterpartConceptCode === BANK_TRANSFER_CONCEPT ||
+        ADVANCE_CONCEPTS.has(tx.counterpartConceptCode ?? '')
       ) {
         snapshot.vouchers = await this.cancelFinanceVouchers(
           companyId,
