@@ -88,8 +88,11 @@ const OPENING_ENTRY_CODE = 'Carga Inicial';
 /** Concepto de contrapartida: Ingresos por Pago en Línea (ingreso bruto - comisión = neto al banco). */
 const ONLINE_PAYMENT_CONCEPT = '19';
 
-/** Conceptos que piden una cuenta de ingreso del nomenclador: 19 (con comisión) y 23 (sin comisión). */
-const INCOME_ACCOUNT_CONCEPTS = new Set([ONLINE_PAYMENT_CONCEPT, '23']);
+/** Conceptos que piden una cuenta de ingreso del nomenclador: 19 (con comisión), 22 y 23 (sin comisión). */
+const INCOME_ACCOUNT_CONCEPTS = new Set([ONLINE_PAYMENT_CONCEPT, '22', '23']);
+
+/** Cuenta de ingreso por defecto de cada concepto sin cuenta fija (22 Ingresos de comedores → 950). */
+const DEFAULT_INCOME_ACCOUNT: Record<string, string> = { '22': '950' };
 
 /** Cuenta fija del concepto 19 (Pago en Línea): el usuario elige su subcuenta. */
 const ONLINE_PAYMENT_INCOME_ACCOUNT = '900';
@@ -896,7 +899,7 @@ export class FinanceService {
 
     const isIncomeAccount = INCOME_ACCOUNT_CONCEPTS.has(concept?.code ?? '');
     const online = isIncomeAccount
-      ? await this.validateOnlinePayment(companyId, data, concept?.code === ONLINE_PAYMENT_CONCEPT)
+      ? await this.validateOnlinePayment(companyId, data, concept?.code ?? '')
       : { incomeAccount: null, incomeAmount: null, feeAccount: null, feeAmount: null, incomeSubaccount: null, feeSubaccount: null };
     // El monto que entra al banco es el neto: ingreso menos comisión (concepto 19).
     if (isIncomeAccount) {
@@ -1258,14 +1261,19 @@ export class FinanceService {
   /**
    * Valida los conceptos con cuenta de ingreso del nomenclador: el 19
    * (Ingresos por Pago en Línea) pide además la cuenta de gasto de la
-   * comisión; el 23 (Ingresos de cafetería) solo la cuenta de ingreso.
+   * comisión; el 22 (Ingresos de comedores) y el 23 (Ingresos de cafetería)
+   * solo la cuenta de ingreso y, opcionalmente, su subcuenta.
    */
-  private async validateOnlinePayment(companyId: number, data: any, requireFee = true) {
+  private async validateOnlinePayment(companyId: number, data: any, conceptCode: string) {
     // Concepto 19 (Pago en Línea): la cuenta de ingreso queda fijada en la
     // 900 y la de gasto (comisión) en la 835; el usuario elige las
-    // subcuentas de ambas. El 23 mantiene libre elección de la de ingreso.
-    const incomeAccount = requireFee ? ONLINE_PAYMENT_INCOME_ACCOUNT : String(data.incomeAccount ?? '').trim();
-    const incomeSubaccount = requireFee ? String(data.incomeSubaccount ?? '').trim() || null : null;
+    // subcuentas de ambas. El 22 propone la 950 y el 23 deja libre la
+    // cuenta de ingreso; en ambos se puede elegir su subcuenta.
+    const requireFee = conceptCode === ONLINE_PAYMENT_CONCEPT;
+    const incomeAccount = requireFee
+      ? ONLINE_PAYMENT_INCOME_ACCOUNT
+      : String(data.incomeAccount ?? '').trim() || DEFAULT_INCOME_ACCOUNT[conceptCode] || '';
+    const incomeSubaccount = String(data.incomeSubaccount ?? '').trim() || null;
     const feeAccount = requireFee ? ONLINE_PAYMENT_FEE_ACCOUNT : null;
     const feeSubaccount = requireFee ? String(data.feeSubaccount ?? '').trim() || null : null;
     const incomeAmount = Math.round(Number(data.incomeAmount) * 100) / 100;
@@ -1300,9 +1308,9 @@ export class FinanceService {
         where: { companyId, subaccountCode: incomeSubaccount },
         relations: ['account'],
       });
-      if (!sub || sub.account?.code !== ONLINE_PAYMENT_INCOME_ACCOUNT) {
+      if (!sub || sub.account?.code !== incomeAccount) {
         throw new BadRequestException(
-          `La subcuenta ${incomeSubaccount} no existe o no pertenece a la ${ONLINE_PAYMENT_INCOME_ACCOUNT}`,
+          `La subcuenta ${incomeSubaccount} no existe o no pertenece a la ${incomeAccount}`,
         );
       }
       incomeSubaccountName = sub.subaccountName;
@@ -2117,7 +2125,7 @@ export class FinanceService {
           t.transactionCode, t.counterpartConceptCode, t.bankAccountId, Number(t.amount),
           Number(t.exchangeRate), t.transactionDate, t.counterpartyAccount, t.counterpartyName, t.notes,
           t.incomeAccount, Number(t.incomeAmount || 0), t.feeAccount, Number(t.feeAmount || 0),
-          t.counterpartyBank,
+          t.counterpartyBank, t.incomeSubaccount, t.feeSubaccount,
         ].join('|');
       const previousSnapshot = voucherSnapshot(tx);
 
@@ -2174,7 +2182,7 @@ export class FinanceService {
             feeSubaccount: merge('feeSubaccount', tx.feeSubaccount),
             feeAmount: merge('feeAmount', tx.feeAmount),
           },
-          tx.counterpartConceptCode === ONLINE_PAYMENT_CONCEPT,
+          tx.counterpartConceptCode ?? '',
         );
         Object.assign(tx, online);
         data.amount = Math.round((online.incomeAmount - online.feeAmount) * 100) / 100;
@@ -3562,13 +3570,17 @@ export class FinanceService {
 
   async getPaymentStatistics(companyId: number) {
     const all = await this.paymentRepo.find({ where: { companyId } });
-    const totalReceived = all
-      .filter(p => p.paymentType === 'receivable' && p.status === 'completed')
-      .reduce((s, p) => s + Number(p.amount), 0);
-    const totalPaid = all
-      .filter(p => p.paymentType === 'payable' && p.status === 'completed')
-      .reduce((s, p) => s + Number(p.amount), 0);
-    return { total: all.length, totalReceived, totalPaid };
+    const received = all.filter(p => p.paymentType === 'receivable' && p.status === 'completed');
+    const paid = all.filter(p => p.paymentType === 'payable' && p.status === 'completed');
+    const totalReceived = received.reduce((s, p) => s + Number(p.amount), 0);
+    const totalPaid = paid.reduce((s, p) => s + Number(p.amount), 0);
+    return {
+      total: all.length,
+      receivedCount: received.length,
+      paidCount: paid.length,
+      totalReceived,
+      totalPaid,
+    };
   }
 
   // ══════════════════════════════════════════════════════════
