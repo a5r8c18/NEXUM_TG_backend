@@ -13,7 +13,6 @@ import { BankReconciliation } from '../entities/bank-reconciliation.entity';
 import { Customer } from '../entities/customer.entity';
 import { CounterpartConcept } from '../entities/counterpart-concept.entity';
 import { Account } from '../entities/account.entity';
-import { Subaccount } from '../entities/subaccount.entity';
 import { VoucherService } from '../accounting/voucher.service';
 import { AccountMappingService } from '../accounting/account-mapping.service';
 import { MappingType } from '../entities/account-mapping.entity';
@@ -98,6 +97,9 @@ const DEFAULT_INCOME_ACCOUNT: Record<string, string> = { '22': '950' };
 const ONLINE_PAYMENT_INCOME_ACCOUNT = '900';
 const ONLINE_PAYMENT_FEE_ACCOUNT = '835';
 
+/** Subcuenta de la 835 para la comisión bancaria cuando no se elige otra. */
+const ONLINE_PAYMENT_DEFAULT_FEE_SUBACCOUNT = '835-0010';
+
 /** Concepto 38: transferencias entre cuentas bancarias propias. */
 const BANK_TRANSFER_CONCEPT = '38';
 /** 26 Cobros anticipados (acredita la contrapartida, p. ej. 430) y 27 Pagos anticipados (la debita). */
@@ -118,6 +120,25 @@ const BANK_INCOME_EXCLUDED_CONCEPTS = new Set(['28', '80', '81']);
 /** Conceptos disponibles en Caja - Ingreso. */
 export const CASH_INCOME_CONCEPTS = ['24', '80', '81'];
 
+/** Concepto del comprobante Banco - Ingreso que genera un depósito desde Caja. */
+const CASH_DEPOSIT_CONCEPT = '24';
+
+/** Tipos de comprobante de caja que el usuario puede registrar, por sentido. */
+export const CASH_DOCUMENT_TYPES: Record<'income' | 'expense', Record<string, string>> = {
+  income: {
+    carga_inicial: 'Carga inicial',
+    recibo_ingreso: 'Recibo de ingresos',
+    liquidacion_cobro: 'Liquidación de documentos de cobro',
+    otros_cobros: 'Otros cobros',
+  },
+  expense: {
+    liquidacion_pago: 'Liquidación de documento de pago',
+    deposito_cuenta: 'Modelo de depósito en cuenta',
+    modelo_dieta: 'Modelo de dieta',
+    otros_pagos: 'Otros pagos',
+  },
+};
+
 /** Valores válidos de `source_module` en comprobantes bancarios. */
 const BANK_TX_SOURCE_MODULES = new Set<string>([
   'manual',
@@ -126,6 +147,7 @@ const BANK_TX_SOURCE_MODULES = new Set<string>([
   'fixed-assets',
   'transfer',
   'reversal',
+  'cash',
 ]);
 
 /** Devuelve solo las propiedades permitidas presentes en `data`. */
@@ -1275,7 +1297,7 @@ export class FinanceService {
       : String(data.incomeAccount ?? '').trim() || DEFAULT_INCOME_ACCOUNT[conceptCode] || '';
     const incomeSubaccount = String(data.incomeSubaccount ?? '').trim() || null;
     const feeAccount = requireFee ? ONLINE_PAYMENT_FEE_ACCOUNT : null;
-    const feeSubaccount = requireFee ? String(data.feeSubaccount ?? '').trim() || null : null;
+    let feeSubaccount = requireFee ? String(data.feeSubaccount ?? '').trim() || null : null;
     const incomeAmount = Math.round(Number(data.incomeAmount) * 100) / 100;
     const feeAmount = requireFee ? Math.round(Number(data.feeAmount || 0) * 100) / 100 : 0;
 
@@ -1302,33 +1324,25 @@ export class FinanceService {
       }
     }
 
-    let incomeSubaccountName: string | null = null;
-    if (incomeSubaccount) {
-      const sub = await this.dataSource.getRepository(Subaccount).findOne({
-        where: { companyId, subaccountCode: incomeSubaccount },
-        relations: ['account'],
-      });
-      if (!sub || sub.account?.code !== incomeAccount) {
-        throw new BadRequestException(
-          `La subcuenta ${incomeSubaccount} no existe o no pertenece a la ${incomeAccount}`,
-        );
+    // Las subcuentas son cuentas de nivel 4 del nomenclador (`<cuenta>-<sufijo>`).
+    const subaccountName = async (subCode: string | null, parentCode: string) => {
+      if (!subCode) return null;
+      const sub = await accountRepo.findOneBy({ companyId, code: subCode });
+      if (!sub || sub.parentCode !== parentCode) {
+        throw new BadRequestException(`La subcuenta ${subCode} no existe o no pertenece a la ${parentCode}`);
       }
-      incomeSubaccountName = sub.subaccountName;
+      return sub.name;
+    };
+
+    // Si la 835 está subdividida y no se eligió subcuenta, la comisión va a
+    // la 835-0010 (Gastos por comisiones bancarias).
+    if (feeAccount && !feeSubaccount) {
+      const defaultFee = await accountRepo.findOneBy({ companyId, code: ONLINE_PAYMENT_DEFAULT_FEE_SUBACCOUNT });
+      if (defaultFee) feeSubaccount = defaultFee.code;
     }
 
-    let feeSubaccountName: string | null = null;
-    if (feeSubaccount) {
-      const sub = await this.dataSource.getRepository(Subaccount).findOne({
-        where: { companyId, subaccountCode: feeSubaccount },
-        relations: ['account'],
-      });
-      if (!sub || sub.account?.code !== ONLINE_PAYMENT_FEE_ACCOUNT) {
-        throw new BadRequestException(
-          `La subcuenta ${feeSubaccount} no existe o no pertenece a la ${ONLINE_PAYMENT_FEE_ACCOUNT}`,
-        );
-      }
-      feeSubaccountName = sub.subaccountName;
-    }
+    const incomeSubaccountName = await subaccountName(incomeSubaccount, incomeAccount);
+    const feeSubaccountName = feeAccount ? await subaccountName(feeSubaccount, feeAccount) : null;
 
     return { incomeAccount, incomeAmount, feeAccount, feeAmount, incomeSubaccount, incomeSubaccountName, feeSubaccount, feeSubaccountName };
   }
@@ -2069,6 +2083,7 @@ export class FinanceService {
       'fixed-assets': 'una operación de activos fijos',
       transfer: 'una transferencia entre cuentas (es el espejo)',
       reversal: 'un reverso de comprobante',
+      cash: 'un depósito desde Caja',
     };
     throw new BadRequestException(
       `Este comprobante fue generado por ${origins[source] ?? `el módulo "${source}"`} ` +
@@ -2548,6 +2563,29 @@ export class FinanceService {
       if (!tx) throw new NotFoundException('Transacción no encontrada');
 
       this.assertBankTransactionMutable(tx, 'anular');
+      return this.cancelBankTransactionInTx(companyId, tx, manager);
+    });
+  }
+
+  /**
+   * Anula un comprobante bancario ya validado. Lo usa también Caja para el
+   * ingreso que genera un depósito, que en Banco está bloqueado por su origen.
+   */
+  private async cancelBankTransactionInTx(
+    companyId: number,
+    tx: BankTransaction,
+    manager: EntityManager,
+  ) {
+    {
+      const txRepo = manager.getRepository(BankTransaction);
+      if (tx.operationStatus === 'cancelled') {
+        throw new BadRequestException(`El comprobante ${tx.transactionNumber} ya está anulado.`);
+      }
+      if (tx.reconciled) {
+        throw new BadRequestException(
+          `El comprobante ${tx.transactionNumber} está conciliado en banco y no puede anularse.`,
+        );
+      }
 
       // Un comprobante ya reversado no puede anularse: su efecto en el saldo
       // ya fue neutralizado por el reverso y anularlo lo duplicaría.
@@ -2669,7 +2707,7 @@ export class FinanceService {
       await txRepo.save(tx);
 
       return { cancelled: true };
-    });
+    }
   }
 
   /**
@@ -2682,6 +2720,23 @@ export class FinanceService {
       const txRepo = manager.getRepository(BankTransaction);
       const tx = await txRepo.findOneBy({ id, companyId });
       if (!tx) throw new NotFoundException('Transacción no encontrada');
+      // El ingreso de un depósito desde Caja se restaura desde Caja.
+      if (tx.sourceModule === 'cash') {
+        throw new BadRequestException(
+          `El comprobante ${tx.transactionNumber} lo generó un depósito desde Caja; deshaga la anulación en Caja.`,
+        );
+      }
+      return this.restoreBankTransactionInTx(companyId, tx, manager);
+    });
+  }
+
+  private async restoreBankTransactionInTx(
+    companyId: number,
+    tx: BankTransaction,
+    manager: EntityManager,
+  ) {
+    {
+      const txRepo = manager.getRepository(BankTransaction);
       if (tx.operationStatus !== 'cancelled') {
         throw new BadRequestException(
           `Solo se puede deshacer la anulación de un comprobante anulado (${tx.transactionNumber})`,
@@ -2760,7 +2815,7 @@ export class FinanceService {
       await txRepo.save(tx);
 
       return { restored: true };
-    });
+    }
   }
 
   // ══════════════════════════════════════════════════════════
@@ -3412,9 +3467,15 @@ export class FinanceService {
 
   private async registerCashMovementFromPayment(companyId: number, payment: Payment, data: any, manager?: EntityManager) {
     const cashRegisterRepo = manager ? manager.getRepository(CashRegister) : this.cashRegisterRepo;
-    let cashRegister = await cashRegisterRepo.findOne({
-      where: { companyId, status: 'open' },
-    });
+    const isIncome = data.paymentType === 'receivable';
+    // Desde Caja (liquidación de documentos) llega la caja elegida; desde
+    // Pagos se usa la caja abierta o la predeterminada.
+    if (data.cashRegisterId) {
+      await this.findOpenCashRegisterFor(companyId, data.cashRegisterId, isIncome ? null : Number(data.amount), manager);
+    }
+    let cashRegister = data.cashRegisterId
+      ? await cashRegisterRepo.findOne({ where: { id: data.cashRegisterId, companyId } })
+      : await cashRegisterRepo.findOne({ where: { companyId, status: 'open' } });
     if (!cashRegister) {
       cashRegister = await cashRegisterRepo.findOne({
         where: { companyId, isDefault: true },
@@ -3425,7 +3486,6 @@ export class FinanceService {
       return;
     }
 
-    const isIncome = data.paymentType === 'receivable';
     const movementNumber = await this.sequenceService.nextFormatted(
       companyId,
       'cash-movement',
@@ -3445,9 +3505,10 @@ export class FinanceService {
       amount: data.amount,
       balanceAfter: newBalance,
       description: `${isIncome ? 'Cobro' : 'Pago'} ${payment.paymentNumber} - ${data.description || ''}`.trim(),
-      documentType: isIncome ? 'recibo_cobro' : 'vale_caja',
+      documentType: data.documentType || (isIncome ? 'recibo_cobro' : 'vale_caja'),
       documentNumber: payment.paymentNumber,
       counterpartyName: data.counterpartyName || null,
+      concept: data.concept || null,
       paymentId: payment.id,
       cashRegisterId: cashRegister.id,
       companyId,
@@ -3747,49 +3808,15 @@ export class FinanceService {
   }
 
   async depositToBank(companyId: number, cashRegisterId: string, bankAccountId: string, amount: number, description?: string) {
-    const cr = await this.findOneCashRegister(companyId, cashRegisterId);
-    if (Number(cr.currentBalance) < amount) {
-      throw new BadRequestException(`Saldo insuficiente en caja. Disponible: $${cr.currentBalance}`);
-    }
-
-    const ba = await this.findOneBankAccount(companyId, bankAccountId);
-
-    cr.currentBalance = Number(cr.currentBalance) - amount;
-    await this.cashRegisterRepo.save(cr);
-
-    const cmCount = await this.cashMovementRepo.count({ where: { companyId } });
-    const cm = this.cashMovementRepo.create({
-      movementNumber: `CAJ-${String(cmCount + 1).padStart(6, '0')}`,
-      movementDate: new Date(),
-      movementType: 'expense' as const,
-      amount,
-      balanceAfter: Number(cr.currentBalance),
-      description: description || `Depósito a banco ${ba.bankName} - ${ba.accountNumber}`,
-      documentType: 'deposito_banco' as const,
-      cashRegisterId: cr.id,
-      companyId,
-    });
-    await this.cashMovementRepo.save(cm);
-
-    ba.balance = Number(ba.balance) + amount;
-    ba.availableBalance = ba.balance;
-    await this.bankRepo.save(ba);
-
-    const txCount = await this.txRepo.count({ where: { companyId } });
-    const tx = this.txRepo.create({
-      transactionNumber: `TXB-${String(txCount + 1).padStart(6, '0')}`,
-      transactionDate: new Date().toISOString().split('T')[0],
-      transactionType: 'credit' as const,
-      amount,
-      description: description || `Depósito desde caja ${cr.registerCode}`,
-      referenceNumber: cm.movementNumber,
+    // Mismo flujo que Caja - Egreso con "Modelo de depósito en cuenta".
+    return this.createCashMovement(companyId, {
+      cashRegisterId,
+      movementType: 'expense',
+      documentType: 'deposito_cuenta',
       bankAccountId,
-      companyId,
+      amount,
+      description,
     });
-    await this.txRepo.save(tx);
-
-    this.logger.log(`Depósito $${amount} desde caja ${cr.registerCode} a banco ${ba.accountNumber}`);
-    return { cashRegister: cr, bankAccount: ba, cashMovement: cm, bankTransaction: tx };
   }
 
   async findCashMovements(companyId: number, cashRegisterId: string, filters?: any) {
@@ -3806,27 +3833,126 @@ export class FinanceService {
     return qb.getMany();
   }
 
+  /**
+   * Registra un comprobante de caja.
+   *
+   * - Liquidación de documentos de cobro / de pago: liquida la CxC o CxP
+   *   elegida con un `Payment` en efectivo (rebaja la obligación y genera el
+   *   comprobante contable de cobro/pago, como desde Pagos).
+   * - Modelo de depósito en cuenta: el efectivo sale de la caja y entra al
+   *   banco elegido en un comprobante Banco - Ingreso (concepto 24), generado
+   *   por Caja y bloqueado en Banco.
+   * - El resto solo mueve el saldo de la caja.
+   */
   async createCashMovement(companyId: number, data: any, manager?: EntityManager) {
-    const crRepo = manager ? manager.getRepository(CashRegister) : this.cashRegisterRepo;
-    const cr = await crRepo.findOne({ where: { id: data.cashRegisterId, companyId } });
-    if (!cr) throw new NotFoundException(`Caja ${data.cashRegisterId} no encontrada`);
-    if (cr.status !== 'open') {
-      throw new BadRequestException(`La caja ${cr.registerCode} no está abierta`);
-    }
-
     const movementType = data.movementType;
-    const amount = Number(data.amount);
     if (!['income', 'expense'].includes(movementType)) {
       throw new BadRequestException('Tipo de movimiento inválido; use income o expense');
     }
-    if (movementType === 'expense' && Number(cr.currentBalance) < amount) {
-      throw new BadRequestException(`Saldo insuficiente en caja ${cr.registerCode}. Disponible: $${cr.currentBalance}`);
+    if (!(Number(data.amount) > 0)) {
+      throw new BadRequestException('El monto debe ser mayor que cero');
+    }
+    // Tipo de comprobante: si no se indica (movimientos generados por otros
+    // flujos), se usa el genérico de siempre.
+    const documentType = data.documentType ? (String(data.documentType) as NonNullable<CashMovement['documentType']>) : null;
+    if (documentType && !CASH_DOCUMENT_TYPES[movementType as 'income' | 'expense'][documentType]) {
+      throw new BadRequestException(
+        `Tipo de comprobante no válido para Caja - ${movementType === 'income' ? 'Ingreso' : 'Egreso'}; use ` +
+          Object.values(CASH_DOCUMENT_TYPES[movementType as 'income' | 'expense']).join(', '),
+      );
     }
     // En los ingresos de caja el concepto es un código del catálogo (24/80/81).
     if (movementType === 'income' && data.concept && !CASH_INCOME_CONCEPTS.includes(String(data.concept))) {
       throw new BadRequestException(
         `Concepto no válido para Caja - Ingreso; use ${CASH_INCOME_CONCEPTS.join(', ')}`,
       );
+    }
+
+    if (documentType === 'liquidacion_cobro' || documentType === 'liquidacion_pago') {
+      return this.settleObligationFromCash(companyId, { ...data, documentType });
+    }
+    if (!manager) {
+      return this.dataSource.transaction((mgr) =>
+        this.createCashMovementInTx(companyId, { ...data, documentType }, mgr),
+      );
+    }
+    return this.createCashMovementInTx(companyId, { ...data, documentType }, manager);
+  }
+
+  /** Caja abierta de la empresa, con saldo suficiente si es un egreso. */
+  private async findOpenCashRegisterFor(
+    companyId: number,
+    cashRegisterId: string,
+    expenseAmount: number | null,
+    manager?: EntityManager,
+  ): Promise<CashRegister> {
+    const crRepo = manager ? manager.getRepository(CashRegister) : this.cashRegisterRepo;
+    const cr = await crRepo.findOne({ where: { id: cashRegisterId, companyId } });
+    if (!cr) throw new NotFoundException(`Caja ${cashRegisterId} no encontrada`);
+    if (cr.status !== 'open') {
+      throw new BadRequestException(`La caja ${cr.registerCode} no está abierta`);
+    }
+    if (expenseAmount !== null && Number(cr.currentBalance) < expenseAmount) {
+      throw new BadRequestException(`Saldo insuficiente en caja ${cr.registerCode}. Disponible: $${cr.currentBalance}`);
+    }
+    return cr;
+  }
+
+  /** Liquidación de documentos de cobro/pago en efectivo desde Caja. */
+  private async settleObligationFromCash(companyId: number, data: any) {
+    const isIncome = data.movementType === 'income';
+    const obligationId = isIncome ? data.accountReceivableId : data.accountPayableId;
+    if (!obligationId) {
+      throw new BadRequestException(
+        isIncome ? 'Seleccione la cuenta por cobrar a liquidar' : 'Seleccione la cuenta por pagar a liquidar',
+      );
+    }
+    const amount = Number(data.amount);
+    const cr = await this.findOpenCashRegisterFor(companyId, data.cashRegisterId, isIncome ? null : amount);
+
+    const payment = await this.createPayment(companyId, {
+      paymentType: isIncome ? 'receivable' : 'payable',
+      paymentMethod: 'cash',
+      amount,
+      currency: cr.currency,
+      paymentDate: data.movementDate || new Date().toISOString().split('T')[0],
+      description: data.description,
+      counterpartyName: data.counterpartyName,
+      ...(isIncome ? { accountReceivableId: obligationId } : { accountPayableId: obligationId }),
+      cashRegisterId: cr.id,
+      documentType: data.documentType,
+      concept: data.concept,
+    });
+
+    const cashMovement = await this.cashMovementRepo.findOne({ where: { companyId, paymentId: payment.id } });
+    const cashRegister = await this.cashRegisterRepo.findOne({ where: { id: cr.id, companyId } });
+    return { cashMovement, cashRegister, payment };
+  }
+
+  private async createCashMovementInTx(companyId: number, data: any, manager: EntityManager) {
+    const movementType = data.movementType;
+    const amount = Number(data.amount);
+    const documentType = data.documentType as CashMovement['documentType'];
+    const crRepo = manager.getRepository(CashRegister);
+    const cr = await this.findOpenCashRegisterFor(
+      companyId,
+      data.cashRegisterId,
+      movementType === 'expense' ? amount : null,
+      manager,
+    );
+
+    const isDeposit = documentType === 'deposito_cuenta';
+    let depositBank: BankAccount | null = null;
+    if (isDeposit) {
+      if (!data.bankAccountId) {
+        throw new BadRequestException('Seleccione la cuenta bancaria donde se deposita el efectivo');
+      }
+      depositBank = await this.findOneBankAccount(companyId, data.bankAccountId, manager);
+      if ((depositBank.currency || 'CUP') !== (cr.currency || 'CUP')) {
+        throw new BadRequestException(
+          `La caja ${cr.registerCode} es en ${cr.currency} y la cuenta ${depositBank.accountNumber} en ${depositBank.currency}; deposite en una cuenta de la misma moneda`,
+        );
+      }
     }
 
     const movementNumber = await this.sequenceService.nextFormatted(
@@ -3840,22 +3966,335 @@ export class FinanceService {
     cr.currentBalance = Number(cr.currentBalance) + delta;
     await crRepo.save(cr);
 
-    const cmRepo = manager ? manager.getRepository(CashMovement) : this.cashMovementRepo;
+    const cmRepo = manager.getRepository(CashMovement);
+    const description =
+      data.description ||
+      (depositBank ? `Depósito a banco ${depositBank.bankName} - ${depositBank.accountNumber}` : '');
     const cm = cmRepo.create({
       movementNumber,
       movementDate: data.movementDate || new Date(),
       movementType,
       amount,
       balanceAfter: Number(cr.currentBalance),
-      description: data.description,
+      description,
       concept: data.concept || null,
       counterpartyName: data.counterpartyName || null,
-      documentType: movementType === 'income' ? 'recibo_cobro' : 'vale_caja',
+      documentType: documentType || (movementType === 'income' ? 'recibo_cobro' : 'vale_caja'),
       cashRegisterId: cr.id,
       companyId,
     });
     const saved = await cmRepo.save(cm);
-    return { cashMovement: saved, cashRegister: cr };
+
+    let bankTransaction: BankTransaction | null = null;
+    if (depositBank) {
+      const date = data.movementDate
+        ? String(data.movementDate).substring(0, 10)
+        : new Date().toISOString().split('T')[0];
+      bankTransaction = await this.createBankTransaction(
+        companyId,
+        {
+          bankAccountId: depositBank.id,
+          transactionType: 'credit',
+          transactionCode: 'Otros cobros',
+          counterpartConceptCode: CASH_DEPOSIT_CONCEPT,
+          amount,
+          currency: depositBank.currency,
+          transactionDate: date,
+          description: `Depósito desde caja ${cr.registerCode}${data.description ? ` - ${data.description}` : ''}`,
+          referenceNumber: saved.movementNumber,
+          sourceModule: 'cash',
+        },
+        manager,
+      );
+      saved.documentNumber = bankTransaction.transactionNumber;
+      await cmRepo.save(saved);
+      this.logger.log(`Depósito $${amount} desde caja ${cr.registerCode} a banco ${depositBank.accountNumber}`);
+    }
+
+    return { cashMovement: saved, cashRegister: cr, bankTransaction };
+  }
+
+  // ── Edición y anulación de comprobantes de caja ──
+
+  /** Tipos que arrastran otra operación y no pueden convertirse en otro tipo al editar. */
+  private static readonly LINKED_CASH_DOCUMENT_TYPES = new Set([
+    'liquidacion_cobro',
+    'liquidacion_pago',
+    'deposito_cuenta',
+    'deposito_banco',
+  ]);
+
+  /**
+   * Solo se editan y anulan los ingresos y egresos; la apertura, el cierre y
+   * el arqueo los genera la propia caja.
+   */
+  private async loadMutableCashMovement(companyId: number, id: string, action: string, manager: EntityManager) {
+    const cm = await manager.getRepository(CashMovement).findOne({ where: { id, companyId } });
+    if (!cm) throw new NotFoundException('Movimiento de caja no encontrado');
+    if (!['income', 'expense'].includes(cm.movementType)) {
+      throw new BadRequestException(
+        `El movimiento ${cm.movementNumber} lo generó la caja (apertura, cierre o arqueo) y no puede ${action}se`,
+      );
+    }
+    return cm;
+  }
+
+  /**
+   * Comprobante Banco - Ingreso generado por un depósito de esta caja: el
+   * actual (concepto 24, origen Caja) o el del flujo anterior de depósito,
+   * que se enlazaba por el número del movimiento.
+   */
+  private async findCashDepositTransaction(companyId: number, cm: CashMovement, manager: EntityManager) {
+    const txRepo = manager.getRepository(BankTransaction);
+    if (cm.documentType === 'deposito_cuenta' && cm.documentNumber) {
+      return txRepo.findOne({ where: { companyId, transactionNumber: cm.documentNumber, sourceModule: 'cash' } });
+    }
+    if (cm.documentType === 'deposito_banco') {
+      return txRepo.findOne({ where: { companyId, referenceNumber: cm.movementNumber, transactionType: 'credit' } });
+    }
+    return null;
+  }
+
+  /**
+   * Aplica `delta` al saldo de la caja y desplaza el "saldo después" de los
+   * movimientos posteriores (y del propio, si `includeSelf`).
+   */
+  private async shiftCashBalances(
+    cr: CashRegister,
+    cm: CashMovement,
+    delta: number,
+    includeSelf: boolean,
+    manager: EntityManager,
+  ) {
+    if (Math.abs(delta) < 0.005) return;
+    const balance = Math.round((Number(cr.currentBalance) + delta) * 100) / 100;
+    if (balance < -0.009) {
+      throw new BadRequestException(
+        `Saldo insuficiente en caja ${cr.registerCode}: la operación la dejaría en ${balance.toFixed(2)}`,
+      );
+    }
+    cr.currentBalance = balance;
+    await manager.getRepository(CashRegister).save(cr);
+    await manager
+      .createQueryBuilder()
+      .update(CashMovement)
+      .set({ balanceAfter: () => 'balance_after + :delta' })
+      .where('cash_register_id = :crId', { crId: cr.id })
+      .andWhere(includeSelf ? 'created_at >= :createdAt' : 'created_at > :createdAt', { createdAt: cm.createdAt })
+      .setParameter('delta', delta)
+      .execute();
+  }
+
+  /** Comprueba que la obligación del pago admita `amount` más (al restaurar o aumentar el cobro/pago). */
+  private async assertObligationCanAbsorb(companyId: number, payment: Payment, amount: number, manager: EntityManager) {
+    const obligation = payment.accountReceivableId
+      ? await manager.getRepository(AccountReceivable).findOne({ where: { id: payment.accountReceivableId, companyId } })
+      : payment.accountPayableId
+        ? await manager.getRepository(AccountPayable).findOne({ where: { id: payment.accountPayableId, companyId } })
+        : null;
+    if (obligation && amount - Number(obligation.balanceAmount) > 0.01) {
+      const number = (obligation as AccountReceivable).arNumber || (obligation as AccountPayable).apNumber;
+      throw new BadRequestException(
+        `El importe (${amount.toFixed(2)}) excede el saldo pendiente de ${number} (${Number(obligation.balanceAmount).toFixed(2)})`,
+      );
+    }
+  }
+
+  /**
+   * Anula un comprobante de caja: devuelve el saldo de la caja, revierte la
+   * CxC/CxP que liquidó (anulando el pago y su comprobante contable) y, si fue
+   * un depósito, anula el ingreso que generó en Banco.
+   */
+  async cancelCashMovement(companyId: number, id: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const cm = await this.loadMutableCashMovement(companyId, id, 'anular', manager);
+      if (cm.status === 'cancelled') {
+        throw new BadRequestException(`El movimiento ${cm.movementNumber} ya está anulado`);
+      }
+      const cr = await this.findOpenCashRegisterFor(companyId, cm.cashRegisterId, null, manager);
+
+      const snapshot = { paymentVouchers: [] as { id: string; status: string }[] };
+      if (cm.paymentId) {
+        const paymentRepo = manager.getRepository(Payment);
+        const payment = await paymentRepo.findOne({ where: { id: cm.paymentId, companyId } });
+        if (payment && payment.status !== 'cancelled') {
+          await this.revertPaymentObligation(companyId, payment, manager);
+          snapshot.paymentVouchers = await this.cancelFinanceVouchers(
+            companyId,
+            payment.id,
+            manager,
+            `Payment ${payment.paymentNumber}`,
+          );
+          payment.status = 'cancelled';
+          await paymentRepo.save(payment);
+        }
+      }
+
+      const deposit = await this.findCashDepositTransaction(companyId, cm, manager);
+      if (deposit && deposit.operationStatus !== 'cancelled') {
+        await this.cancelBankTransactionInTx(companyId, deposit, manager);
+      }
+
+      const amount = Number(cm.amount);
+      await this.shiftCashBalances(cr, cm, cm.movementType === 'income' ? -amount : amount, false, manager);
+
+      cm.status = 'cancelled';
+      cm.cancelSnapshot = snapshot;
+      await manager.getRepository(CashMovement).save(cm);
+      return { cancelled: true };
+    });
+  }
+
+  /** Deshace la anulación de un comprobante de caja (operación inversa de {@link cancelCashMovement}). */
+  async restoreCashMovement(companyId: number, id: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const cm = await this.loadMutableCashMovement(companyId, id, 'restaurar', manager);
+      if (cm.status !== 'cancelled') {
+        throw new BadRequestException(`El movimiento ${cm.movementNumber} no está anulado`);
+      }
+      const amount = Number(cm.amount);
+      const cr = await this.findOpenCashRegisterFor(
+        companyId,
+        cm.cashRegisterId,
+        cm.movementType === 'expense' ? amount : null,
+        manager,
+      );
+
+      if (cm.paymentId) {
+        const paymentRepo = manager.getRepository(Payment);
+        const payment = await paymentRepo.findOne({ where: { id: cm.paymentId, companyId } });
+        if (payment && payment.status === 'cancelled') {
+          await this.assertObligationCanAbsorb(companyId, payment, Number(payment.amount), manager);
+          for (const entry of cm.cancelSnapshot?.paymentVouchers || []) {
+            await this.voucherService.updateVoucherStatus(companyId, entry.id, entry.status, manager);
+          }
+          payment.status = 'completed';
+          await paymentRepo.save(payment);
+          await this.applyPaymentObligation(companyId, payment, manager);
+        }
+      }
+
+      const deposit = await this.findCashDepositTransaction(companyId, cm, manager);
+      if (deposit && deposit.operationStatus === 'cancelled') {
+        await this.restoreBankTransactionInTx(companyId, deposit, manager);
+      }
+
+      await this.shiftCashBalances(cr, cm, cm.movementType === 'income' ? amount : -amount, false, manager);
+
+      cm.status = 'active';
+      cm.cancelSnapshot = null;
+      await manager.getRepository(CashMovement).save(cm);
+      return { restored: true };
+    });
+  }
+
+  /**
+   * Edita un comprobante de caja. El cambio de importe o fecha se propaga al
+   * saldo de la caja, al pago y a la CxC/CxP que liquidó (con su comprobante
+   * contable regenerado) y al ingreso en Banco de un depósito.
+   */
+  async updateCashMovement(companyId: number, id: string, data: any) {
+    return this.dataSource.transaction(async (manager) => {
+      const cmRepo = manager.getRepository(CashMovement);
+      const cm = await this.loadMutableCashMovement(companyId, id, 'editar', manager);
+      if (cm.status === 'cancelled') {
+        throw new BadRequestException(`El movimiento ${cm.movementNumber} está anulado; deshaga la anulación para editarlo`);
+      }
+      const cr = await this.findOpenCashRegisterFor(companyId, cm.cashRegisterId, null, manager);
+      const movementType = cm.movementType as 'income' | 'expense';
+
+      // Tipo de comprobante: los que arrastran otra operación no se convierten.
+      if (data.documentType !== undefined && data.documentType !== cm.documentType) {
+        const linked = FinanceService.LINKED_CASH_DOCUMENT_TYPES;
+        if (linked.has(cm.documentType || '') || linked.has(data.documentType)) {
+          throw new BadRequestException(
+            'Las liquidaciones y los depósitos no pueden cambiar de tipo de comprobante; anule el movimiento y regístrelo de nuevo',
+          );
+        }
+        if (!CASH_DOCUMENT_TYPES[movementType][data.documentType]) {
+          throw new BadRequestException('Tipo de comprobante no válido para este movimiento');
+        }
+        cm.documentType = data.documentType;
+      }
+      if (data.concept !== undefined) {
+        if (movementType === 'income' && data.concept && !CASH_INCOME_CONCEPTS.includes(String(data.concept))) {
+          throw new BadRequestException(`Concepto no válido para Caja - Ingreso; use ${CASH_INCOME_CONCEPTS.join(', ')}`);
+        }
+        cm.concept = data.concept || null;
+      }
+      if (data.description !== undefined) {
+        if (!String(data.description).trim()) throw new BadRequestException('La descripción es obligatoria');
+        cm.description = data.description;
+      }
+
+      const paymentRepo = manager.getRepository(Payment);
+      const payment = cm.paymentId ? await paymentRepo.findOne({ where: { id: cm.paymentId, companyId } }) : null;
+      const settlesObligation = !!(payment && (payment.accountReceivableId || payment.accountPayableId));
+
+      if (data.counterpartyName !== undefined && (data.counterpartyName || null) !== cm.counterpartyName) {
+        if (settlesObligation) {
+          throw new BadRequestException(
+            'El cliente o proveedor de una liquidación no se cambia: anule el movimiento y liquide la obligación correcta',
+          );
+        }
+        cm.counterpartyName = data.counterpartyName || null;
+      }
+
+      const oldAmount = Number(cm.amount);
+      const newAmount = data.amount !== undefined ? Math.round(Number(data.amount) * 100) / 100 : oldAmount;
+      if (!(newAmount > 0)) throw new BadRequestException('El monto debe ser mayor que cero');
+      const newDate = data.movementDate ? new Date(data.movementDate) : cm.movementDate;
+      const dateOnly = new Date(newDate).toISOString().split('T')[0];
+      const amountChanged = Math.abs(newAmount - oldAmount) >= 0.005;
+      const dateChanged = new Date(newDate).getTime() !== new Date(cm.movementDate).getTime();
+
+      // Pago vinculado (liquidación o cobro/pago en efectivo desde Pagos).
+      if (payment && payment.status !== 'cancelled' && (amountChanged || dateChanged)) {
+        if (settlesObligation && amountChanged) {
+          await this.revertPaymentObligation(companyId, payment, manager);
+          await this.assertObligationCanAbsorb(companyId, payment, newAmount, manager);
+        }
+        payment.amount = newAmount;
+        payment.paymentDate = dateOnly as any;
+        await paymentRepo.save(payment);
+        if (settlesObligation && amountChanged) {
+          await this.applyPaymentObligation(companyId, payment, manager);
+        }
+        if (payment.accountPayableId || payment.paymentType === 'payable') {
+          await this.regeneratePayablePaymentVoucher(companyId, payment, manager);
+        } else {
+          await this.regenerateReceivablePaymentVoucher(companyId, payment, manager);
+        }
+      }
+
+      // Depósito: el ingreso en Banco acompaña el importe y la fecha.
+      const deposit = await this.findCashDepositTransaction(companyId, cm, manager);
+      if (deposit && deposit.operationStatus !== 'cancelled' && (amountChanged || dateChanged)) {
+        if (deposit.reconciled) {
+          throw new BadRequestException(
+            `El ingreso ${deposit.transactionNumber} del depósito está conciliado en banco; no se puede modificar`,
+          );
+        }
+        if (amountChanged) {
+          await this.applyBankBalanceDelta(companyId, deposit.bankAccountId, newAmount - oldAmount, manager);
+          deposit.amount = newAmount;
+        }
+        deposit.transactionDate = dateOnly;
+        deposit.operationStatus = 'edited';
+        await manager.getRepository(BankTransaction).save(deposit);
+      }
+
+      if (amountChanged) {
+        const delta = newAmount - oldAmount;
+        await this.shiftCashBalances(cr, cm, movementType === 'income' ? delta : -delta, true, manager);
+        // El "saldo después" propio ya lo desplazó shiftCashBalances.
+        const fresh = await cmRepo.findOne({ where: { id: cm.id, companyId } });
+        if (fresh) cm.balanceAfter = fresh.balanceAfter;
+        cm.amount = newAmount;
+      }
+      cm.movementDate = newDate;
+      return cmRepo.save(cm);
+    });
   }
 
   async getCashStatistics(companyId: number) {

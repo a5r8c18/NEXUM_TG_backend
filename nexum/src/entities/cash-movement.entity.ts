@@ -34,7 +34,23 @@ export class CashMovement {
   description: string;
 
   @Column({ name: 'document_type', type: 'varchar', length: 30, nullable: true })
-  documentType: 'recibo_cobro' | 'vale_caja' | 'arqueo' | 'apertura' | 'cierre' | 'deposito_banco' | null;
+  documentType:
+    | 'recibo_cobro'
+    | 'vale_caja'
+    | 'arqueo'
+    | 'apertura'
+    | 'cierre'
+    | 'deposito_banco'
+    // Comprobantes de caja que registra el usuario
+    | 'carga_inicial'
+    | 'recibo_ingreso'
+    | 'liquidacion_cobro'
+    | 'otros_cobros'
+    | 'liquidacion_pago'
+    | 'deposito_cuenta'
+    | 'modelo_dieta'
+    | 'otros_pagos'
+    | null;
 
   @Column({ name: 'document_number', type: 'varchar', length: 50, nullable: true })
   documentNumber: string | null;
@@ -56,6 +72,14 @@ export class CashMovement {
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
+
+  /** Los comprobantes de caja se anulan (no se borran); la anulación se puede deshacer. */
+  @Column({ name: 'status', type: 'varchar', length: 20, default: 'active' })
+  status: 'active' | 'cancelled';
+
+  /** Estado previo de los comprobantes contables del pago que revirtió la anulación. */
+  @Column({ name: 'cancel_snapshot', type: 'jsonb', nullable: true })
+  cancelSnapshot: { paymentVouchers: { id: string; status: string }[] } | null;
 
   @Column({ name: 'cash_register_id', type: 'uuid' })
   cashRegisterId: string;

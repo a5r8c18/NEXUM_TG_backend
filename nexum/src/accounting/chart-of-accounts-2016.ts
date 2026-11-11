@@ -373,6 +373,41 @@ function generateOwnProductionForInputSubaccounts(parentCode: string, parentName
 }
 
 /**
+ * Subcuentas globales (iguales para todas las empresas) de cuentas que el
+ * nomenclador deja con análisis libre: 835 Gastos Financieros y 920
+ * Ingresos Financieros.
+ */
+export const GLOBAL_SUBACCOUNTS: Record<string, { parentName: string; items: Record<string, string> }> = {
+  '835': {
+    parentName: 'Gastos Financieros',
+    items: {
+      '0010': 'Gastos por comisiones bancarias',
+      '0020': 'Contribución al desarrollo Local',
+      '0030': 'Fluctuación de tasa de cambio',
+      '0040': 'Multas',
+      '0050': 'Sanciones',
+      '0060': 'Indemnizaciones',
+      '0070': 'Cambio de monedas en deudas',
+      '0080': 'Otros',
+    },
+  },
+  '920': {
+    parentName: 'Ingresos Financieros',
+    items: {
+      '0010': 'Intereses ganados',
+      '0020': 'Cancelación de cuentas por pagar',
+      '0030': 'Multas',
+      '0040': 'Indemnizaciones',
+      '0050': 'Ganancias por cambio de monedas en deudas',
+      '0060': 'Fluctuación en tasas de cambio',
+      '0070': 'Pronto despacho',
+      '0080': 'Ganancia en negocios conjuntos',
+      '0090': 'Dividendos ganados',
+    },
+  },
+};
+
+/**
  * Genera subcuentas a partir de una especificación de códigos y nombres,
  * permitiendo naturalezas personalizadas por subcuenta.
  */
@@ -1563,6 +1598,12 @@ function generateAllAccounts(companyType: 'state' | 'non-state') {
     // (0020 = Contribución a la Seguridad Social, etc.)
     if (!isNaN(codeNum) && codeNum >= 460 && codeNum <= 469) {
       const subs = generateWithholdingSubaccounts(code, parentName, type, nature);
+      allWithSubs.push(...subs);
+    }
+
+    // Gastos (835) e Ingresos (920) Financieros: subcuentas globales por tipo.
+    if (GLOBAL_SUBACCOUNTS[code]) {
+      const subs = generateAccountSubaccounts(code, parentName, type, nature, GLOBAL_SUBACCOUNTS[code].items);
       allWithSubs.push(...subs);
     }
 

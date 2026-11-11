@@ -305,6 +305,21 @@ export class FinanceController {
     return this.financeService.createCashMovement(getCompanyId(req), { ...body, cashRegisterId });
   }
 
+  @Put('cash-movements/:id')
+  updateCashMovement(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
+    return this.financeService.updateCashMovement(getCompanyId(req), id, body);
+  }
+
+  @Post('cash-movements/:id/cancel')
+  cancelCashMovement(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.cancelCashMovement(getCompanyId(req), id);
+  }
+
+  @Post('cash-movements/:id/restore-annulment')
+  restoreCashMovement(@Req() req: Request, @Param('id') id: string) {
+    return this.financeService.restoreCashMovement(getCompanyId(req), id);
+  }
+
   // ── Clientes / Entidades ──
   @Get('customers')
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.USER, UserRole.FACTURADOR)

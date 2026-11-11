@@ -16,7 +16,8 @@ export type BankTransactionSourceModule =
   | 'payroll'
   | 'fixed-assets'
   | 'transfer'
-  | 'reversal';
+  | 'reversal'
+  | 'cash';
 
 @Entity('bank_transactions')
 export class BankTransaction {
