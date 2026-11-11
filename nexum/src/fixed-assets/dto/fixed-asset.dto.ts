@@ -48,10 +48,20 @@ export class CreateFixedAssetDto {
   acquisitionDate: string;
 
   @IsOptional()
-  @IsIn(['compra', 'donacion', 'sobrante'], {
-    message: 'Concepto de alta inválido: debe ser compra, donacion o sobrante',
+  @IsIn(['compra', 'donacion', 'sobrante', 'carga_inicial'], {
+    message: 'Concepto de alta inválido: debe ser compra, donacion, sobrante o carga_inicial',
   })
-  acquisitionType?: 'compra' | 'donacion' | 'sobrante';
+  acquisitionType?: 'compra' | 'donacion' | 'sobrante' | 'carga_inicial';
+
+  @IsOptional()
+  @IsDateString({}, { message: 'La fecha de la carga inicial debe tener formato de fecha válido' })
+  @IsNotFutureDate({ message: 'La fecha de la carga inicial no puede ser futura' })
+  openingDate?: string;
+
+  @IsOptional()
+  @IsNumber({}, { message: 'La depreciación acumulada debe ser un número' })
+  @Min(0, { message: 'La depreciación acumulada no puede ser negativa' })
+  openingAccumulatedDepreciation?: number;
 
   @IsOptional()
   @IsString()

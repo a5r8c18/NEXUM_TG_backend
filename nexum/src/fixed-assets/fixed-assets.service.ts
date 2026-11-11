@@ -119,7 +119,9 @@ export class FixedAssetsService {
       subgroupDetail?: string;
       acquisitionValue: number;
       acquisitionDate: string;
-      acquisitionType?: 'compra' | 'donacion' | 'sobrante';
+      acquisitionType?: 'compra' | 'donacion' | 'sobrante' | 'carga_inicial';
+      openingDate?: string;
+      openingAccumulatedDepreciation?: number;
       location?: string;
       areaId?: number;
       responsiblePerson?: string;
@@ -130,6 +132,24 @@ export class FixedAssetsService {
       counterpartAccountCode?: string;
     },
   ) {
+    const isOpening = data.acquisitionType === 'carga_inicial';
+    const openingDate = isOpening ? data.openingDate || data.acquisitionDate : null;
+    const openingAccumulated = isOpening
+      ? Math.round(Number(data.openingAccumulatedDepreciation || 0) * 100) / 100
+      : 0;
+    if (isOpening) {
+      if (openingDate! < data.acquisitionDate) {
+        throw new BadRequestException(
+          'La fecha de la carga inicial no puede ser anterior a la fecha de adquisición del activo',
+        );
+      }
+      if (openingAccumulated > Number(data.acquisitionValue)) {
+        throw new BadRequestException(
+          'La depreciación acumulada no puede superar el valor de adquisición',
+        );
+      }
+    }
+
     const depRate = await this.getDepreciationRateFromCatalog(companyId, data.groupNumber, data.subgroup);
     if (depRate == null || depRate <= 0) {
       throw new BadRequestException(
@@ -198,9 +218,11 @@ export class FixedAssetsService {
       asset.assetAccountCode = data.assetAccountCode || null;
       asset.counterpartAccountCode = data.counterpartAccountCode || null;
       asset.depreciationRate = depRate;
-      asset.currentValue = data.acquisitionValue;
-      asset.accumulatedDepreciation = 0;
-      asset.status = 'active';
+      asset.openingDate = openingDate;
+      asset.openingAccumulatedDepreciation = openingAccumulated;
+      asset.accumulatedDepreciation = openingAccumulated;
+      asset.currentValue = Math.round((Number(data.acquisitionValue) - openingAccumulated) * 100) / 100;
+      asset.status = asset.currentValue <= 0 ? 'fully_depreciated' : 'active';
       if (acquisitionType === 'sobrante') {
         asset.investigationType = 'surplus';
         asset.investigationStatus = 'pending';
@@ -223,7 +245,13 @@ export class FixedAssetsService {
           let counterpartDescription: string;
           if (data.counterpartAccountCode) {
             counterpartAccount = data.counterpartAccountCode;
-            counterpartDescription = 'Cuenta seleccionada por el usuario';
+            counterpartDescription = isOpening
+              ? 'Carga inicial de AFT (valor neto)'
+              : 'Cuenta seleccionada por el usuario';
+          } else if (isOpening) {
+            // Igual que la carga inicial de inventarios: contra Inversión Estatal.
+            counterpartAccount = '600';
+            counterpartDescription = 'Carga inicial de AFT (valor neto)';
           } else if (acquisitionType === 'donacion') {
             counterpartAccount =
               (await this.accountMappingService.getAccountForMapping(
@@ -247,34 +275,57 @@ export class FixedAssetsService {
             counterpartDescription = 'Obligación por compra de AFT';
           }
 
+          // Carga inicial: la depreciación que ya traía el activo va a la 375
+          // y la contrapartida recibe solo el valor neto en libros.
+          const accumulatedAccount = openingAccumulated > 0
+            ? (await this.accountMappingService.getAccountForMapping(
+                companyId,
+                MappingType.FIXED_ASSET_ACCUMULATED_DEPRECIATION,
+              )) || '375'
+            : null;
+          const counterpartAmount = Math.round((acquisitionValue - openingAccumulated) * 100) / 100;
+          const lines: any[] = [
+            {
+              accountCode: assetAccount,
+              debit: acquisitionValue,
+              credit: 0,
+              areaId: data.areaId || null,
+              costCenterId: data.costCenterId || null,
+              description: `Alta AFT ${asset.assetCode}`,
+            },
+          ];
+          if (accumulatedAccount) {
+            lines.push({
+              accountCode: accumulatedAccount,
+              debit: 0,
+              credit: openingAccumulated,
+              areaId: data.areaId || null,
+              costCenterId: data.costCenterId || null,
+              description: `Dep. acumulada a la carga inicial ${asset.assetCode}`,
+            });
+          }
+          if (counterpartAmount > 0) {
+            lines.push({
+              accountCode: counterpartAccount,
+              debit: 0,
+              credit: counterpartAmount,
+              areaId: data.areaId || null,
+              costCenterId: data.costCenterId || null,
+              description: counterpartDescription,
+            });
+          }
+
           await this.voucherService.createVoucherFromModule(
             companyId,
             'fixed-assets',
             String(asset.id),
             {
-              date: asset.acquisitionDate || new Date().toISOString().split('T')[0],
+              date: openingDate || asset.acquisitionDate || new Date().toISOString().split('T')[0],
               description: `${this.getAcquisitionTypeLabel(acquisitionType)}: ${asset.name} (${asset.assetCode}) - Área: ${areaName}`,
               type: 'fixed-assets',
               reference: `AFT-${asset.assetCode}`,
               createdBy: 'Sistema',
-              lines: [
-                {
-                  accountCode: assetAccount,
-                  debit: acquisitionValue,
-                  credit: 0,
-                  areaId: data.areaId || null,
-                  costCenterId: data.costCenterId || null,
-                  description: `Alta AFT ${asset.assetCode}`,
-                },
-                {
-                  accountCode: counterpartAccount,
-                  debit: 0,
-                  credit: acquisitionValue,
-                  areaId: data.areaId || null,
-                  costCenterId: data.costCenterId || null,
-                  description: counterpartDescription,
-                },
-              ],
+              lines,
             },
             manager,
           );
@@ -2001,8 +2052,10 @@ export class FixedAssetsService {
     const report: any[] = [];
 
     for (const asset of assets) {
-      const acquisitionDate = new Date(asset.acquisitionDate);
-      if (cutoff < new Date(acquisitionDate.getFullYear(), acquisitionDate.getMonth(), 1)) {
+      // Carga inicial: el activo entra al registro en la fecha de la carga con
+      // la depreciación que ya traía; los períodos se cuentan desde ahí.
+      const startDate = new Date(asset.openingDate || asset.acquisitionDate);
+      if (cutoff < new Date(startDate.getFullYear(), startDate.getMonth(), 1)) {
         continue;
       }
 
@@ -2013,11 +2066,11 @@ export class FixedAssetsService {
 
       const expectedPeriods = Math.max(
         0,
-        (year - acquisitionDate.getFullYear()) * 12 +
-          (month - 1 - acquisitionDate.getMonth()),
+        (year - startDate.getFullYear()) * 12 +
+          (month - 1 - startDate.getMonth()),
       );
       const processedPeriods = record?.periods ?? 0;
-      const accumulatedDepreciation = record?.accumulated ?? 0;
+      const accumulatedDepreciation = record?.accumulated ?? Number(asset.openingAccumulatedDepreciation || 0);
       const currentValue = Math.max(acqVal - accumulatedDepreciation, 0);
 
       report.push({
@@ -2122,12 +2175,14 @@ export class FixedAssetsService {
     for (const asset of assets) {
       if (processedIds.has(asset.id)) continue;
 
-      const acquisitionDate = new Date(asset.acquisitionDate);
+      // En la carga inicial la depreciación anterior ya viene acumulada:
+      // se procesa desde el mes siguiente a la fecha de la carga.
+      const startDate = new Date(asset.openingDate || asset.acquisitionDate);
       const currentDate = new Date(year, month - 1, 1);
 
       const firstDepreciableMonth = new Date(
-        acquisitionDate.getFullYear(),
-        acquisitionDate.getMonth() + 1,
+        startDate.getFullYear(),
+        startDate.getMonth() + 1,
         1,
       );
       if (currentDate < firstDepreciableMonth) continue;
@@ -2369,6 +2424,7 @@ export class FixedAssetsService {
       compra: 'Compra de AFT',
       donacion: 'Alta de AFT por donación',
       sobrante: 'Alta de AFT por sobrante',
+      carga_inicial: 'Carga inicial de AFT',
     };
     return labels[type] || 'Alta de AFT';
   }

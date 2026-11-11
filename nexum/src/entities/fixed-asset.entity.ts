@@ -89,6 +89,20 @@ export class FixedAsset {
   @Column({ name: 'acquisition_type', type: 'varchar', length: 30, default: 'compra' })
   acquisitionType: string;
 
+  // ── Carga inicial: el activo ya existía al empezar a usar el sistema ──
+  // La depreciación se procesa desde el mes siguiente a `openingDate`.
+  @Column({ name: 'opening_date', type: 'date', nullable: true })
+  openingDate: string | null;
+
+  @Column({
+    name: 'opening_accumulated_depreciation',
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    default: 0,
+  })
+  openingAccumulatedDepreciation: number;
+
   @Column({ name: 'disposal_type', type: 'varchar', length: 30, nullable: true })
   disposalType: string | null;
 
