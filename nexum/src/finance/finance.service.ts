@@ -117,6 +117,9 @@ const THIRD_PARTY_REQUIRED_CONCEPTS = new Set(['20', '21', '26', '27']);
  */
 const BANK_INCOME_EXCLUDED_CONCEPTS = new Set(['28', '80', '81']);
 
+/** Conceptos de caja que no se registran en Banco ni como ingreso ni como egreso. */
+const BANK_EXCLUDED_CONCEPTS = new Set(['100']);
+
 /** Conceptos disponibles en Caja - Ingreso. */
 export const CASH_INCOME_CONCEPTS = ['24', '80', '81'];
 
@@ -829,20 +832,50 @@ export class FinanceService {
    * la misma transacción de BD.
    */
   /**
-   * Los conceptos 28, 80 y 81 no se usan en ingresos bancarios. Solo se
-   * valida al elegir el concepto, así los comprobantes antiguos que ya lo
-   * tienen siguen pudiéndose editar.
+   * Los conceptos 28, 80 y 81 no se usan en ingresos bancarios y el 100 no
+   * se usa en Banco en absoluto. Solo se valida al elegir el concepto, así
+   * los comprobantes antiguos que ya lo tienen siguen pudiéndose editar.
    */
   private assertConceptAllowedInBank(
     concept: CounterpartConcept,
     transactionType: string,
   ): void {
+    if (BANK_EXCLUDED_CONCEPTS.has(concept.code)) {
+      throw new BadRequestException(
+        `El concepto ${concept.code} — ${concept.name} no se registra en Banco; regístrelo en Caja.`,
+      );
+    }
     if (transactionType === 'credit' && BANK_INCOME_EXCLUDED_CONCEPTS.has(concept.code)) {
       throw new BadRequestException(
         `El concepto ${concept.code} — ${concept.name} no se registra en Banco - Ingreso` +
           (concept.code === '28' ? '; liquide el anticipo desde Cobros anticipados.' : '; regístrelo en Caja.'),
       );
     }
+  }
+
+  /**
+   * Si el tercero es obligatorio: siempre en liquidaciones/anticipos
+   * (20/21/26/27) y en "Otros cobros" cuando el concepto pide cliente o
+   * trabajador.
+   */
+  private thirdPartyRequiredFor(
+    concept: CounterpartConcept,
+    transactionCode?: string | null,
+  ): boolean {
+    return (
+      THIRD_PARTY_REQUIRED_CONCEPTS.has(concept.code) ||
+      (transactionCode === 'Otros cobros' &&
+        (concept.requiresCustomer || concept.requiresEmployee))
+    );
+  }
+
+  private thirdPartyLabelFor(
+    concept: CounterpartConcept,
+    transactionCode?: string | null,
+  ): string {
+    if (concept.requiresSupplier) return 'proveedor';
+    if (concept.requiresEmployee) return 'trabajador';
+    return transactionCode === 'Otros cobros' ? 'cliente o trabajador' : 'cliente';
   }
 
   async createBankTransaction(companyId: number, data: any, manager?: EntityManager) {
@@ -893,11 +926,11 @@ export class FinanceService {
       }
       this.assertConceptAllowedInBank(concept, data.transactionType);
       if (
-        THIRD_PARTY_REQUIRED_CONCEPTS.has(concept.code) &&
+        this.thirdPartyRequiredFor(concept, transactionCode) &&
         !String(data.counterpartyName ?? '').trim()
       ) {
         throw new BadRequestException(
-          `El concepto "${concept.name}" requiere indicar el ${concept.requiresSupplier ? 'proveedor' : 'cliente'}`,
+          `El concepto "${concept.name}" requiere indicar el ${this.thirdPartyLabelFor(concept, transactionCode)}`,
         );
       }
     }
@@ -2155,8 +2188,9 @@ export class FinanceService {
         if (data.counterpartyAccount !== undefined) tx.counterpartyAccount = data.counterpartyAccount;
         if (data.counterpartyName !== undefined) tx.counterpartyName = data.counterpartyName;
       } else {
+        let concept: CounterpartConcept | null = null;
         if (data.counterpartConceptCode && data.counterpartConceptCode !== tx.counterpartConceptCode) {
-          const concept = await this.findOneCounterpartConcept(data.counterpartConceptCode);
+          concept = await this.findOneCounterpartConcept(data.counterpartConceptCode);
           if (!concept) {
             throw new BadRequestException(
               `El concepto de contrapartida "${data.counterpartConceptCode}" no existe o no está activo`,
@@ -2174,12 +2208,19 @@ export class FinanceService {
         tx.counterpartyAccount = null;
         if (data.counterpartyName !== undefined) tx.counterpartyName = data.counterpartyName;
         if (
-          THIRD_PARTY_REQUIRED_CONCEPTS.has(tx.counterpartConceptCode ?? '') &&
+          tx.counterpartConceptCode &&
           !String(tx.counterpartyName ?? '').trim()
         ) {
-          throw new BadRequestException(
-            'Este concepto requiere indicar el cliente o proveedor',
-          );
+          const effConcept =
+            concept ??
+            (await this.counterpartConceptRepo.findOneBy({
+              code: tx.counterpartConceptCode,
+            }));
+          if (effConcept && this.thirdPartyRequiredFor(effConcept, effectiveCode)) {
+            throw new BadRequestException(
+              `Este concepto requiere indicar el ${this.thirdPartyLabelFor(effConcept, effectiveCode)}`,
+            );
+          }
         }
       }
 
