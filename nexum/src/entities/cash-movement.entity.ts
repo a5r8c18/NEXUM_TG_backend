@@ -73,13 +73,41 @@ export class CashMovement {
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
+  // ── Datos del Recibo de ingreso ──
+  @Column({ name: 'exchange_rate', type: 'decimal', precision: 12, scale: 4, default: 1 })
+  exchangeRate: number;
+
+  @Column({ name: 'receipt_number', type: 'varchar', length: 50, nullable: true })
+  receiptNumber: string | null;
+
+  @Column({ name: 'delivered_by', type: 'varchar', length: 200, nullable: true })
+  deliveredBy: string | null;
+
+  @Column({ name: 'issue_date', type: 'date', nullable: true })
+  issueDate: string | null;
+
+  @Column({ name: 'received_by', type: 'varchar', length: 200, nullable: true })
+  receivedBy: string | null;
+
+  /** Cuenta que se acredita en el asiento del recibo. */
+  @Column({ name: 'counterpart_account', type: 'varchar', length: 50, nullable: true })
+  counterpartAccount: string | null;
+
+  /** Subcuenta de la contrapartida, con el código completo `<cuenta>-<subcuenta>`. */
+  @Column({ name: 'counterpart_subaccount', type: 'varchar', length: 50, nullable: true })
+  counterpartSubaccount: string | null;
+
   /** Los comprobantes de caja se anulan (no se borran); la anulación se puede deshacer. */
   @Column({ name: 'status', type: 'varchar', length: 20, default: 'active' })
   status: 'active' | 'cancelled';
 
   /** Estado previo de los comprobantes contables del pago que revirtió la anulación. */
   @Column({ name: 'cancel_snapshot', type: 'jsonb', nullable: true })
-  cancelSnapshot: { paymentVouchers: { id: string; status: string }[] } | null;
+  cancelSnapshot: {
+    paymentVouchers: { id: string; status: string }[];
+    /** Comprobantes propios del movimiento (asiento del Recibo de ingreso). */
+    vouchers?: { id: string; status: string }[];
+  } | null;
 
   @Column({ name: 'cash_register_id', type: 'uuid' })
   cashRegisterId: string;

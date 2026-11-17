@@ -78,8 +78,22 @@ const PAYMENT_FIELDS = [
 
 const CASH_REGISTER_FIELDS = [
   'registerName', 'responsibleName', 'responsibleId', 'location', 'currency',
-  'maxRetentionLimit', 'isDefault', 'notes',
+  'maxRetentionLimit', 'isDefault', 'notes', 'fondo', 'accountingAccount',
 ] as const;
+
+/** Campos de documento de los comprobantes de caja (Recibo de ingreso, Otros cobros, Liquidación de cobro). */
+const CASH_RECEIPT_FIELDS = [
+  'exchangeRate', 'receiptNumber', 'deliveredBy', 'issueDate', 'receivedBy',
+  'performedBy', 'counterpartAccount', 'counterpartSubaccount',
+] as const;
+
+/** Comprobantes de caja con asiento propio (débito a la caja, crédito a la contrapartida). */
+const CASH_OWN_VOUCHER_TYPES = new Set(['recibo_ingreso', 'otros_cobros']);
+
+type CashDocumentKind = 'recibo_ingreso' | 'otros_cobros' | 'liquidacion_cobro' | 'liquidacion_pago';
+
+/** Liquidaciones de documentos desde Caja (su asiento es el del pago). */
+const CASH_SETTLEMENT_TYPES = new Set(['liquidacion_cobro', 'liquidacion_pago']);
 
 /** Código del comprobante que usa cuenta contable en vez de concepto. */
 const OPENING_ENTRY_CODE = 'Carga Inicial';
@@ -152,6 +166,18 @@ const BANK_TX_SOURCE_MODULES = new Set<string>([
   'reversal',
   'cash',
 ]);
+
+/**
+ * Datos internos del asiento de un pago (nunca vienen del body): cuenta de
+ * efectivo de la caja, contrapartida con subcuenta y tasa para pasar a CUP.
+ */
+interface PaymentVoucherExtras {
+  cashAccountCode?: string;
+  counterpartAccount?: string;
+  counterpartSubaccount?: string;
+  counterpartSubaccountName?: string;
+  voucherRate?: number;
+}
 
 /** Devuelve solo las propiedades permitidas presentes en `data`. */
 function pick(data: any, fields: readonly string[]): Record<string, any> {
@@ -1877,16 +1903,39 @@ export class FinanceService {
    * Anula el voucher vigente de un cobro de CxC y genera uno nuevo con los
    * datos actuales del `Payment` (banco vinculado, importe y fecha).
    */
+  /**
+   * Liquidación desde Caja con cuenta de contrapartida: datos para conservar
+   * en el asiento la cuenta de la caja, la contrapartida con su subcuenta y la
+   * tasa. `undefined` si el pago no viene de una liquidación así.
+   */
+  private async paymentCashSettlementExtras(
+    companyId: number,
+    payment: Payment,
+    manager: EntityManager,
+    cashMovement?: CashMovement,
+  ): Promise<PaymentVoucherExtras | undefined> {
+    const cm =
+      cashMovement ??
+      (payment.paymentMethod === 'cash'
+        ? await manager.getRepository(CashMovement).findOne({ where: { companyId, paymentId: payment.id } })
+        : null);
+    if (!cm || !CASH_SETTLEMENT_TYPES.has(cm.documentType || '') || !cm.counterpartAccount) return undefined;
+    const cr = await manager.getRepository(CashRegister).findOne({ where: { id: cm.cashRegisterId, companyId } });
+    return cr ? this.cashSettlementVoucherExtras(companyId, cr, cm, manager) : undefined;
+  }
+
   private async regenerateReceivablePaymentVoucher(
     companyId: number,
     payment: Payment,
     manager: EntityManager,
+    cashMovement?: CashMovement,
   ): Promise<void> {
     const ar = payment.accountReceivableId
       ? await manager.getRepository(AccountReceivable).findOne({
           where: { id: payment.accountReceivableId, companyId },
         })
       : null;
+    const extras = await this.paymentCashSettlementExtras(companyId, payment, manager, cashMovement);
     await this.cancelPaymentVouchers(companyId, payment, manager);
     await this.createPaymentVoucher(
       companyId,
@@ -1904,6 +1953,7 @@ export class FinanceService {
         performedBy: 'Sistema',
       },
       manager,
+      extras,
     );
   }
 
@@ -1987,12 +2037,14 @@ export class FinanceService {
     companyId: number,
     payment: Payment,
     manager: EntityManager,
+    cashMovement?: CashMovement,
   ): Promise<void> {
     const ap = payment.accountPayableId
       ? await manager.getRepository(AccountPayable).findOne({
           where: { id: payment.accountPayableId, companyId },
         })
       : null;
+    const extras = await this.paymentCashSettlementExtras(companyId, payment, manager, cashMovement);
     await this.cancelPaymentVouchers(companyId, payment, manager);
     await this.createPaymentVoucher(
       companyId,
@@ -2009,6 +2061,7 @@ export class FinanceService {
         performedBy: 'Sistema',
       },
       manager,
+      extras,
     );
   }
 
@@ -3287,7 +3340,16 @@ export class FinanceService {
     return payment;
   }
 
-  async createPayment(companyId: number, data: any) {
+  /**
+   * `voucherExtras` y `cashFields` solo los pasan flujos internos (Caja):
+   * ajustan el asiento y los datos del movimiento de caja.
+   */
+  async createPayment(
+    companyId: number,
+    data: any,
+    voucherExtras?: PaymentVoucherExtras,
+    cashFields?: Partial<CashMovement>,
+  ) {
     const amount = Number(data.amount);
     if (!(amount > 0)) {
       throw new BadRequestException('El importe del pago debe ser mayor que cero');
@@ -3390,11 +3452,13 @@ export class FinanceService {
       }
     }
 
-    await this.createPaymentVoucher(companyId, saved, {
-      ...data,
-      counterpartAccount,
-      counterpartReference,
-    }, manager);
+    await this.createPaymentVoucher(
+      companyId,
+      saved,
+      { ...data, counterpartAccount, counterpartReference },
+      manager,
+      voucherExtras,
+    );
 
     if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'check' ||
         data.paymentMethod === 'credit_card' || data.paymentMethod === 'debit_card') {
@@ -3402,7 +3466,7 @@ export class FinanceService {
         await this.registerBankMovementFromPayment(companyId, saved, data, manager);
       }
     } else if (data.paymentMethod === 'cash') {
-      await this.registerCashMovementFromPayment(companyId, saved, data, manager);
+      await this.registerCashMovementFromPayment(companyId, saved, data, manager, cashFields);
     }
 
     return saved;
@@ -3506,7 +3570,13 @@ export class FinanceService {
     this.logger.log(`BankTransaction ${tx.transactionNumber} creada desde Payment ${payment.paymentNumber}`);
   }
 
-  private async registerCashMovementFromPayment(companyId: number, payment: Payment, data: any, manager?: EntityManager) {
+  private async registerCashMovementFromPayment(
+    companyId: number,
+    payment: Payment,
+    data: any,
+    manager?: EntityManager,
+    cashFields?: Partial<CashMovement>,
+  ) {
     const cashRegisterRepo = manager ? manager.getRepository(CashRegister) : this.cashRegisterRepo;
     const isIncome = data.paymentType === 'receivable';
     // Desde Caja (liquidación de documentos) llega la caja elegida; desde
@@ -3553,6 +3623,7 @@ export class FinanceService {
       paymentId: payment.id,
       cashRegisterId: cashRegister.id,
       companyId,
+      ...(cashFields ?? {}),
     });
     await cashMovementRepo.save(cm);
 
@@ -3568,9 +3639,16 @@ export class FinanceService {
     this.logger.log(`CashMovement ${cm.movementNumber} creada desde Payment ${payment.paymentNumber}`);
   }
 
-  private async createPaymentVoucher(companyId: number, payment: Payment, data: any, manager?: EntityManager) {
+  private async createPaymentVoucher(
+    companyId: number,
+    payment: Payment,
+    data: any,
+    manager?: EntityManager,
+    extras?: PaymentVoucherExtras,
+  ) {
     const isIncome = data.paymentType === 'receivable';
-    const amount = Number(data.amount);
+    const rate = Number(extras?.voucherRate) > 0 ? Number(extras!.voucherRate) : 1;
+    const amount = Math.round(Number(data.amount) * rate * 100) / 100;
 
     let treasuryMapping: MappingType;
     if (data.paymentMethod === 'cash') {
@@ -3594,6 +3672,7 @@ export class FinanceService {
     let cashAccountCode: string;
     if (treasuryMapping === MappingType.TREASURY_CASH) {
       cashAccountCode =
+        extras?.cashAccountCode ||
         (await this.accountMappingService.getAccountForMapping(companyId, treasuryMapping)) || '101';
     } else {
       const bankAccountId = payment.bankAccountId || data.bankAccountId;
@@ -3612,6 +3691,7 @@ export class FinanceService {
 
     if (isIncome) {
       const receivableAccount =
+        extras?.counterpartAccount ||
         data.counterpartAccount ||
         (await this.accountMappingService.getAccountForMapping(companyId, MappingType.INVOICE_RECEIVABLE)) ||
         '135';
@@ -3627,9 +3707,13 @@ export class FinanceService {
         credit: amount,
         description: `Cobro ${payment.paymentNumber} - ${data.description || ''}`,
         reference: data.counterpartReference || data.counterpartyName || null,
+        ...(extras?.counterpartSubaccount
+          ? { subaccountCode: extras.counterpartSubaccount, subaccountName: extras.counterpartSubaccountName }
+          : {}),
       });
     } else {
       const payableAccount =
+        extras?.counterpartAccount ||
         data.counterpartAccount ||
         (await this.accountMappingService.getAccountForMapping(companyId, MappingType.PURCHASE_ORDER)) ||
         '410';
@@ -3639,6 +3723,9 @@ export class FinanceService {
         credit: 0,
         description: `Pago ${payment.paymentNumber} - ${data.description || ''}`,
         reference: data.counterpartReference || data.counterpartyName || null,
+        ...(extras?.counterpartSubaccount
+          ? { subaccountCode: extras.counterpartSubaccount, subaccountName: extras.counterpartSubaccountName }
+          : {}),
       });
       lines.push({
         accountCode: cashAccountCode,
@@ -3714,6 +3801,9 @@ export class FinanceService {
     );
     const openingBalance = Number(data.openingBalance ?? data.currentBalance ?? 0);
     const isOpen = openingBalance > 0;
+    if (data.accountingAccount !== undefined) {
+      data.accountingAccount = await this.validateCashAccountingAccount(companyId, data.accountingAccount);
+    }
     const cr = this.cashRegisterRepo.create({
       ...pick(data, CASH_REGISTER_FIELDS),
       companyId,
@@ -3751,8 +3841,35 @@ export class FinanceService {
 
   async updateCashRegister(companyId: number, id: string, data: any) {
     const cr = await this.findOneCashRegister(companyId, id);
+    if (data.accountingAccount !== undefined) {
+      data.accountingAccount = await this.validateCashAccountingAccount(companyId, data.accountingAccount);
+    }
     Object.assign(cr, pick(data, CASH_REGISTER_FIELDS));
     return this.cashRegisterRepo.save(cr);
+  }
+
+  /** La cuenta de la caja debe ser de Efectivo en Caja (101-108) o una de sus subcuentas. */
+  private async validateCashAccountingAccount(companyId: number, code: string | null | undefined) {
+    const value = String(code ?? '').trim();
+    if (!value) return null;
+    const parent = parseInt(value.split('-')[0], 10);
+    if (isNaN(parent) || parent < 101 || parent > 108) {
+      throw new BadRequestException('La cuenta contable de la caja debe ser de Efectivo en Caja (101-108)');
+    }
+    const exists = await this.dataSource.getRepository(Account).findOneBy({ companyId, code: value });
+    if (!exists) {
+      throw new BadRequestException(`La cuenta contable ${value} no existe en el nomenclador de la empresa`);
+    }
+    return value;
+  }
+
+  /** Cuenta de efectivo que mueve la caja: la vinculada a ella o la de Tesorería (101). */
+  private async cashAccountingCode(companyId: number, cr: CashRegister): Promise<string> {
+    return (
+      cr.accountingAccount?.trim() ||
+      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_CASH)) ||
+      '101'
+    );
   }
 
   async openCashRegister(companyId: number, id: string, openingBalance?: number) {
@@ -3951,19 +4068,36 @@ export class FinanceService {
     const amount = Number(data.amount);
     const cr = await this.findOpenCashRegisterFor(companyId, data.cashRegisterId, isIncome ? null : amount);
 
-    const payment = await this.createPayment(companyId, {
-      paymentType: isIncome ? 'receivable' : 'payable',
-      paymentMethod: 'cash',
-      amount,
-      currency: cr.currency,
-      paymentDate: data.movementDate || new Date().toISOString().split('T')[0],
-      description: data.description,
-      counterpartyName: data.counterpartyName,
-      ...(isIncome ? { accountReceivableId: obligationId } : { accountPayableId: obligationId }),
-      cashRegisterId: cr.id,
-      documentType: data.documentType,
-      concept: data.concept,
-    });
+    // Liquidación de documentos de cobro/pago: Nro. de documento, fecha de
+    // emisión, tasa y cuenta de contrapartida (con subcuenta) del asiento.
+    const manager = this.dataSource.manager;
+    const doc = await this.resolveCashReceipt(
+      companyId,
+      data,
+      cr,
+      manager,
+      isIncome ? 'liquidacion_cobro' : 'liquidacion_pago',
+    );
+
+    const payment = await this.createPayment(
+      companyId,
+      {
+        paymentType: isIncome ? 'receivable' : 'payable',
+        paymentMethod: 'cash',
+        amount,
+        currency: cr.currency,
+        exchangeRate: doc.exchangeRate,
+        paymentDate: data.movementDate || new Date().toISOString().split('T')[0],
+        description: data.description,
+        counterpartyName: data.counterpartyName,
+        ...(isIncome ? { accountReceivableId: obligationId } : { accountPayableId: obligationId }),
+        cashRegisterId: cr.id,
+        documentType: data.documentType,
+        concept: data.concept,
+      },
+      await this.cashSettlementVoucherExtras(companyId, cr, doc, manager),
+      doc,
+    );
 
     const cashMovement = await this.cashMovementRepo.findOne({ where: { companyId, paymentId: payment.id } });
     const cashRegister = await this.cashRegisterRepo.findOne({ where: { id: cr.id, companyId } });
@@ -3981,6 +4115,10 @@ export class FinanceService {
       movementType === 'expense' ? amount : null,
       manager,
     );
+
+    const receipt = documentType && CASH_OWN_VOUCHER_TYPES.has(documentType)
+      ? await this.resolveCashReceipt(companyId, data, cr, manager, documentType as CashDocumentKind)
+      : null;
 
     const isDeposit = documentType === 'deposito_cuenta';
     let depositBank: BankAccount | null = null;
@@ -4023,8 +4161,13 @@ export class FinanceService {
       documentType: documentType || (movementType === 'income' ? 'recibo_cobro' : 'vale_caja'),
       cashRegisterId: cr.id,
       companyId,
+      ...(receipt ?? {}),
     });
     const saved = await cmRepo.save(cm);
+
+    if (receipt) {
+      await this.createCashReceiptVoucher(companyId, saved, cr, manager);
+    }
 
     let bankTransaction: BankTransaction | null = null;
     if (depositBank) {
@@ -4053,6 +4196,150 @@ export class FinanceService {
     }
 
     return { cashMovement: saved, cashRegister: cr, bankTransaction };
+  }
+
+  /**
+   * Valida los datos del Recibo de ingreso o de la Liquidación de documentos
+   * de cobro y devuelve los campos a guardar. La tasa solo aplica en cajas en
+   * USD; en el resto es 1. En la liquidación `receiptNumber` es el Nro. de
+   * documento.
+   */
+  private async resolveCashReceipt(
+    companyId: number,
+    data: any,
+    cr: CashRegister,
+    manager: EntityManager,
+    kind: CashDocumentKind = 'recibo_ingreso',
+  ) {
+    const isReceipt = kind === 'recibo_ingreso';
+    const isOther = kind === 'otros_cobros';
+    const required: [string, string][] = [
+      ['counterpartyName', kind === 'liquidacion_pago' ? 'el proveedor, cliente o trabajador' : 'el cliente o trabajador'],
+      ['receiptNumber', isReceipt ? 'el número de recibo' : 'el número de documento'],
+      ...(isReceipt ? ([['deliveredBy', 'quién entrega el efectivo']] as [string, string][]) : []),
+      ...(isOther ? ([['performedBy', 'quién elabora el documento']] as [string, string][]) : []),
+      ['issueDate', 'la fecha de emisión'],
+      ...(isReceipt ? ([['receivedBy', 'quién recibe el efectivo']] as [string, string][]) : []),
+      ['description', 'el comentario'],
+      ['counterpartAccount', 'la cuenta de contrapartida'],
+    ];
+    for (const [key, label] of required) {
+      if (!String(data[key] ?? '').trim()) throw new BadRequestException(`Indique ${label}`);
+    }
+
+    const isUsd = (cr.currency || 'CUP') === 'USD';
+    const exchangeRate = isUsd ? Number(data.exchangeRate) : 1;
+    if (isUsd && !(exchangeRate > 1)) {
+      throw new BadRequestException(`La caja ${cr.registerCode} es en USD: indique la tasa de cambio`);
+    }
+
+    const accountRepo = manager.getRepository(Account);
+    const counterpartAccount = String(data.counterpartAccount).trim();
+    const account = await accountRepo.findOneBy({ companyId, code: counterpartAccount });
+    if (!account) {
+      throw new BadRequestException(`La cuenta ${counterpartAccount} no existe en el nomenclador de la empresa`);
+    }
+    const counterpartSubaccount = String(data.counterpartSubaccount ?? '').trim() || null;
+    if (counterpartSubaccount) {
+      const sub = await accountRepo.findOneBy({ companyId, code: counterpartSubaccount });
+      if (!sub || sub.parentCode !== counterpartAccount) {
+        throw new BadRequestException(
+          `La subcuenta ${counterpartSubaccount} no existe o no pertenece a la ${counterpartAccount}`,
+        );
+      }
+    } else if (await accountRepo.count({ where: { companyId, parentCode: counterpartAccount } })) {
+      throw new BadRequestException(
+        `La cuenta ${counterpartAccount} - ${account.name} tiene subcuentas: seleccione una`,
+      );
+    }
+
+    return {
+      exchangeRate,
+      receiptNumber: String(data.receiptNumber).trim(),
+      issueDate: String(data.issueDate).substring(0, 10),
+      counterpartAccount,
+      counterpartSubaccount,
+      ...(isReceipt
+        ? { deliveredBy: String(data.deliveredBy).trim(), receivedBy: String(data.receivedBy).trim() }
+        : {}),
+      ...(isOther ? { performedBy: String(data.performedBy).trim() } : {}),
+    };
+  }
+
+  /**
+   * Datos del asiento de una liquidación de cobro desde Caja: la cuenta de
+   * efectivo de la caja, la contrapartida con su subcuenta y la tasa (USD).
+   */
+  private async cashSettlementVoucherExtras(
+    companyId: number,
+    cr: CashRegister,
+    fields: { exchangeRate: number; counterpartAccount: string | null; counterpartSubaccount: string | null },
+    manager: EntityManager,
+  ): Promise<PaymentVoucherExtras> {
+    const sub = fields.counterpartSubaccount
+      ? await manager.getRepository(Account).findOneBy({ companyId, code: fields.counterpartSubaccount })
+      : null;
+    return {
+      cashAccountCode: await this.cashAccountingCode(companyId, cr),
+      counterpartAccount: fields.counterpartAccount || undefined,
+      counterpartSubaccount: sub?.code,
+      counterpartSubaccountName: sub?.name,
+      voucherRate: (cr.currency || 'CUP') === 'USD' ? Number(fields.exchangeRate) : 1,
+    };
+  }
+
+  /**
+   * Asiento del Recibo de ingreso:
+   *   Débito:  cuenta de efectivo de la caja
+   *   Crédito: cuenta de contrapartida (con su subcuenta)
+   * En cajas en USD el importe se convierte a CUP con la tasa del recibo.
+   */
+  private async createCashReceiptVoucher(
+    companyId: number,
+    cm: CashMovement,
+    cr: CashRegister,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (!cm.counterpartAccount) return;
+    const cashAccount = await this.cashAccountingCode(companyId, cr);
+    const rate = (cr.currency || 'CUP') === 'USD' ? Number(cm.exchangeRate) : 1;
+    const amount = Math.round(Number(cm.amount) * rate * 100) / 100;
+    const sub = cm.counterpartSubaccount
+      ? await manager.getRepository(Account).findOneBy({ companyId, code: cm.counterpartSubaccount })
+      : null;
+    const typeLabel = cm.documentType === 'otros_cobros' ? 'Otros cobros' : 'Recibo de ingreso';
+    const label = `${typeLabel} ${cm.receiptNumber || cm.movementNumber}`;
+    const party = cm.counterpartyName || null;
+
+    await this.voucherService.createVoucherFromModule(
+      companyId,
+      'finance',
+      cm.id,
+      {
+        date: new Date(cm.movementDate).toISOString().split('T')[0],
+        description: `${label}${party ? ` - ${party}` : ''}`,
+        type: 'recibo',
+        reference: cm.movementNumber,
+        createdBy: cm.receivedBy || cm.performedBy || 'Sistema',
+        lines: [
+          {
+            accountCode: cashAccount,
+            debit: amount,
+            credit: 0,
+            description: `${label} - ${cr.registerName}`,
+          },
+          {
+            accountCode: cm.counterpartAccount,
+            debit: 0,
+            credit: amount,
+            description: cm.description || label,
+            reference: party,
+            ...(sub ? { subaccountCode: sub.code, subaccountName: sub.name } : {}),
+          },
+        ],
+      },
+      manager,
+    );
   }
 
   // ── Edición y anulación de comprobantes de caja ──
@@ -4154,7 +4441,10 @@ export class FinanceService {
       }
       const cr = await this.findOpenCashRegisterFor(companyId, cm.cashRegisterId, null, manager);
 
-      const snapshot = { paymentVouchers: [] as { id: string; status: string }[] };
+      const snapshot = {
+        paymentVouchers: [] as { id: string; status: string }[],
+        vouchers: [] as { id: string; status: string }[],
+      };
       if (cm.paymentId) {
         const paymentRepo = manager.getRepository(Payment);
         const payment = await paymentRepo.findOne({ where: { id: cm.paymentId, companyId } });
@@ -4175,6 +4465,14 @@ export class FinanceService {
       if (deposit && deposit.operationStatus !== 'cancelled') {
         await this.cancelBankTransactionInTx(companyId, deposit, manager);
       }
+
+      // Asiento propio del movimiento (Recibo de ingreso).
+      snapshot.vouchers = await this.cancelFinanceVouchers(
+        companyId,
+        cm.id,
+        manager,
+        `CashMovement ${cm.movementNumber}`,
+      );
 
       const amount = Number(cm.amount);
       await this.shiftCashBalances(cr, cm, cm.movementType === 'income' ? -amount : amount, false, manager);
@@ -4220,6 +4518,10 @@ export class FinanceService {
         await this.restoreBankTransactionInTx(companyId, deposit, manager);
       }
 
+      for (const entry of cm.cancelSnapshot?.vouchers || []) {
+        await this.voucherService.updateVoucherStatus(companyId, entry.id, entry.status, manager);
+      }
+
       await this.shiftCashBalances(cr, cm, cm.movementType === 'income' ? amount : -amount, false, manager);
 
       cm.status = 'active';
@@ -4243,6 +4545,14 @@ export class FinanceService {
       }
       const cr = await this.findOpenCashRegisterFor(companyId, cm.cashRegisterId, null, manager);
       const movementType = cm.movementType as 'income' | 'expense';
+      // Datos que determinan el asiento del Recibo de ingreso; si cambian, se regenera.
+      const receiptSnapshot = (m: CashMovement) =>
+        [
+          Number(m.amount), new Date(m.movementDate).toISOString().split('T')[0], m.counterpartyName,
+          m.description, Number(m.exchangeRate), m.receiptNumber, m.receivedBy, m.performedBy,
+          m.counterpartAccount, m.counterpartSubaccount,
+        ].join('|');
+      const previousReceipt = receiptSnapshot(cm);
 
       // Tipo de comprobante: los que arrastran otra operación no se convierten.
       if (data.documentType !== undefined && data.documentType !== cm.documentType) {
@@ -4250,6 +4560,11 @@ export class FinanceService {
         if (linked.has(cm.documentType || '') || linked.has(data.documentType)) {
           throw new BadRequestException(
             'Las liquidaciones y los depósitos no pueden cambiar de tipo de comprobante; anule el movimiento y regístrelo de nuevo',
+          );
+        }
+        if (CASH_OWN_VOUCHER_TYPES.has(cm.documentType || '') || CASH_OWN_VOUCHER_TYPES.has(data.documentType)) {
+          throw new BadRequestException(
+            'El Recibo de ingreso y Otros cobros no pueden cambiar de tipo de comprobante; anule el movimiento y regístrelo de nuevo',
           );
         }
         if (!CASH_DOCUMENT_TYPES[movementType][data.documentType]) {
@@ -4289,22 +4604,45 @@ export class FinanceService {
       const amountChanged = Math.abs(newAmount - oldAmount) >= 0.005;
       const dateChanged = new Date(newDate).getTime() !== new Date(cm.movementDate).getTime();
 
+      // Liquidación de documentos de cobro/pago: datos del documento y de la
+      // contrapartida. Las anteriores sin contrapartida se editan sin ellos.
+      let docChanged = false;
+      if (CASH_SETTLEMENT_TYPES.has(cm.documentType || '')) {
+        const merged: any = { ...pick(cm, CASH_RECEIPT_FIELDS), ...pick(data, CASH_RECEIPT_FIELDS) };
+        if (String(merged.counterpartAccount ?? '').trim()) {
+          const before = receiptSnapshot(cm);
+          Object.assign(
+            cm,
+            await this.resolveCashReceipt(
+              companyId,
+              { ...merged, counterpartyName: cm.counterpartyName, description: cm.description },
+              cr,
+              manager,
+              cm.documentType as CashDocumentKind,
+            ),
+          );
+          docChanged = receiptSnapshot(cm) !== before;
+        }
+      }
+
       // Pago vinculado (liquidación o cobro/pago en efectivo desde Pagos).
-      if (payment && payment.status !== 'cancelled' && (amountChanged || dateChanged)) {
+      if (payment && payment.status !== 'cancelled' && (amountChanged || dateChanged || docChanged)) {
         if (settlesObligation && amountChanged) {
           await this.revertPaymentObligation(companyId, payment, manager);
           await this.assertObligationCanAbsorb(companyId, payment, newAmount, manager);
         }
         payment.amount = newAmount;
         payment.paymentDate = dateOnly as any;
+        if (CASH_SETTLEMENT_TYPES.has(cm.documentType || '')) payment.exchangeRate = Number(cm.exchangeRate || 1);
         await paymentRepo.save(payment);
         if (settlesObligation && amountChanged) {
           await this.applyPaymentObligation(companyId, payment, manager);
         }
         if (payment.accountPayableId || payment.paymentType === 'payable') {
-          await this.regeneratePayablePaymentVoucher(companyId, payment, manager);
+          await this.regeneratePayablePaymentVoucher(companyId, payment, manager, cm);
         } else {
-          await this.regenerateReceivablePaymentVoucher(companyId, payment, manager);
+          // Contrapartida, subcuenta y tasa: las ya editadas del movimiento.
+          await this.regenerateReceivablePaymentVoucher(companyId, payment, manager, cm);
         }
       }
 
@@ -4334,7 +4672,31 @@ export class FinanceService {
         cm.amount = newAmount;
       }
       cm.movementDate = newDate;
-      return cmRepo.save(cm);
+
+      // Recibo de ingreso y Otros cobros: validar sus datos y mantener el
+      // asiento alineado. Los anteriores sin contrapartida no llevan asiento.
+      const ownVoucher = CASH_OWN_VOUCHER_TYPES.has(cm.documentType || '');
+      if (ownVoucher) {
+        const merged: any = { ...pick(cm, CASH_RECEIPT_FIELDS), ...pick(data, CASH_RECEIPT_FIELDS) };
+        if (String(merged.counterpartAccount ?? '').trim()) {
+          Object.assign(
+            cm,
+            await this.resolveCashReceipt(
+              companyId,
+              { ...merged, counterpartyName: cm.counterpartyName, description: cm.description },
+              cr,
+              manager,
+              cm.documentType as CashDocumentKind,
+            ),
+          );
+        }
+      }
+      const saved = await cmRepo.save(cm);
+      if (ownVoucher && receiptSnapshot(saved) !== previousReceipt) {
+        await this.cancelSourceVouchers(companyId, saved.id, `CashMovement ${saved.movementNumber}`, manager);
+        await this.createCashReceiptVoucher(companyId, saved, cr, manager);
+      }
+      return saved;
     });
   }
 

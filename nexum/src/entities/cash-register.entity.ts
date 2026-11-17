@@ -34,6 +34,14 @@ export class CashRegister {
   @Column({ name: 'currency', type: 'varchar', length: 3, default: 'CUP' })
   currency: string;
 
+  /** Fondo en efectivo que custodia la caja (p. ej. "Pagos menores"). */
+  @Column({ name: 'fondo', type: 'varchar', length: 100, nullable: true })
+  fondo: string | null;
+
+  /** Cuenta de Efectivo en Caja (101-108, o `<cuenta>-<subcuenta>`) que mueve la caja. */
+  @Column({ name: 'accounting_account', type: 'varchar', length: 50, nullable: true })
+  accountingAccount: string | null;
+
   @Column({ name: 'current_balance', type: 'decimal', precision: 12, scale: 2, default: 0 })
   currentBalance: number;
 
