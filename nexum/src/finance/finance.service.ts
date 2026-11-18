@@ -3801,8 +3801,9 @@ export class FinanceService {
     );
     const openingBalance = Number(data.openingBalance ?? data.currentBalance ?? 0);
     const isOpen = openingBalance > 0;
-    if (data.accountingAccount !== undefined) {
-      data.accountingAccount = await this.validateCashAccountingAccount(companyId, data.accountingAccount);
+    data.accountingAccount = await this.validateCashAccountingAccount(companyId, data.accountingAccount);
+    if (!data.accountingAccount) {
+      throw new BadRequestException('Seleccione la cuenta contable del fondo');
     }
     const cr = this.cashRegisterRepo.create({
       ...pick(data, CASH_REGISTER_FIELDS),
@@ -3843,6 +3844,9 @@ export class FinanceService {
     const cr = await this.findOneCashRegister(companyId, id);
     if (data.accountingAccount !== undefined) {
       data.accountingAccount = await this.validateCashAccountingAccount(companyId, data.accountingAccount);
+      if (!data.accountingAccount) {
+        throw new BadRequestException('Seleccione la cuenta contable del fondo');
+      }
     }
     Object.assign(cr, pick(data, CASH_REGISTER_FIELDS));
     return this.cashRegisterRepo.save(cr);
@@ -3863,13 +3867,15 @@ export class FinanceService {
     return value;
   }
 
-  /** Cuenta de efectivo que mueve la caja: la vinculada a ella o la de Tesorería (101). */
+  /** Cuenta de efectivo que mueve la caja: la que el usuario vinculó al fondo, sin valor por defecto. */
   private async cashAccountingCode(companyId: number, cr: CashRegister): Promise<string> {
-    return (
-      cr.accountingAccount?.trim() ||
-      (await this.accountMappingService.getAccountForMapping(companyId, MappingType.TREASURY_CASH)) ||
-      '101'
-    );
+    const code = cr.accountingAccount?.trim();
+    if (!code) {
+      throw new BadRequestException(
+        `La caja ${cr.registerName} no tiene cuenta contable asignada. Asígnela en Cajas.`,
+      );
+    }
+    return code;
   }
 
   async openCashRegister(companyId: number, id: string, openingBalance?: number) {
