@@ -79,7 +79,16 @@ const PAYMENT_FIELDS = [
 const CASH_REGISTER_FIELDS = [
   'registerName', 'responsibleName', 'responsibleId', 'location', 'currency',
   'maxRetentionLimit', 'isDefault', 'notes', 'fondo', 'accountingAccount',
+  'exchangeRate', 'openingDate', 'cashBalanceCup', 'bookOpeningBalance', 'bookBalance',
 ] as const;
+
+/** La moneda y el saldo de caja definen la apertura; no se cambian después. */
+const CASH_REGISTER_UPDATE_FIELDS = CASH_REGISTER_FIELDS.filter(
+  (f) => f !== 'currency' && f !== 'cashBalanceCup' && f !== 'openingDate',
+);
+
+const CASH_FUND_TYPES = ['apertura'];
+const CASH_CURRENCIES = ['CUP', 'USD'];
 
 /** Campos de documento de los comprobantes de caja (Recibo de ingreso, Otros cobros, Liquidación de cobro). */
 const CASH_RECEIPT_FIELDS = [
@@ -3799,24 +3808,29 @@ export class FinanceService {
       'CAJA',
       { year: 0, padding: 3 },
     );
-    const openingBalance = Number(data.openingBalance ?? data.currentBalance ?? 0);
-    const isOpen = openingBalance > 0;
     data.accountingAccount = await this.validateCashAccountingAccount(companyId, data.accountingAccount);
     if (!data.accountingAccount) {
       throw new BadRequestException('Seleccione la cuenta contable del fondo');
     }
+    this.validateCashFund(data);
+    // El saldo de caja se captura en CUP; el fondo lleva su saldo en su moneda.
+    const openingBalance = data.cashBalanceCup !== undefined
+      ? Math.round((Number(data.cashBalanceCup) / Number(data.exchangeRate)) * 100) / 100
+      : Number(data.openingBalance ?? data.currentBalance ?? 0);
+    // El fondo nace abierto en su fecha de apertura; el movimiento de apertura solo si hay saldo.
+    const openedAt = data.openingDate ? new Date(data.openingDate) : new Date();
     const cr = this.cashRegisterRepo.create({
       ...pick(data, CASH_REGISTER_FIELDS),
       companyId,
       registerCode,
-      status: isOpen ? 'open' : 'closed',
+      status: 'open',
       openingBalance,
       currentBalance: openingBalance,
-      lastOpeningDate: isOpen ? new Date() : null,
+      lastOpeningDate: openedAt,
     });
     const savedResult = await this.cashRegisterRepo.save(cr);
     const saved = Array.isArray(savedResult) ? savedResult[0] : savedResult;
-    if (isOpen) {
+    if (openingBalance > 0) {
       const movementNumber = await this.sequenceService.nextFormatted(
         companyId,
         'cash-movement',
@@ -3827,7 +3841,7 @@ export class FinanceService {
         companyId,
         cashRegisterId: saved.id,
         movementNumber,
-        movementDate: new Date(),
+        movementDate: openedAt,
         movementType: 'opening',
         amount: openingBalance,
         balanceAfter: openingBalance,
@@ -3848,8 +3862,38 @@ export class FinanceService {
         throw new BadRequestException('Seleccione la cuenta contable del fondo');
       }
     }
-    Object.assign(cr, pick(data, CASH_REGISTER_FIELDS));
+    const fields: any = pick(data, CASH_REGISTER_UPDATE_FIELDS);
+    // Los fondos antiguos guardan el tipo en texto libre: solo se valida si cambia.
+    const fundChanged = fields.fondo !== undefined && fields.fondo !== cr.fondo;
+    const merged: any = { ...cr, ...fields };
+    this.validateCashFund(merged, fundChanged);
+    fields.exchangeRate = merged.exchangeRate;
+    Object.assign(cr, fields);
     return this.cashRegisterRepo.save(cr);
+  }
+
+  /** Datos del fondo: nombre, moneda, tasa, tipo y saldos. Normaliza la tasa (1 en CUP). */
+  private validateCashFund(data: any, checkFundType = true): void {
+    if (!String(data.registerName ?? '').trim()) {
+      throw new BadRequestException('El nombre del fondo es obligatorio');
+    }
+    data.currency = data.currency || 'CUP';
+    if (!CASH_CURRENCIES.includes(data.currency)) {
+      throw new BadRequestException('La moneda del fondo debe ser CUP o USD');
+    }
+    if (data.currency === 'CUP') {
+      data.exchangeRate = 1;
+    } else if (!(Number(data.exchangeRate) > 1)) {
+      throw new BadRequestException('La tasa de cambio de un fondo en USD debe ser mayor que 1');
+    }
+    if (checkFundType && !CASH_FUND_TYPES.includes(data.fondo)) {
+      throw new BadRequestException('El tipo de fondo debe ser Apertura');
+    }
+    for (const key of ['cashBalanceCup', 'bookOpeningBalance', 'bookBalance']) {
+      if (data[key] !== undefined && (isNaN(Number(data[key])) || Number(data[key]) < 0)) {
+        throw new BadRequestException('Los saldos del fondo no pueden ser negativos');
+      }
+    }
   }
 
   /** La cuenta de la caja debe ser de Efectivo en Caja (101-108) o una de sus subcuentas. */

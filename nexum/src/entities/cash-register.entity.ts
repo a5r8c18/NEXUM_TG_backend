@@ -22,8 +22,8 @@ export class CashRegister {
   @Column({ name: 'register_code', type: 'varchar', length: 20, unique: true })
   registerCode: string;
 
-  @Column({ name: 'responsible_name', type: 'varchar', length: 200 })
-  responsibleName: string;
+  @Column({ name: 'responsible_name', type: 'varchar', length: 200, nullable: true })
+  responsibleName: string | null;
 
   @Column({ name: 'responsible_id', type: 'uuid', nullable: true })
   responsibleId: string | null;
@@ -34,13 +34,29 @@ export class CashRegister {
   @Column({ name: 'currency', type: 'varchar', length: 3, default: 'CUP' })
   currency: string;
 
-  /** Fondo en efectivo que custodia la caja (p. ej. "Pagos menores"). */
+  /** Tipo de fondo: `apertura` (los antiguos guardan texto libre). */
   @Column({ name: 'fondo', type: 'varchar', length: 100, nullable: true })
   fondo: string | null;
 
   /** Cuenta de Efectivo en Caja (101-108, o `<cuenta>-<subcuenta>`) que mueve la caja. */
   @Column({ name: 'accounting_account', type: 'varchar', length: 50, nullable: true })
   accountingAccount: string | null;
+
+  @Column({ name: 'exchange_rate', type: 'decimal', precision: 12, scale: 4, default: 1 })
+  exchangeRate: number;
+
+  @Column({ name: 'opening_date', type: 'date', nullable: true })
+  openingDate: string | null;
+
+  /** Saldo de caja en CUP al crear el fondo. */
+  @Column({ name: 'cash_balance_cup', type: 'decimal', precision: 14, scale: 2, default: 0 })
+  cashBalanceCup: number;
+
+  @Column({ name: 'book_opening_balance', type: 'decimal', precision: 14, scale: 2, default: 0 })
+  bookOpeningBalance: number;
+
+  @Column({ name: 'book_balance', type: 'decimal', precision: 14, scale: 2, default: 0 })
+  bookBalance: number;
 
   @Column({ name: 'current_balance', type: 'decimal', precision: 12, scale: 2, default: 0 })
   currentBalance: number;
